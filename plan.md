@@ -76,13 +76,17 @@ CSV exports, App Designer UI (`matlab/launchOrekitSatelliteUI.m`).
 
 ## Phase 2 — future sessions (not started)
 
-- UI ribbon exposure of new backend features (propagator picker, force model
-  panel, maneuver editor, coverage tab). UI file: `matlab/launchOrekitSatelliteUI.m`.
+- [x] UI: "Analysis" ribbon tab (eclipse timeline, orbital elements, OEM
+  export, deck access window table, global coverage map) with
+  satellite/station dropdowns (refreshAnalysisDropdowns in refreshAll), and
+  propagator pickers in the satellite insert dialog (Keplerian tab:
+  Keplerian/EH/Numerical; TLE tab: SGP4/Numerical-seeded). NOT yet exposed in
+  UI: force-model editor panel, maneuver editor — still backend/script only.
 - [x] Chains: `computeChainAccess` (multi-hop AND of link accesses).
-- Attitude profiles beyond "Default"/Nadir. Note: sensors already support
-  Nadir/FixedVector/Targeted pointing (SensorObject.PointingMode); the gap is
-  a sun-pointing mode needing sun direction inside SensorObject pointing code
-  (~line 144) via OrekitBodies.sunPositions.
+- [x] Sun-pointing sensors: PointingMode "SunPointing"/"Sun" in
+  SensorObject.getBoresightVector (ECEF sun direction from OrekitBodies).
+  Remaining attitude gap: whole-body attitude profiles (SatelliteObject.Attitude
+  is still cosmetic).
 - [x] Orbit design wizard: `OrbitDesigner` (sunSynchronousInclination,
   sunSynchronous with LTAN->RAAN, geostationary at a longitude, molniya,
   repeatGroundTrackSma). Tests: testOrbitDesign, example_16.
@@ -98,8 +102,10 @@ CSV exports, App Designer UI (`matlab/launchOrekitSatelliteUI.m`).
   with edge clamping; `getECEF`/`getLLA` still nearest-sample).
 - PUSH POLICY: user said do NOT push to GitHub (session auth is broken anyway);
   commit locally only. GitHub connector needs re-auth by the user before any push.
-- Numerical propagator performance: use Orekit ephemeris-mode batch propagation
-  instead of per-sample `propagate()` calls.
+- Numerical propagator performance: WON'T DO for now — Orekit numerical
+  propagators integrate incrementally between successive propagate() calls, so
+  per-sample calls do not re-integrate from epoch; remaining cost is
+  MATLAB<->Java call overhead, which ephemeris-mode would not remove.
 
 ## Known caveats / decisions
 
