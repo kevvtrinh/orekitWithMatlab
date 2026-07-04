@@ -84,6 +84,89 @@ exportSensorAccessReport(result, "sensor_access_report.csv");
 
 See `examples/example_08_sensorAccess.m` and `examples/headless/sensors/script_219_sensorFullDemo.m`.
 
+## Propagators and force models
+
+Each satellite selects its propagator through `PropagatorType`:
+
+```matlab
+sat.PropagatorType = "Keplerian";        % two-body analytical (default)
+sat.PropagatorType = "TLE";              % SGP4 (TLE-defined satellites)
+sat.PropagatorType = "EcksteinHechler";  % J2-J6 analytical, near-circular orbits
+sat.PropagatorType = "Numerical";        % HPOP-style numerical integration
+```
+
+Numerical propagation uses the force models on `sat.ForceModel`
+(gravity field degree/order, sun/moon third-body, Harris-Priester drag,
+solar radiation pressure) and the spacecraft parameters `MassKg`,
+`DragAreaM2`, `DragCoefficient`, `SRPAreaM2`, `ReflectivityCoefficient`:
+
+```matlab
+sat.PropagatorType = "Numerical";
+sat.ForceModel = ForceModelOptions("GravityDegree", 16, "GravityOrder", 16);
+```
+
+See `examples/example_09_hpopPropagation.m`.
+
+## Maneuvers
+
+Impulsive burns are attached to a satellite and applied during propagation
+(TNW along-track/normal/cross-track, or inertial frame):
+
+```matlab
+plan = ManeuverPlanner.hohmann(7000e3, 7500e3);
+maneuvers = ManeuverPlanner.hohmannManeuvers(cfg.Epoch + hours(1), 7000e3, 7500e3);
+sat = sat.addManeuver(maneuvers{1});
+sat = sat.addManeuver(maneuvers{2});
+```
+
+See `examples/example_12_maneuvers.m`.
+
+## Eclipse and lighting
+
+```matlab
+eclipse = computeEclipse(scenario, "Sat-1");     % umbra/penumbra windows
+betaTable = computeBetaAngle(scenario, "Sat-1"); % solar beta angle
+sunAtSite = computeSunElevation(scenario, "Denver GS");
+plotEclipseTimeline(eclipse);
+```
+
+## Access constraints
+
+`computeAccess` accepts STK-style constraints:
+
+```matlab
+result = computeAccess(scenario, "Sat-1", "Denver GS", struct( ...
+    "MinElevationDeg", 10, "MaxRangeKm", 2000, ...
+    "GroundLighting", "Dark", "SatelliteLighting", "Sunlit"));
+```
+
+## Coverage and revisit
+
+```matlab
+grid = CoverageGrid.regionGrid(-60, 60, -180, 180, 6);
+coverage = computeCoverage(scenario, grid, struct("MinElevationDeg", 10));
+plotCoverageMap(coverage, "CoveragePercent");
+plotCoverageMap(coverage, "MaxGapMinutes");
+exportCoverageReport(coverage, "coverage_report.csv");
+```
+
+See `examples/example_11_coverageRevisit.m`.
+
+## TLE catalogs, element history, link budgets
+
+```matlab
+sats = loadTLEFile("catalog.tle", struct("NamePattern", "STARLINK", "MaxCount", 20));
+
+elements = computeOrbitalElements(scenario, "Sat-1");
+plotOrbitalElements(elements, "Sat-1");
+
+linkResult = computeLinkBudget(accessResult, struct("FrequencyHz", 8.2e9, ...
+    "TransmitPowerW", 5, "ReceiveGainDb", 42, "DataRateBps", 50e6));
+```
+
+See examples 13 and 14, and `docs/stk_feature_map.md` for the full
+STK-capability-to-function mapping.
+
 ## Structure
 
 ```text

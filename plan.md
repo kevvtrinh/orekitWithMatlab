@@ -51,22 +51,28 @@ CSV exports, App Designer UI (`matlab/launchOrekitSatelliteUI.m`).
       (coverage %, passes, revisit gaps, area-weighted summary),
       `plotCoverageMap`, `exportCoverageReport`.
 - [x] `src/io/loadTLEFile.m` — 2/3-line catalog loader with name filter.
-- [ ] `src/analysis/computeOrbitalElements.m` + `plotOrbitalElements` —
+- [x] `src/analysis/computeOrbitalElements.m` + `plotOrbitalElements` —
       osculating elements from ephemeris (pure MATLAB rv->coe), period,
       apogee/perigee altitude.
-- [ ] `src/analysis/computeLinkBudget.m` — FSPL/EIRP/C-N0/Eb-N0/margin from an
+- [x] `src/analysis/computeLinkBudget.m` — FSPL/EIRP/C-N0/Eb-N0/margin from an
       access result + link params struct.
-- [ ] Tests in `src/tests/`: testManeuverPlanner (pure math), testTLECatalog
-      (parser, temp file), testLinkBudget (pure math), testOrbitalElements,
-      testForceModels (numerical vs keplerian sanity, needs jars),
-      testEclipseLighting, testCoverage, testAccessConstraints.
-- [ ] Examples: example_09_hpopPropagation, example_10_eclipseLighting,
+- [x] Tests in `src/tests/`: testAdvancedPropagation (numerical vs keplerian,
+      HPOP, EH, burn raises SMA, element recovery), testEclipseLighting,
+      testCoverage, testMissionUtilities (Hohmann math, TLE parsing,
+      link budget, access constraints).
+- [x] Examples: example_09_hpopPropagation, example_10_eclipseLighting,
       example_11_coverageRevisit, example_12_maneuvers, example_13_tleCatalog,
       example_14_linkBudget.
-- [ ] README: new sections for propagators/maneuvers/eclipse/coverage/
+- [x] README: new sections for propagators/maneuvers/eclipse/coverage/
       constraints/TLE catalog/link budget.
-- [ ] `docs/stk_feature_map.md` — STK module -> suite function mapping table.
-- [ ] Commit + push to `claude/stk-tool-replacement-lzbn46`.
+- [x] `docs/stk_feature_map.md` — STK module -> suite function mapping table.
+- [ ] Commit + push to `claude/stk-tool-replacement-lzbn46`. First commit
+      (5961993) is local; `git push` returned 403 from the local git proxy all
+      session. NEXT SESSION: commit any pending changes, then retry
+      `git push -u origin claude/stk-tool-replacement-lzbn46` before anything else.
+- [ ] Not run: no MATLAB/Orekit here. Run `startupOrekitSuite(); runtests(fullfile(pwd,"src","tests"))`
+      locally; fix anything that surfaces (most likely spots: Orekit 13 Java
+      constructor signatures in OrekitPropagatorFactory/OrekitBodies).
 
 ## Phase 2 — future sessions (not started)
 
