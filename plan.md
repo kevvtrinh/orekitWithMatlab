@@ -78,12 +78,12 @@ CSV exports, App Designer UI (`matlab/launchOrekitSatelliteUI.m`).
 
 - UI ribbon exposure of new backend features (propagator picker, force model
   panel, maneuver editor, coverage tab). UI file: `matlab/launchOrekitSatelliteUI.m`.
-- Chains/deck access (multi-hop access, satellite-to-relay-to-ground).
+- [x] Chains: `computeChainAccess` (multi-hop AND of link accesses).
 - Attitude profiles beyond "Default"/Nadir (sun-pointing, target-pointing tie-in
   with existing sensor pointing).
 - Ephemeris file import/export (CCSDS OEM via Orekit writers).
-- Ground station az/el masks already have an `AzElMask` property — wire it into
-  access constraints.
+- [x] Ground station `AzElMask` wired into access (table columns AzimuthDeg
+  ascending in [0,360), MinElevationDeg; linear interp with wraparound).
 - Interpolation in `getPosition`/`getECEF` (currently nearest-sample).
 - Numerical propagator performance: use Orekit ephemeris-mode batch propagation
   instead of per-sample `propagate()` calls.

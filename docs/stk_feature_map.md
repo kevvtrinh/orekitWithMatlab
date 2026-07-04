@@ -25,13 +25,13 @@ Where to find the STK-equivalent capability in this suite.
 | Coverage figures of merit (percent covered, revisit) | `computeCoverage`, `plotCoverageMap`, `exportCoverageReport` |
 | Orbital element report / graphs | `computeOrbitalElements`, `plotOrbitalElements` |
 | Communications link budget | `computeLinkBudget` |
+| Chains (multi-hop access) | `computeChainAccess` |
+| Facility az/el terrain masks | `GroundStationObject.AzElMask` (applied automatically in access) |
 | Contact plans / reports | `buildContactPlan`, `exportContactPlan`, `exportEphemeris` |
 | 2D/3D graphics + animation | `plotGroundTrack`, `plotOrbit3D`, `animateScenario`, UI (`launchOrekitSatelliteUI`) |
 
 ## Not covered yet (see plan.md phase 2)
 
-- Access chains (multi-hop relays)
 - Attitude profiles beyond nadir/default pointing
 - CCSDS OEM/OMM ephemeris file import/export
-- Ground station az/el masks in access constraints (property exists, not wired)
 - Finite (non-impulsive) maneuvers and targeting/differential correction

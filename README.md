@@ -140,6 +140,11 @@ result = computeAccess(scenario, "Sat-1", "Denver GS", struct( ...
     "GroundLighting", "Dark", "SatelliteLighting", "Sunlit"));
 ```
 
+Ground stations can carry an azimuth-dependent terrain mask that is applied
+automatically (`gs.AzElMask` with columns `AzimuthDeg`, `MinElevationDeg`),
+and multi-hop relay chains are available through
+`computeChainAccess(scenario, ["Sat-LEO", "Sat-Relay", "Denver GS"])`.
+
 ## Coverage and revisit
 
 ```matlab

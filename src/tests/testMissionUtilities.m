@@ -92,6 +92,29 @@ verifyEqual(testCase, sum(sunlit.AccessLogical) + sum(dark.AccessLogical), ...
     sum(open.AccessLogical));
 end
 
+function testAzElMaskBlocksLowAzimuths(testCase)
+scenario = localAccessScenario();
+open = computeAccess(scenario, "Sat-1", "Denver GS");
+
+gs = scenario.getObject("Denver GS");
+% A 90 deg ridge everywhere blocks all access.
+gs.AzElMask = table((0:90:270).', repmat(90, 4, 1), ...
+    'VariableNames', {'AzimuthDeg', 'MinElevationDeg'});
+scenario = scenario.updateObject(gs);
+blocked = computeAccess(scenario, "Sat-1", "Denver GS");
+
+verifyEqual(testCase, blocked.Duration, 0);
+verifyGreaterThanOrEqual(testCase, open.Duration, blocked.Duration);
+end
+
+function testChainAccessIsIntersectionOfLinks(testCase)
+scenario = localAccessScenario();
+chain = computeChainAccess(scenario, ["Sat-1", "Denver GS"]);
+direct = computeAccess(scenario, "Sat-1", "Denver GS");
+verifyEqual(testCase, chain.AccessLogical, direct.AccessLogical);
+verifyEqual(testCase, numel(chain.Links), 1);
+end
+
 function filename = localTleFile(lines)
 filename = fullfile(tempdir, "suiteTestCatalog.tle");
 writelines(lines, filename);

@@ -39,6 +39,7 @@ if isa(source, "SatelliteObject") && isa(target, "GroundStationObject")
     aer = computeAzElRange(source, target, timeVector);
     minElevation = constraintValue(options, "MinElevationDeg", target.MinElevationDeg);
     accessLogical = aer.ElevationDeg >= minElevation;
+    accessLogical = accessLogical & applyAzElMask(aer, target);
     satelliteForLighting = source.Name;
     groundForLighting = target.Name;
     sourceForWindow = source.Name;
@@ -48,6 +49,7 @@ elseif isa(source, "GroundStationObject") && isa(target, "SatelliteObject")
     aer = computeAzElRange(target, source, timeVector);
     minElevation = constraintValue(options, "MinElevationDeg", source.MinElevationDeg);
     accessLogical = aer.ElevationDeg >= minElevation;
+    accessLogical = accessLogical & applyAzElMask(aer, source);
     satelliteForLighting = target.Name;
     groundForLighting = source.Name;
     sourceForWindow = source.Name;
@@ -124,6 +126,22 @@ else
     accessResult.MaxElevation = NaN;
     accessResult.MinRange = NaN;
 end
+end
+
+function ok = applyAzElMask(aer, groundStation)
+%APPLYAZELMASK Terrain/obstruction mask: require elevation above the
+% azimuth-dependent minimum in groundStation.AzElMask (columns AzimuthDeg
+% ascending in [0, 360) and MinElevationDeg). Empty mask passes everything.
+ok = true(height(aer), 1);
+mask = groundStation.AzElMask;
+if isempty(mask) || height(mask) == 0
+    return;
+end
+maskAz = [mask.AzimuthDeg(:); mask.AzimuthDeg(1) + 360];
+maskEl = [mask.MinElevationDeg(:); mask.MinElevationDeg(1)];
+minElevation = interp1(maskAz, maskEl, ...
+    mod(aer.AzimuthDeg - maskAz(1), 360) + maskAz(1), "linear");
+ok = aer.ElevationDeg >= minElevation;
 end
 
 function value = constraintValue(options, name, defaultValue)
