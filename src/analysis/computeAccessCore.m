@@ -1,5 +1,16 @@
 function accessResult = computeAccessCore(scenario, sourceName, targetName, options)
 %COMPUTEACCESSCORE Implementation behind function and method access APIs.
+%
+% Optional constraint fields on options (all applied on top of the basic
+% elevation/line-of-sight geometry, STK access-constraint style):
+%   MinElevationDeg    Override the ground station minimum elevation.
+%   MinRangeKm         Reject samples closer than this range.
+%   MaxRangeKm         Reject samples farther than this range.
+%   GroundLighting     "Any" (default) | "Sunlit" | "Dark" - lighting
+%                      condition at the ground end of the link.
+%   SatelliteLighting  "Any" (default) | "Sunlit" | "Eclipsed" - lighting
+%                      condition of the satellite (source satellite for
+%                      satellite-to-satellite pairs).
 
 arguments
     scenario MissionScenario
@@ -21,21 +32,31 @@ accessResult.ScenarioEpoch = scenario.Config.Epoch;
 accessResult.TimeVector = timeVector;
 accessResult.Metadata = options;
 
+satelliteForLighting = "";
+groundForLighting = "";
+
 if isa(source, "SatelliteObject") && isa(target, "GroundStationObject")
     aer = computeAzElRange(source, target, timeVector);
-    accessLogical = aer.ElevationDeg >= target.MinElevationDeg;
+    minElevation = constraintValue(options, "MinElevationDeg", target.MinElevationDeg);
+    accessLogical = aer.ElevationDeg >= minElevation;
+    satelliteForLighting = source.Name;
+    groundForLighting = target.Name;
     sourceForWindow = source.Name;
     targetForWindow = target.Name;
 
 elseif isa(source, "GroundStationObject") && isa(target, "SatelliteObject")
     aer = computeAzElRange(target, source, timeVector);
-    accessLogical = aer.ElevationDeg >= source.MinElevationDeg;
+    minElevation = constraintValue(options, "MinElevationDeg", source.MinElevationDeg);
+    accessLogical = aer.ElevationDeg >= minElevation;
+    satelliteForLighting = target.Name;
+    groundForLighting = source.Name;
     sourceForWindow = source.Name;
     targetForWindow = target.Name;
 
 elseif isa(source, "SatelliteObject") && isa(target, "SatelliteObject")
     aer = satelliteToSatelliteRange(source, target, timeVector);
     accessLogical = computeLineOfSight(source, target, timeVector);
+    satelliteForLighting = source.Name;
     sourceForWindow = source.Name;
     targetForWindow = target.Name;
 
@@ -45,6 +66,49 @@ else
         source.ObjectType, target.ObjectType);
 end
 
+% Range constraints.
+minRangeKm = constraintValue(options, "MinRangeKm", NaN);
+maxRangeKm = constraintValue(options, "MaxRangeKm", NaN);
+if ~isnan(minRangeKm)
+    accessLogical = accessLogical & (aer.RangeKm >= minRangeKm);
+end
+if ~isnan(maxRangeKm)
+    accessLogical = accessLogical & (aer.RangeKm <= maxRangeKm);
+end
+
+% Ground lighting constraint.
+groundLighting = string(constraintValue(options, "GroundLighting", "Any"));
+if ~strcmpi(groundLighting, "Any") && strlength(groundForLighting) > 0
+    sunAtSite = computeSunElevation(scenario, groundForLighting);
+    switch upper(groundLighting)
+        case "SUNLIT"
+            accessLogical = accessLogical & sunAtSite.IsDaylight;
+        case "DARK"
+            accessLogical = accessLogical & ~sunAtSite.IsDaylight;
+        otherwise
+            error("computeAccess:InvalidGroundLighting", ...
+                "GroundLighting must be Any, Sunlit, or Dark.");
+    end
+end
+
+% Satellite lighting constraint.
+satelliteLighting = string(constraintValue(options, "SatelliteLighting", "Any"));
+if ~strcmpi(satelliteLighting, "Any") && strlength(satelliteForLighting) > 0
+    eclipse = computeEclipse(scenario, satelliteForLighting);
+    switch upper(satelliteLighting)
+        case "SUNLIT"
+            accessLogical = accessLogical & ~eclipse.ShadowLogical;
+        case "ECLIPSED"
+            accessLogical = accessLogical & eclipse.ShadowLogical;
+        otherwise
+            error("computeAccess:InvalidSatelliteLighting", ...
+                "SatelliteLighting must be Any, Sunlit, or Eclipsed.");
+    end
+end
+
+accessResult.Constraints = struct( ...
+    "MinRangeKm", minRangeKm, "MaxRangeKm", maxRangeKm, ...
+    "GroundLighting", groundLighting, "SatelliteLighting", satelliteLighting);
 accessResult.AccessLogical = accessLogical;
 accessResult.AccessWindows = buildContactPlan(timeVector, accessLogical, ...
     aer.ElevationDeg, aer.RangeKm, sourceForWindow, targetForWindow);
@@ -59,6 +123,14 @@ if any(accessLogical)
 else
     accessResult.MaxElevation = NaN;
     accessResult.MinRange = NaN;
+end
+end
+
+function value = constraintValue(options, name, defaultValue)
+if isfield(options, name) && ~isempty(options.(name))
+    value = options.(name);
+else
+    value = defaultValue;
 end
 end
 

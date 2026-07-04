@@ -14,6 +14,12 @@ classdef SatelliteObject < MissionObject
         TLELine2 string = ""
         PropagatorType string = "Keplerian"
         MassKg double = 1000
+        DragAreaM2 double = 4
+        DragCoefficient double = 2.2
+        SRPAreaM2 double = 4
+        ReflectivityCoefficient double = 1.5
+        ForceModel ForceModelOptions = ForceModelOptions()
+        Maneuvers cell = {}
         Attitude string = "Default"
         Sensors cell = {}
         Terminals cell = {}
@@ -75,9 +81,9 @@ classdef SatelliteObject < MissionObject
 
         function obj = propagate(obj, timeVector, config)
             obj.validate();
-            propagator = obj.buildOrekitPropagator(config);
+            [ephemeris, propagator] = OrekitPropagatorFactory.propagateWithManeuvers( ...
+                obj, config, timeVector);
             obj.OrekitPropagator = propagator;
-            ephemeris = OrekitPropagatorFactory.propagate(propagator, timeVector);
             obj.Ephemeris = ephemeris;
             obj.IsPropagated = true;
         end
@@ -134,6 +140,39 @@ classdef SatelliteObject < MissionObject
         function sensors = listSensors(obj)
             sensors = sensorListTable(obj.Sensors);
         end
+
+        function obj = addManeuver(obj, maneuver)
+            if isstruct(maneuver)
+                maneuver = ImpulsiveManeuver.fromStruct(maneuver);
+            end
+            maneuver.validate();
+            obj.Maneuvers{end + 1} = maneuver;
+        end
+
+        function obj = clearManeuvers(obj)
+            obj.Maneuvers = {};
+        end
+
+        function maneuvers = listManeuvers(obj)
+            n = numel(obj.Maneuvers);
+            names = strings(n, 1);
+            times = NaT(n, 1, "TimeZone", "UTC");
+            frames = strings(n, 1);
+            deltaV = zeros(n, 3);
+            magnitudes = zeros(n, 1);
+            for k = 1:n
+                maneuver = obj.Maneuvers{k};
+                names(k) = maneuver.Name;
+                burnTime = maneuver.Time;
+                burnTime.TimeZone = "UTC";
+                times(k) = burnTime;
+                frames(k) = maneuver.Frame;
+                deltaV(k, :) = maneuver.DeltaVmps;
+                magnitudes(k) = norm(maneuver.DeltaVmps);
+            end
+            maneuvers = table(names, times, frames, deltaV, magnitudes, ...
+                'VariableNames', {'Name', 'Time', 'Frame', 'DeltaVmps', 'MagnitudeMps'});
+        end
     end
 
     methods (Access = private)
@@ -181,7 +220,18 @@ classdef SatelliteObject < MissionObject
             names = fieldnames(data);
             for k = 1:numel(names)
                 if isprop(obj, names{k}) && ~strcmp(names{k}, "OrekitPropagator")
-                    obj.(names{k}) = restoreSensorCellIfNeeded(data.(names{k}), names{k});
+                    value = restoreSensorCellIfNeeded(data.(names{k}), names{k});
+                    if strcmp(names{k}, "ForceModel") && isstruct(value)
+                        value = ForceModelOptions.fromStruct(value);
+                    end
+                    if strcmp(names{k}, "Maneuvers")
+                        for m = 1:numel(value)
+                            if isstruct(value{m})
+                                value{m} = ImpulsiveManeuver.fromStruct(value{m});
+                            end
+                        end
+                    end
+                    obj.(names{k}) = value;
                 end
             end
             obj.OrekitPropagator = [];
