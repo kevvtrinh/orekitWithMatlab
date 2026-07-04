@@ -69,6 +69,8 @@ taskCoverageEdit = [];
 coverageTargetDrop = [];
 analysisSatelliteDrop = [];
 analysisStationDrop = [];
+showSensorFovCheck = [];
+showSensorForCheck = [];
 taskList = {};
 lastTaskCandidates = [];
 lastTaskConflicts = [];
@@ -352,6 +354,16 @@ refreshAll();
             "Value", true, "ValueChangedFcn", @refreshViewsCallback);
         showPlacesCheck.Layout.Row = 1;
         showPlacesCheck.Layout.Column = 7;
+
+        showSensorFovCheck = uicheckbox(grid, "Text", "Sensor FOV", ...
+            "Value", false, "ValueChangedFcn", @refreshViewsCallback);
+        showSensorFovCheck.Layout.Row = 2;
+        showSensorFovCheck.Layout.Column = 5;
+
+        showSensorForCheck = uicheckbox(grid, "Text", "Sensor FOR", ...
+            "Value", false, "ValueChangedFcn", @refreshViewsCallback);
+        showSensorForCheck.Layout.Row = 2;
+        showSensorForCheck.Layout.Column = 6;
 
         frame3DDrop = uidropdown(grid, "Items", {'ECEF', 'ECI'}, ...
             "Value", "ECEF", "ValueChangedFcn", @refreshViewsCallback);
@@ -2450,7 +2462,61 @@ refreshAll();
             drawPlaces2D();
         end
         drawSatellites2D();
+        drawSensorFootprints2D();
         hold(mapAxes, "off");
+    end
+
+    function drawSensorFootprints2D()
+        for footprint = collectSensorFootprints()
+            [lon, lat] = splitDateline(footprint{1}.LongitudeDeg, footprint{1}.LatitudeDeg);
+            if footprint{1}.Type == "FOR"
+                plot(mapAxes, lon, lat, "--", "Color", [0.20 0.55 0.95], ...
+                    "LineWidth", 1.2);
+            else
+                plot(mapAxes, lon, lat, "-", "Color", footprint{1}.Color, ...
+                    "LineWidth", 1.4);
+            end
+        end
+    end
+
+    function footprints = collectSensorFootprints()
+        %COLLECTSENSORFOOTPRINTS Footprints for every satellite sensor at the
+        % current scenario time, honoring the FOV/FOR view toggles. Sensors
+        % whose footprint cannot be computed (e.g. targeted sensors without a
+        % target) are skipped silently so one bad sensor never blocks redraw.
+        footprints = {};
+        if isempty(showSensorFovCheck) || ...
+                (~showSensorFovCheck.Value && ~showSensorForCheck.Value)
+            return;
+        end
+        time = scenario.CurrentAnimationTime;
+        for k = 1:numel(scenario.Objects)
+            obj = scenario.Objects{k};
+            if ~isa(obj, "SatelliteObject") || isempty(obj.Ephemeris)
+                continue;
+            end
+            for s = 1:numel(obj.Sensors)
+                sensor = obj.Sensors{s};
+                if showSensorFovCheck.Value
+                    try
+                        footprint = computeSensorFootprint(scenario, obj.Name, ...
+                            sensor.Name, time);
+                        footprint.Color = sensor.Color;
+                        footprints{end + 1} = footprint; %#ok<AGROW>
+                    catch
+                    end
+                end
+                if showSensorForCheck.Value
+                    try
+                        footprint = computeSensorFootprint(scenario, obj.Name, ...
+                            sensor.Name, time, struct("UseFieldOfRegard", true));
+                        footprint.Color = sensor.Color;
+                        footprints{end + 1} = footprint; %#ok<AGROW>
+                    catch
+                    end
+                end
+            end
+        end
     end
 
     function drawPlaces2D()
@@ -2523,6 +2589,7 @@ refreshAll();
             maxRangeKm = max(maxRangeKm, drawPlaces3D(radiusKm, frameName, earthAngleRad));
         end
         maxRangeKm = max(maxRangeKm, drawSatellites3D(frameName));
+        drawSensorFootprints3D(frameName, earthAngleRad);
 
         axis(globeAxes, "equal");
         lim = max(8000, maxRangeKm * 1.08);
@@ -2581,6 +2648,39 @@ refreshAll();
                 "MarkerEdgeColor", edgeColor, "LineWidth", 1.1);
             plot3(globeAxes, [0 xKm(idx)], [0 yKm(idx)], [0 zKm(idx)], ...
                 "Color", [0.95 0.74 0.18], "LineWidth", 0.8);
+        end
+    end
+
+    function drawSensorFootprints3D(frameName, earthAngleRad)
+        for footprint = collectSensorFootprints()
+            data = footprint{1};
+            parent = scenario.getObject(data.ParentName);
+            apexKm = parent.getECEF(scenario.CurrentAnimationTime) / 1000.0;
+            % Lift the outline slightly off the globe so it stays visible.
+            rimKm = data.EcefMeters / 1000.0 * 1.004;
+            [rx, ry, rz] = earthFixedToViewFrame(rimKm(:, 1), rimKm(:, 2), ...
+                rimKm(:, 3), frameName, earthAngleRad);
+            [ax3, ay3, az3] = earthFixedToViewFrame(apexKm(1), apexKm(2), ...
+                apexKm(3), frameName, earthAngleRad);
+
+            if data.Type == "FOR"
+                color = [0.20 0.55 0.95];
+                faceAlpha = 0.06;
+                lineStyle = "--";
+            else
+                color = data.Color;
+                faceAlpha = 0.12;
+                lineStyle = "-";
+            end
+            plot3(globeAxes, rx, ry, rz, lineStyle, "Color", color, ...
+                "LineWidth", 1.3);
+
+            vertices = [ax3, ay3, az3; rx(:), ry(:), rz(:)];
+            n = numel(rx);
+            faces = [ones(n - 1, 1), (2:n).', (3:n + 1).'];
+            patch(globeAxes, "Vertices", vertices, "Faces", faces, ...
+                "FaceColor", color, "FaceAlpha", faceAlpha, ...
+                "EdgeColor", "none");
         end
     end
 

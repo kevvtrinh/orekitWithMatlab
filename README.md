@@ -224,7 +224,7 @@ run("examples/example_05_uiLaunch.m")
 
 The UI has a top ribbon with `Scenario`, `Insert`, `View`, `Sensors / Payloads`, and `Analysis` tabs, an object browser on the left, and default 2D/3D graphics windows in the center. The `Analysis` tab runs eclipse timelines, orbital element reports, CCSDS OEM export, deck access, and global coverage maps against the active scenario, and the satellite insert dialog includes a propagator picker (two-body, Eckstein-Hechler, numerical HPOP, or SGP4/numerical for TLE satellites). The `Scenario` tab owns the scenario epoch, stop time, time step, and current scenario time. When you insert a satellite or constellation, the app creates backend `SatelliteObject` instances, adds them to the active `MissionScenario`, propagates them across the scenario time span, and draws the full ground track/orbit in 2D and 3D.
 
-The `View` tab includes 3D frame selection for `ECEF` and `ECI`. `Start` animates from the scenario epoch to the scenario stop time, updating object positions and rotating the Earth-fixed geography in the ECI view.
+The `View` tab includes 3D frame selection for `ECEF` and `ECI`, plus `Sensor FOV` / `Sensor FOR` toggles that project each satellite sensor's cone onto the Earth in both the 2D map (footprint outline) and the 3D globe (translucent cone), updating live during animation. `Start` animates from the scenario epoch to the scenario stop time, updating object positions and rotating the Earth-fixed geography in the ECI view.
 
 `Save Scenario` and `Load Scenario` call the backend `saveScenario` and `loadScenario` functions, so objects, scenario timing, ephemerides, access results, and metadata round-trip through the same model used by scripts and tests.
 

@@ -83,6 +83,10 @@ CSV exports, App Designer UI (`matlab/launchOrekitSatelliteUI.m`).
   Keplerian/EH/Numerical; TLE tab: SGP4/Numerical-seeded). NOT yet exposed in
   UI: force-model editor panel, maneuver editor — still backend/script only.
 - [x] Chains: `computeChainAccess` (multi-hop AND of link accesses).
+- [x] Sensor FOV/FOR on the main 2D/3D views: `computeSensorFootprint`
+  (cone-Earth intersection, horizon-clamped, FOV or FOR) + "Sensor FOV"/
+  "Sensor FOR" checkboxes in the View ribbon; 2D dateline-safe outlines,
+  3D translucent cones cast onto the globe. Test: testSensorFootprint.
 - [x] Sun-pointing sensors: PointingMode "SunPointing"/"Sun" in
   SensorObject.getBoresightVector (ECEF sun direction from OrekitBodies).
   Remaining attitude gap: whole-body attitude profiles (SatelliteObject.Attitude

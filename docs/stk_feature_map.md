@@ -23,6 +23,7 @@ Where to find the STK-equivalent capability in this suite.
 | Solar beta angle | `computeBetaAngle` |
 | Sun elevation at a site | `computeSunElevation` |
 | Sensors (conic, rectangular), FOV/FOR | `SensorObject`, `computeSensorAccess`, `plotSensorFOV`, `plotSensorFOR` |
+| Sensor footprint / swath on the map | `computeSensorFootprint`, View-ribbon "Sensor FOV"/"Sensor FOR" toggles in the UI |
 | Sensor tasking / scheduling | `src/scheduling` (`SensorTask`, greedy + MILP schedulers) |
 | Coverage definition + grid | `CoverageGrid.globalGrid` / `regionGrid` |
 | Coverage figures of merit (percent covered, revisit) | `computeCoverage`, `plotCoverageMap`, `exportCoverageReport` |
