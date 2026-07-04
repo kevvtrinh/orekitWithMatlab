@@ -111,6 +111,27 @@ CSV exports, App Designer UI (`matlab/launchOrekitSatelliteUI.m`).
   per-sample calls do not re-integrate from epoch; remaining cost is
   MATLAB<->Java call overhead, which ephemeris-mode would not remove.
 
+## Sensor-access "no windows" investigation (2026-07, fixed)
+
+User report: 30-day scenario, nadir conic sensor, ground place, zero access
+windows despite overpasses. Root cause: TEMPORAL ALIASING — LEO sensor passes
+last ~60-90 s but long scenarios use coarse TimeSteps, so every pass fell
+between access samples; nearest-sample getECEF also quantized geometry to the
+propagation grid. Fixes:
+- `computeSensorAccess` options.TimeStepSeconds — dense access sampling
+  independent of the scenario grid.
+- `SatelliteObject.getECEF`/`getECEFMatrix` — slerp direction + linear radius
+  interpolation between ephemeris samples (chord-free, exact at samples).
+- `computeSensorAccess` fully vectorized (was O(n^2) nearest-neighbor per
+  step; 30-day runs took minutes, now seconds). Identical result fields.
+- Bug fix: VelocityVector pointing used GCRF velocity in ECEF math; now uses
+  the Earth-fixed track velocity. Bug fix: sat-to-sat sensor access was always
+  false because NaN elevation failed the elevation gate; NaN now passes (LOS
+  gate still applies). SunPointing vectorized via OrekitBodies.
+- `computeSensorAccess:NoWindows` warning reports closest off-boresight
+  approach + aliasing hint. Repro/diagnostic script at repo root:
+  `debug_sensor_access_no_windows.m`. Test: testSensorAccessSampling.
+
 ## Known caveats / decisions
 
 - Harris-Priester drag: valid ~100–1000 km altitude; returns zero density above,

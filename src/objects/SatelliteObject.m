@@ -107,12 +107,55 @@ classdef SatelliteObject < MissionObject
         end
 
         function position = getECEF(obj, time)
+            position = obj.getECEFMatrix(time);
+        end
+
+        function positions = getECEFMatrix(obj, timeVector)
+            %GETECEFMATRIX Interpolated ECEF positions (numel(timeVector) x 3, meters).
+            %
+            % Spherical interpolation between ephemeris samples: direction
+            % is slerped and radius blended linearly, so interpolated points
+            % stay on the orbit arc instead of cutting a chord through it
+            % (a straight chord dips hundreds of km on coarse time grids).
+            % Clamped to the ephemeris span; exact at the sample times.
             if isempty(obj.Ephemeris) || ~all(ismember(["ECEF_X_m", "ECEF_Y_m", "ECEF_Z_m"], obj.Ephemeris.Properties.VariableNames))
                 error("SatelliteObject:NoECEF", ...
                     "Satellite '%s' does not have ECEF ephemeris.", obj.Name);
             end
-            [~, idx] = min(abs(obj.Ephemeris.Time - time));
-            position = [obj.Ephemeris.ECEF_X_m(idx), obj.Ephemeris.ECEF_Y_m(idx), obj.Ephemeris.ECEF_Z_m(idx)];
+            ephemeris = obj.Ephemeris;
+            timeVector = timeVector(:);
+            timeVector.TimeZone = ephemeris.Time.TimeZone;
+            samples = [ephemeris.ECEF_X_m, ephemeris.ECEF_Y_m, ephemeris.ECEF_Z_m];
+            if height(ephemeris) == 1
+                positions = repmat(samples, numel(timeVector), 1);
+                return;
+            end
+
+            sampleSeconds = seconds(ephemeris.Time - ephemeris.Time(1));
+            querySeconds = seconds(timeVector - ephemeris.Time(1));
+            querySeconds = min(max(querySeconds, sampleSeconds(1)), sampleSeconds(end));
+
+            idx = discretize(querySeconds, sampleSeconds);
+            idx = min(max(idx, 1), height(ephemeris) - 1);
+            s = (querySeconds - sampleSeconds(idx)) ./ ...
+                (sampleSeconds(idx + 1) - sampleSeconds(idx));
+
+            radii = sqrt(sum(samples.^2, 2));
+            units = samples ./ radii;
+            u0 = units(idx, :);
+            u1 = units(idx + 1, :);
+            omega = acos(max(min(sum(u0 .* u1, 2), 1), -1));
+
+            w0 = 1 - s;
+            w1 = s;
+            curved = omega > 1e-8;
+            w0(curved) = sin((1 - s(curved)) .* omega(curved)) ./ sin(omega(curved));
+            w1(curved) = sin(s(curved) .* omega(curved)) ./ sin(omega(curved));
+
+            direction = w0 .* u0 + w1 .* u1;
+            direction = direction ./ max(sqrt(sum(direction.^2, 2)), eps);
+            radius = (1 - s) .* radii(idx) + s .* radii(idx + 1);
+            positions = radius .* direction;
         end
 
         function lla = getLLA(obj, time)
