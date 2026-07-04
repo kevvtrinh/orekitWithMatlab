@@ -1,0 +1,22 @@
+%% Script 204: compute satellite sensor to place access
+suiteRoot = fileparts(fileparts(fileparts(fileparts(mfilename("fullpath")))));
+addpath(suiteRoot);
+startupOrekitSuite();
+
+cfg = ScenarioConfig("Name", "Sat Sensor Access", ...
+    "Epoch", datetime(2026, 1, 1, 0, 0, 0, "TimeZone", "UTC"), ...
+    "Duration", hours(4), ...
+    "TimeStep", seconds(120));
+scenario = MissionScenario(cfg);
+
+sat = SatelliteObject.fromKeplerian("Sat-1", 7000e3, 0.001, 51.6, 0, 0, 0);
+target = PlaceObject("Denver Target", 39.7392, -104.9903, 1609);
+sensor = SensorObject.targeted("TargetCam", "Sat-1", "Denver Target", 5);
+sat = sat.addSensor(sensor);
+
+scenario = scenario.addObject(sat);
+scenario = scenario.addObject(target);
+scenario = scenario.propagate();
+
+result = computeSensorAccess(scenario, "Sat-1", "TargetCam", "Denver Target");
+disp(result.AccessWindows);

@@ -1,0 +1,23 @@
+function result = computeTargetToTargetSlew(scenario, parentName, sensorName, targetA, targetB, time)
+%COMPUTETARGETTOTARGETSLEW Placeholder target-to-target slew estimate.
+
+parent = scenario.getObject(parentName);
+sensor = parent.getSensor(sensorName);
+parentPosition = SensorObject.objectPositionECEF(parent, time);
+targetAPosition = SensorObject.objectPositionECEF(scenario.getObject(targetA), time);
+targetBPosition = SensorObject.objectPositionECEF(scenario.getObject(targetB), time);
+
+vectorA = targetAPosition - parentPosition;
+vectorB = targetBPosition - parentPosition;
+slewAngleDeg = computeSlewAngle(vectorA, vectorB);
+slewTimeSeconds = computeSlewTime(slewAngleDeg, ...
+    sensor.SlewRateDegPerSec, sensor.SlewAccelerationDegPerSec2);
+
+result = struct("ParentName", string(parentName), ...
+    "SensorName", string(sensorName), ...
+    "TargetA", string(targetA), ...
+    "TargetB", string(targetB), ...
+    "Time", time, ...
+    "SlewAngleDeg", slewAngleDeg, ...
+    "SlewTimeSeconds", slewTimeSeconds);
+end
