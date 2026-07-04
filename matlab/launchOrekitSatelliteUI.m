@@ -21,6 +21,7 @@ scenarioNameEdit = [];
 epochEdit = [];
 durationHoursEdit = [];
 timeStepEdit = [];
+animationStepEdit = [];
 stopTimeValue = [];
 scenarioTimeEdit = [];
 timeSlider = [];
@@ -319,9 +320,9 @@ refreshAll();
     end
 
     function buildViewRibbon(parent)
-        grid = uigridlayout(parent, [2 14]);
+        grid = uigridlayout(parent, [2 15]);
         grid.RowHeight = {56, 22};
-        grid.ColumnWidth = {102, 102, 90, 14, 112, 92, 76, 96, 82, 82, 82, 96, 104, "1x"};
+        grid.ColumnWidth = {102, 102, 90, 14, 112, 92, 76, 96, 82, 82, 82, 96, 104, 74, "1x"};
         grid.Padding = [10 8 10 6];
         grid.ColumnSpacing = 8;
 
@@ -398,6 +399,17 @@ refreshAll();
             "ButtonPushedFcn", @(~, ~) stepScenarioTime(1));
         btn.Layout.Row = 1;
         btn.Layout.Column = 13;
+
+        animationStepEdit = uieditfield(grid, "numeric", ...
+            "Value", seconds(scenario.Config.AnimationStep), ...
+            "Limits", [0.001 Inf], ...
+            "ValueChangedFcn", @animationStepChanged);
+        animationStepEdit.Layout.Row = 1;
+        animationStepEdit.Layout.Column = 14;
+        lbl = uilabel(grid, "Text", "Anim s", ...
+            "HorizontalAlignment", "center");
+        lbl.Layout.Row = 2;
+        lbl.Layout.Column = 14;
     end
 
     function buildSensorsRibbon(parent)
@@ -995,7 +1007,7 @@ refreshAll();
             "Epoch", datetime(2026, 1, 1, 0, 0, 0, "TimeZone", "UTC"), ...
             "Duration", hours(24), ...
             "TimeStep", seconds(60), ...
-            "AnimationStep", seconds(60), ...
+            "AnimationStep", seconds(10), ...
             "OutputFrame", "GCRF");
     end
 
@@ -1083,9 +1095,13 @@ refreshAll();
         epoch = parseUtcDatetime(epochEdit.Value);
         durationHours = durationHoursEdit.Value;
         stepSeconds = timeStepEdit.Value;
-        if durationHours <= 0 || stepSeconds <= 0
+        animationStepSeconds = seconds(scenario.Config.AnimationStep);
+        if ~isempty(animationStepEdit) && isvalid(animationStepEdit)
+            animationStepSeconds = animationStepEdit.Value;
+        end
+        if durationHours <= 0 || stepSeconds <= 0 || animationStepSeconds <= 0
             error("OrekitUI:InvalidScenarioTime", ...
-                "Duration and time step must be positive.");
+                "Duration, time step, and animation step must be positive.");
         end
 
         name = string(strtrim(scenarioNameEdit.Value));
@@ -1097,9 +1113,28 @@ refreshAll();
             "Epoch", epoch, ...
             "Duration", hours(durationHours), ...
             "TimeStep", seconds(stepSeconds), ...
-            "AnimationStep", seconds(stepSeconds), ...
+            "AnimationStep", seconds(animationStepSeconds), ...
             "OutputFrame", "GCRF");
         cfg.validate();
+    end
+
+    function animationStepChanged(~, ~)
+        try
+            if animationStepEdit.Value <= 0
+                error("OrekitUI:InvalidAnimationStep", ...
+                    "Animation step must be positive.");
+            end
+            cfg = scenario.Config;
+            cfg.AnimationStep = seconds(animationStepEdit.Value);
+            cfg.validate();
+            scenario.Config = cfg;
+            updateScenarioControls();
+            setStatus("Animation step updated", [0.10 0.42 0.14]);
+        catch err
+            uialert(fig, getReport(err, "extended", "hyperlinks", "off"), ...
+                "Animation step update failed");
+            updateScenarioControls();
+        end
     end
 
     function time = currentScenarioTimeFromControl(cfg)
@@ -1787,9 +1822,9 @@ refreshAll();
             return;
         end
 
-        dialog = uifigure("Name", "Add Sensor", "Position", [260 130 460 500]);
-        grid = uigridlayout(dialog, [12 2]);
-        grid.RowHeight = [{34}, repmat({32}, 1, 9), {38, "1x"}];
+        dialog = uifigure("Name", "Add Sensor", "Position", [260 90 500 620]);
+        grid = uigridlayout(dialog, [15 2]);
+        grid.RowHeight = [{34}, repmat({32}, 1, 13), {38}];
         grid.ColumnWidth = {160, "1x"};
         grid.Padding = [12 12 12 12];
         grid.RowSpacing = 7;
@@ -1813,7 +1848,7 @@ refreshAll();
 
         uilabel(grid, "Text", "Pointing mode");
         pointingDrop = uidropdown(grid, "Items", ...
-            {'Nadir', 'FixedVector', 'Targeted', 'VelocityVector'}, ...
+            {'Nadir', 'Mounted', 'FixedVector', 'Targeted', 'VelocityVector'}, ...
             "Value", "Nadir");
         pointingDrop.Layout.Row = 4;
         pointingDrop.Layout.Column = 2;
@@ -1853,8 +1888,23 @@ refreshAll();
         minElEdit.Layout.Row = 11;
         minElEdit.Layout.Column = 2;
 
+        uilabel(grid, "Text", "Mount az/el deg");
+        mountAzElEdit = uieditfield(grid, "text", "Value", "0,-90");
+        mountAzElEdit.Layout.Row = 12;
+        mountAzElEdit.Layout.Column = 2;
+
+        uilabel(grid, "Text", "Az/el rate deg/s");
+        azElRateEdit = uieditfield(grid, "text", "Value", "Inf,Inf");
+        azElRateEdit.Layout.Row = 13;
+        azElRateEdit.Layout.Column = 2;
+
+        uilabel(grid, "Text", "Az/el accel deg/s^2");
+        azElAccelEdit = uieditfield(grid, "text", "Value", "Inf,Inf");
+        azElAccelEdit.Layout.Row = 14;
+        azElAccelEdit.Layout.Column = 2;
+
         btn = uibutton(grid, "Text", "Add Sensor", "ButtonPushedFcn", @addSensorFromDialog);
-        btn.Layout.Row = 12;
+        btn.Layout.Row = 15;
         btn.Layout.Column = [1 2];
 
         function addSensorFromDialog(~, ~)
@@ -1865,6 +1915,9 @@ refreshAll();
                 targetName = string(targetDrop.Value);
                 boresight = parseNumericVector(boresightEdit.Value, 3);
                 rangeValues = parseNumericVector(rangeEdit.Value, 2);
+                mountAzEl = parseNumericVector(mountAzElEdit.Value, 2);
+                azElRate = parseNumericVector(azElRateEdit.Value, 2);
+                azElAccel = parseNumericVector(azElAccelEdit.Value, 2);
 
                 updateProgress(progress, 0.30, "Creating sensor definition...");
                 switch string(typeDrop.Value)
@@ -1885,6 +1938,10 @@ refreshAll();
                         sensor = SensorObject.simpleConic(sensorName, parentName, coneEdit.Value);
                 end
                 sensor.PointingMode = string(pointingDrop.Value);
+                if sensor.PointingMode == "Mounted"
+                    sensor.MountingFrame = "Body";
+                    sensor.BoresightFrame = "Body";
+                end
                 if sensor.PointingMode == "Targeted"
                     if targetName == "<none>"
                         error("OrekitUI:MissingSensorTarget", ...
@@ -1893,6 +1950,11 @@ refreshAll();
                     sensor.CurrentPointingTarget = targetName;
                 end
                 sensor.BoresightVector = boresight;
+                sensor = sensor.setMountOrientationAzEl(mountAzEl(1), mountAzEl(2));
+                sensor.AzimuthRateLimitDegPerSec = azElRate(1);
+                sensor.ElevationRateLimitDegPerSec = azElRate(2);
+                sensor.AzimuthAccelerationLimitDegPerSec2 = azElAccel(1);
+                sensor.ElevationAccelerationLimitDegPerSec2 = azElAccel(2);
                 sensor.MinRangeKm = rangeValues(1);
                 sensor.MaxRangeKm = rangeValues(2);
                 sensor.MinElevationDeg = minElEdit.Value;
@@ -2404,6 +2466,13 @@ refreshAll();
                     sprintf("Range: %.3f to %.3f km", ...
                     sensor.MinRangeKm, sensor.MaxRangeKm)
                     sprintf("Min elevation: %.3f deg", sensor.MinElevationDeg)
+                    sprintf("Mount az/el: %.3f / %.3f deg", ...
+                    sensor.MountAzimuthDeg, sensor.MountElevationDeg)
+                    sprintf("Az/el rate limits: %.3f / %.3f deg/s", ...
+                    sensor.AzimuthRateLimitDegPerSec, sensor.ElevationRateLimitDegPerSec)
+                    sprintf("Az/el accel limits: %.3f / %.3f deg/s^2", ...
+                    sensor.AzimuthAccelerationLimitDegPerSec2, ...
+                    sensor.ElevationAccelerationLimitDegPerSec2)
                     "Targeted at: " + sensor.CurrentPointingTarget
                     ]);
                 return;
@@ -2419,6 +2488,7 @@ refreshAll();
             "Stop UTC: " + formatUtc(scenario.Config.getStopTime())
             sprintf("Duration: %s", scenarioDurationLabel())
             sprintf("Time step: %.3f s", seconds(scenario.Config.TimeStep))
+            sprintf("Animation step: %.3f s", seconds(scenario.Config.AnimationStep))
             sprintf("Satellites: %d", satelliteCount())
             sprintf("Places: %d", groundStationCount())
             sprintf("Targets: %d", targetCount())
@@ -2636,17 +2706,17 @@ refreshAll();
                     "Color", [0.95 0.68 0.12], "LineWidth", 1.15);
             end
 
-            idx = nearestSampleIndex(eph.Time, scenario.CurrentAnimationTime);
+            currentKm = satellitePositionKmAtTime(obj, frameName);
             markerSize = 78;
             edgeColor = [1 1 1];
             if selectedKind == "Satellite" && selectedName == string(obj.Name)
                 markerSize = 110;
                 edgeColor = [0.25 0.03 0.03];
             end
-            scatter3(globeAxes, xKm(idx), yKm(idx), zKm(idx), markerSize, ...
+            scatter3(globeAxes, currentKm(1), currentKm(2), currentKm(3), markerSize, ...
                 "filled", "MarkerFaceColor", obj.Color, ...
                 "MarkerEdgeColor", edgeColor, "LineWidth", 1.1);
-            plot3(globeAxes, [0 xKm(idx)], [0 yKm(idx)], [0 zKm(idx)], ...
+            plot3(globeAxes, [0 currentKm(1)], [0 currentKm(2)], [0 currentKm(3)], ...
                 "Color", [0.95 0.74 0.18], "LineWidth", 0.8);
         end
     end
@@ -2655,13 +2725,14 @@ refreshAll();
         for footprint = collectSensorFootprints()
             data = footprint{1};
             parent = scenario.getObject(data.ParentName);
-            apexKm = parent.getECEF(scenario.CurrentAnimationTime) / 1000.0;
+            apexKm = satellitePositionKmAtTime(parent, frameName);
             % Lift the outline slightly off the globe so it stays visible.
             rimKm = data.EcefMeters / 1000.0 * 1.004;
             [rx, ry, rz] = earthFixedToViewFrame(rimKm(:, 1), rimKm(:, 2), ...
                 rimKm(:, 3), frameName, earthAngleRad);
-            [ax3, ay3, az3] = earthFixedToViewFrame(apexKm(1), apexKm(2), ...
-                apexKm(3), frameName, earthAngleRad);
+            ax3 = apexKm(1);
+            ay3 = apexKm(2);
+            az3 = apexKm(3);
 
             if data.Type == "FOR"
                 color = [0.20 0.55 0.95];
@@ -3071,6 +3142,9 @@ refreshAll();
         epochEdit.Value = formatUtc(cfg.Epoch);
         durationHoursEdit.Value = hours(cfg.getStopTime() - cfg.Epoch);
         timeStepEdit.Value = seconds(cfg.TimeStep);
+        if ~isempty(animationStepEdit) && isvalid(animationStepEdit)
+            animationStepEdit.Value = seconds(cfg.AnimationStep);
+        end
         stopTimeValue.Text = formatUtc(cfg.getStopTime());
         scenario.CurrentAnimationTime = clampScenarioTime(scenario.CurrentAnimationTime, cfg);
         scenarioTimeEdit.Value = formatUtc(scenario.CurrentAnimationTime);
@@ -3544,6 +3618,15 @@ refreshAll();
         end
     end
 
+    function positionKm = satellitePositionKmAtTime(satellite, frameName)
+        if frameName == "ECI"
+            positionKm = satellite.getECI(scenario.CurrentAnimationTime) / 1000.0;
+        else
+            positionKm = satellite.getECEF(scenario.CurrentAnimationTime) / 1000.0;
+        end
+        positionKm = reshape(positionKm, 1, 3);
+    end
+
     function thetaRad = earthRotationAngle(time)
         earthRateRadPerSec = 7.2921150e-5;
         thetaRad = mod(earthRateRadPerSec * seconds(time - scenario.Config.Epoch), 2 * pi);
@@ -3551,11 +3634,20 @@ refreshAll();
 
     function [xView, yView, zView] = earthFixedToViewFrame(x, y, z, frameName, thetaRad)
         if frameName == "ECI"
-            c = cos(thetaRad);
-            s = sin(thetaRad);
-            xView = c .* x - s .* y;
-            yView = s .* x + c .* y;
-            zView = z;
+            shape = size(x);
+            ecefKm = [x(:), y(:), z(:)];
+            try
+                gcrfKm = OrekitFrameTransform.ecefToGcrf( ...
+                    scenario.CurrentAnimationTime, ecefKm * 1000.0) / 1000.0;
+            catch
+                c = cos(thetaRad);
+                s = sin(thetaRad);
+                gcrfKm = [c .* ecefKm(:, 1) - s .* ecefKm(:, 2), ...
+                    s .* ecefKm(:, 1) + c .* ecefKm(:, 2), ecefKm(:, 3)];
+            end
+            xView = reshape(gcrfKm(:, 1), shape);
+            yView = reshape(gcrfKm(:, 2), shape);
+            zView = reshape(gcrfKm(:, 3), shape);
         else
             xView = x;
             yView = y;

@@ -11,6 +11,8 @@ classdef SensorObject < MissionObject
         BoresightFrame string = "Parent"
         BoresightVector double = [0 0 1]
         UpVector double = [0 0 1]
+        MountAzimuthDeg double = 0
+        MountElevationDeg double = -90
         FieldOfViewType string = "SimpleConic"
         FieldOfViewShape string = "Cone"
         FieldOfViewDeg double = NaN
@@ -32,6 +34,10 @@ classdef SensorObject < MissionObject
         SlewAccelerationDegPerSec2 double = Inf
         MaxSlewRateDegPerSec double = Inf
         MaxSlewAccelDegPerSec2 double = Inf
+        AzimuthRateLimitDegPerSec double = Inf
+        ElevationRateLimitDegPerSec double = Inf
+        AzimuthAccelerationLimitDegPerSec2 double = Inf
+        ElevationAccelerationLimitDegPerSec2 double = Inf
         SettlingTimeSeconds double = 0
         MinDwellTimeSeconds double = 0
         MaxDwellTimeSeconds double = Inf
@@ -107,6 +113,21 @@ classdef SensorObject < MissionObject
                 error("SensorObject:InvalidUpVector", ...
                     "UpVector cannot be zero.");
             end
+            if ~isfinite(obj.MountAzimuthDeg) || ...
+                    ~isfinite(obj.MountElevationDeg) || ...
+                    obj.MountElevationDeg < -90 || obj.MountElevationDeg > 90
+                error("SensorObject:InvalidMountOrientation", ...
+                    "Mount azimuth must be finite and mount elevation must be between -90 and 90 degrees.");
+            end
+            slewLimits = [obj.SlewRateDegPerSec, obj.SlewAccelerationDegPerSec2, ...
+                obj.MaxSlewRateDegPerSec, obj.MaxSlewAccelDegPerSec2, ...
+                obj.AzimuthRateLimitDegPerSec, obj.ElevationRateLimitDegPerSec, ...
+                obj.AzimuthAccelerationLimitDegPerSec2, ...
+                obj.ElevationAccelerationLimitDegPerSec2];
+            if any(isnan(slewLimits)) || any(isfinite(slewLimits) & slewLimits <= 0)
+                error("SensorObject:InvalidSlewLimits", ...
+                    "Sensor slew velocity and acceleration limits must be positive or Inf.");
+            end
             if norm(obj.BoresightBody) == 0
                 error("SensorObject:InvalidBoresightBody", ...
                     "BoresightBody cannot be zero.");
@@ -163,9 +184,16 @@ classdef SensorObject < MissionObject
                         boresight = SensorObject.localEnuVectorToECEF(parent, [0 0 1]);
                     end
 
-                case {"FIXEDVECTOR", "BODYFIXED"}
+                case {"MOUNTED", "MOUNTEDBODY", "BODYMOUNTED", "BODYFIXED"}
+                    boresight = SensorObject.bodyVectorToECEF(parent, time, obj.BoresightBody);
+
+                case "FIXEDVECTOR"
                     if isa(parent, "SatelliteObject")
-                        boresight = reshape(obj.BoresightVector, 1, 3);
+                        if strcmpi(obj.BoresightFrame, "Body")
+                            boresight = SensorObject.bodyVectorToECEF(parent, time, obj.BoresightBody);
+                        else
+                            boresight = reshape(obj.BoresightVector, 1, 3);
+                        end
                     else
                         boresight = SensorObject.localEnuVectorToECEF(parent, obj.BoresightVector);
                     end
@@ -372,6 +400,28 @@ classdef SensorObject < MissionObject
                 obj.SettlingTimeSeconds;
         end
 
+        function slewTimeSeconds = computeAzElSlewTime(obj, fromAzElDeg, toAzElDeg)
+            fromAzElDeg = reshape(fromAzElDeg, 1, 2);
+            toAzElDeg = reshape(toAzElDeg, 1, 2);
+            deltaAzDeg = abs(mod(toAzElDeg(1) - fromAzElDeg(1) + 180, 360) - 180);
+            deltaElDeg = abs(toAzElDeg(2) - fromAzElDeg(2));
+            azTimeSeconds = computeSlewTime(deltaAzDeg, ...
+                obj.AzimuthRateLimitDegPerSec, ...
+                obj.AzimuthAccelerationLimitDegPerSec2);
+            elTimeSeconds = computeSlewTime(deltaElDeg, ...
+                obj.ElevationRateLimitDegPerSec, ...
+                obj.ElevationAccelerationLimitDegPerSec2);
+            slewTimeSeconds = max(azTimeSeconds, elTimeSeconds) + ...
+                obj.SettlingTimeSeconds;
+        end
+
+        function obj = setMountOrientationAzEl(obj, azimuthDeg, elevationDeg)
+            obj.MountAzimuthDeg = azimuthDeg;
+            obj.MountElevationDeg = elevationDeg;
+            obj.BoresightBody = SensorObject.bodyVectorFromAzEl(azimuthDeg, elevationDeg);
+            obj.MountNormalBody = obj.BoresightBody;
+        end
+
         function dataVolumeMb = estimateDataVolume(obj, ~, durationSeconds)
             dataVolumeMb = obj.DataRateBps .* max(durationSeconds, 0) ./ 8 ./ 1e6;
         end
@@ -402,6 +452,9 @@ classdef SensorObject < MissionObject
             else
                 slewRate = obj.SlewRateDegPerSec;
             end
+            axisLimits = [obj.AzimuthRateLimitDegPerSec, ...
+                obj.ElevationRateLimitDegPerSec];
+            slewRate = min([slewRate, axisLimits(isfinite(axisLimits) & axisLimits > 0)]);
         end
 
         function slewAccel = effectiveSlewAccelDegPerSec2(obj)
@@ -410,6 +463,9 @@ classdef SensorObject < MissionObject
             else
                 slewAccel = obj.SlewAccelerationDegPerSec2;
             end
+            axisLimits = [obj.AzimuthAccelerationLimitDegPerSec2, ...
+                obj.ElevationAccelerationLimitDegPerSec2];
+            slewAccel = min([slewAccel, axisLimits(isfinite(axisLimits) & axisLimits > 0)]);
         end
     end
 
@@ -495,6 +551,30 @@ classdef SensorObject < MissionObject
             vector = SensorObject.unitVector(vector);
         end
 
+        function vector = bodyVectorToECEF(missionObject, time, bodyVector)
+            bodyVector = reshape(bodyVector, 1, 3);
+            if isa(missionObject, "SatelliteObject")
+                position = missionObject.getECEF(time);
+                zAxis = SensorObject.unitVector(position);
+                before = missionObject.getECEF(time - seconds(1));
+                after = missionObject.getECEF(time + seconds(1));
+                velocity = after - before;
+                xAxis = velocity - dot(velocity, zAxis) * zAxis;
+                if norm(xAxis) < 1e-9
+                    xAxis = SensorObject.anyPerpendicular(zAxis);
+                else
+                    xAxis = SensorObject.unitVector(xAxis);
+                end
+                yAxis = SensorObject.unitVector(cross(zAxis, xAxis));
+                xAxis = SensorObject.unitVector(cross(yAxis, zAxis));
+                vector = bodyVector(1) * xAxis + bodyVector(2) * yAxis + ...
+                    bodyVector(3) * zAxis;
+                vector = SensorObject.unitVector(vector);
+            else
+                vector = SensorObject.localEnuVectorToECEF(missionObject, bodyVector);
+            end
+        end
+
         function [latDeg, lonDeg] = objectLatLon(missionObject)
             if isprop(missionObject, "LatitudeDeg") && isprop(missionObject, "LongitudeDeg")
                 latDeg = missionObject.LatitudeDeg;
@@ -530,6 +610,19 @@ classdef SensorObject < MissionObject
                 seed = [0 1 0];
             end
             vector = SensorObject.unitVector(cross(reference, seed));
+        end
+
+        function vector = bodyVectorFromAzEl(azimuthDeg, elevationDeg)
+            vector = [cosd(elevationDeg) * cosd(azimuthDeg), ...
+                cosd(elevationDeg) * sind(azimuthDeg), sind(elevationDeg)];
+            vector = SensorObject.unitVector(vector);
+        end
+
+        function azElDeg = azElFromBodyVector(vector)
+            vector = SensorObject.unitVector(vector);
+            azimuthDeg = mod(atan2d(vector(2), vector(1)), 360);
+            elevationDeg = asind(max(min(vector(3), 1), -1));
+            azElDeg = [azimuthDeg, elevationDeg];
         end
     end
 end

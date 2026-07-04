@@ -40,6 +40,48 @@ verifyTrue(testCase, rect.isInsideFieldOfView([0 0 1], [0 0 1]));
 verifyFalse(testCase, rect.isInsideFieldOfView([1 0 1], [0 0 1]));
 end
 
+function testSensorMountAzElAndAxisLimits(testCase)
+sensor = SensorObject.simpleConic("GimbalCam", "Sat-1", 20);
+sensor = sensor.setMountOrientationAzEl(45, -30);
+expectedBody = [cosd(-30) * cosd(45), cosd(-30) * sind(45), sind(-30)];
+verifyEqual(testCase, sensor.MountAzimuthDeg, 45);
+verifyEqual(testCase, sensor.MountElevationDeg, -30);
+verifyEqual(testCase, sensor.BoresightBody, expectedBody, "AbsTol", 1e-12);
+
+azEl = SensorObject.azElFromBodyVector(sensor.BoresightBody);
+verifyEqual(testCase, azEl, [45, -30], "AbsTol", 1e-12);
+
+sensor.SlewRateDegPerSec = 10;
+sensor.SlewAccelerationDegPerSec2 = 8;
+sensor.AzimuthRateLimitDegPerSec = 2;
+sensor.ElevationRateLimitDegPerSec = 5;
+sensor.AzimuthAccelerationLimitDegPerSec2 = 1;
+sensor.ElevationAccelerationLimitDegPerSec2 = 4;
+sensor.SettlingTimeSeconds = 0.5;
+
+verifyEqual(testCase, sensor.effectiveSlewRateDegPerSec(), 2);
+verifyEqual(testCase, sensor.effectiveSlewAccelDegPerSec2(), 1);
+
+expectedSlew = max(computeSlewTime(20, 2, 1), computeSlewTime(10, 5, 4)) + 0.5;
+verifyEqual(testCase, sensor.computeAzElSlewTime([350 0], [10 10]), ...
+    expectedSlew, "AbsTol", 1e-12);
+end
+
+function testMountedSensorMinusZPointsNadir(testCase)
+scenario = localPropagatedScenario();
+time = scenario.Config.Epoch + minutes(5);
+
+nadirSensor = SensorObject.simpleConic("NadirCam", "Sat-1", 20);
+nadirSensor.PointingMode = "Nadir";
+mountedSensor = SensorObject.simpleConic("MountedCam", "Sat-1", 20);
+mountedSensor.PointingMode = "Mounted";
+mountedSensor = mountedSensor.setMountOrientationAzEl(0, -90);
+
+nadir = nadirSensor.getBoresightVector(time, scenario);
+mounted = mountedSensor.getBoresightVector(time, scenario);
+verifyEqual(testCase, mounted, nadir, "AbsTol", 1e-10);
+end
+
 function testSatelliteSensorAccessToPlace(testCase)
 scenario = localPropagatedScenario();
 sat = scenario.getObject("Sat-1");

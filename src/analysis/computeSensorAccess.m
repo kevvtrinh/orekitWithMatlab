@@ -156,9 +156,24 @@ switch upper(string(sensor.PointingMode))
             boresights = pointingPositions - parentPositions;
         end
 
-    case {"FIXEDVECTOR", "BODYFIXED"}
+    case {"MOUNTED", "MOUNTEDBODY", "BODYMOUNTED", "BODYFIXED"}
+        boresights = zeros(n, 3);
+        for k = 1:n
+            boresights(k, :) = SensorObject.bodyVectorToECEF( ...
+                parent, timeVector(k), sensor.BoresightBody);
+        end
+
+    case "FIXEDVECTOR"
         if isSatelliteParent
-            boresights = repmat(reshape(sensor.BoresightVector, 1, 3), n, 1);
+            if strcmpi(sensor.BoresightFrame, "Body")
+                boresights = zeros(n, 3);
+                for k = 1:n
+                    boresights(k, :) = SensorObject.bodyVectorToECEF( ...
+                        parent, timeVector(k), sensor.BoresightBody);
+                end
+            else
+                boresights = repmat(reshape(sensor.BoresightVector, 1, 3), n, 1);
+            end
         else
             boresights = repmat(SensorObject.localEnuVectorToECEF(parent, ...
                 sensor.BoresightVector), n, 1);
@@ -359,4 +374,10 @@ metadata.FieldOfViewType = sensor.FieldOfViewType;
 metadata.ConeHalfAngleDeg = sensor.ConeHalfAngleDeg;
 metadata.RectangularHalfAngleXDeg = sensor.RectangularHalfAngleXDeg;
 metadata.RectangularHalfAngleYDeg = sensor.RectangularHalfAngleYDeg;
+metadata.MountAzimuthDeg = sensor.MountAzimuthDeg;
+metadata.MountElevationDeg = sensor.MountElevationDeg;
+metadata.AzimuthRateLimitDegPerSec = sensor.AzimuthRateLimitDegPerSec;
+metadata.ElevationRateLimitDegPerSec = sensor.ElevationRateLimitDegPerSec;
+metadata.AzimuthAccelerationLimitDegPerSec2 = sensor.AzimuthAccelerationLimitDegPerSec2;
+metadata.ElevationAccelerationLimitDegPerSec2 = sensor.ElevationAccelerationLimitDegPerSec2;
 end
