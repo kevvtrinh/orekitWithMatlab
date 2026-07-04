@@ -81,10 +81,17 @@ CSV exports, App Designer UI (`matlab/launchOrekitSatelliteUI.m`).
 - [x] Chains: `computeChainAccess` (multi-hop AND of link accesses).
 - Attitude profiles beyond "Default"/Nadir (sun-pointing, target-pointing tie-in
   with existing sensor pointing).
-- Ephemeris file import/export (CCSDS OEM via Orekit writers).
+- [x] CCSDS OEM export/import: `exportOEM`, `loadOEMFile`,
+  `SatelliteObject.fromEphemeris` ("Ephemeris" orbit type, Hermite resampling
+  via `OrekitEphemeris.resample`). Tests: testEphemerisInterop, example_15.
+- [x] Deck access: `computeDeckAccess` (all sats vs one target, merged windows).
+- [x] Sun exclusion access constraint: `SunExclusionAngleDeg` option.
 - [x] Ground station `AzElMask` wired into access (table columns AzimuthDeg
   ascending in [0,360), MinElevationDeg; linear interp with wraparound).
-- Interpolation in `getPosition`/`getECEF` (currently nearest-sample).
+- [x] Interpolation in `MissionObject.getState`/`getPosition` (cubic Hermite
+  with edge clamping; `getECEF`/`getLLA` still nearest-sample).
+- PUSH POLICY: user said do NOT push to GitHub (session auth is broken anyway);
+  commit locally only. GitHub connector needs re-auth by the user before any push.
 - Numerical propagator performance: use Orekit ephemeris-mode batch propagation
   instead of per-sample `propagate()` calls.
 

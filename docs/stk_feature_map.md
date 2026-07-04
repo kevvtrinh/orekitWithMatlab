@@ -12,7 +12,9 @@ Where to find the STK-equivalent capability in this suite.
 | Astrogator (impulsive burns) | `ImpulsiveManeuver`, `SatelliteObject.addManeuver`, `ManeuverPlanner` (Hohmann, plane change) |
 | Facility / Place / Target | `GroundStationObject`, `FacilityObject`, `PlaceObject`, `TargetObject`, `AreaTargetObject` |
 | Constellations (Walker) | `ConstellationFactory.walkerDelta` / `walkerStar` |
-| Deck access / catalog import | `loadTLEFile` |
+| Deck access / catalog import | `loadTLEFile`, `computeDeckAccess` |
+| Ephemeris file import/export (CCSDS OEM) | `exportOEM`, `loadOEMFile`, `SatelliteObject.fromEphemeris` |
+| Sun exclusion access constraint | `computeAccess(..., struct("SunExclusionAngleDeg", ...))` |
 | Access (basic) | `computeAccess`, `scenario.computeAccess` |
 | Access constraints (elevation, range, lighting) | `computeAccess(..., struct("MinElevationDeg",...,"MinRangeKm",...,"MaxRangeKm",...,"GroundLighting",...,"SatelliteLighting",...))` |
 | AER report | `computeAzElRange`, `exportAccessReport` |
@@ -33,5 +35,4 @@ Where to find the STK-equivalent capability in this suite.
 ## Not covered yet (see plan.md phase 2)
 
 - Attitude profiles beyond nadir/default pointing
-- CCSDS OEM/OMM ephemeris file import/export
 - Finite (non-impulsive) maneuvers and targeting/differential correction

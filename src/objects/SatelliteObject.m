@@ -12,6 +12,7 @@ classdef SatelliteObject < MissionObject
         CartesianState double = nan(1, 6)
         TLELine1 string = ""
         TLELine2 string = ""
+        SourceEphemeris table = table()
         PropagatorType string = "Keplerian"
         MassKg double = 1000
         DragAreaM2 double = 4
@@ -65,6 +66,13 @@ classdef SatelliteObject < MissionObject
                         error("SatelliteObject:IncompleteTLE", ...
                             "TLE satellite '%s' requires two TLE lines.", obj.Name);
                     end
+                case "Ephemeris"
+                    required = ["Time", "X_m", "Y_m", "Z_m", "VX_mps", "VY_mps", "VZ_mps"];
+                    if isempty(obj.SourceEphemeris) || ...
+                            ~all(ismember(required, obj.SourceEphemeris.Properties.VariableNames))
+                        error("SatelliteObject:IncompleteEphemeris", ...
+                            "Ephemeris satellite '%s' requires a SourceEphemeris table with time and GCRF state columns.", obj.Name);
+                    end
                 otherwise
                     error("SatelliteObject:UnsupportedOrbitType", ...
                         "Unsupported orbit definition type: %s", obj.OrbitDefinitionType);
@@ -81,6 +89,12 @@ classdef SatelliteObject < MissionObject
 
         function obj = propagate(obj, timeVector, config)
             obj.validate();
+            if strcmp(obj.OrbitDefinitionType, "Ephemeris")
+                obj.Ephemeris = OrekitEphemeris.resample(obj.SourceEphemeris, timeVector);
+                obj.OrekitPropagator = [];
+                obj.IsPropagated = true;
+                return;
+            end
             [ephemeris, propagator] = OrekitPropagatorFactory.propagateWithManeuvers( ...
                 obj, config, timeVector);
             obj.OrekitPropagator = propagator;
@@ -205,6 +219,13 @@ classdef SatelliteObject < MissionObject
             obj = SatelliteObject(name);
             obj.OrbitDefinitionType = "Cartesian";
             obj.CartesianState = reshape(stateVector, 1, 6);
+        end
+
+        function obj = fromEphemeris(name, sourceEphemeris)
+            obj = SatelliteObject(name);
+            obj.OrbitDefinitionType = "Ephemeris";
+            obj.PropagatorType = "Ephemeris";
+            obj.SourceEphemeris = sourceEphemeris;
         end
 
         function obj = fromTLE(name, line1, line2)

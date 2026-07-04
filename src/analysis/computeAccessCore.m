@@ -93,6 +93,19 @@ if ~strcmpi(groundLighting, "Any") && strlength(groundForLighting) > 0
     end
 end
 
+% Sun exclusion constraint: the satellite direction seen from the ground
+% site must stay at least SunExclusionAngleDeg away from the Sun direction
+% (optical/RF interference avoidance).
+sunExclusionDeg = constraintValue(options, "SunExclusionAngleDeg", NaN);
+if ~isnan(sunExclusionDeg) && strlength(groundForLighting) > 0
+    sunAtSite = computeSunElevation(scenario, groundForLighting);
+    separationDeg = acosd(max(min( ...
+        sind(aer.ElevationDeg) .* sind(sunAtSite.SunElevationDeg) + ...
+        cosd(aer.ElevationDeg) .* cosd(sunAtSite.SunElevationDeg) .* ...
+        cosd(aer.AzimuthDeg - sunAtSite.SunAzimuthDeg), 1), -1));
+    accessLogical = accessLogical & (separationDeg >= sunExclusionDeg);
+end
+
 % Satellite lighting constraint.
 satelliteLighting = string(constraintValue(options, "SatelliteLighting", "Any"));
 if ~strcmpi(satelliteLighting, "Any") && strlength(satelliteForLighting) > 0
@@ -110,7 +123,8 @@ end
 
 accessResult.Constraints = struct( ...
     "MinRangeKm", minRangeKm, "MaxRangeKm", maxRangeKm, ...
-    "GroundLighting", groundLighting, "SatelliteLighting", satelliteLighting);
+    "GroundLighting", groundLighting, "SatelliteLighting", satelliteLighting, ...
+    "SunExclusionAngleDeg", sunExclusionDeg);
 accessResult.AccessLogical = accessLogical;
 accessResult.AccessWindows = buildContactPlan(timeVector, accessLogical, ...
     aer.ElevationDeg, aer.RangeKm, sourceForWindow, targetForWindow);

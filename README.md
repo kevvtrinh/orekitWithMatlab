@@ -157,6 +157,16 @@ exportCoverageReport(coverage, "coverage_report.csv");
 
 See `examples/example_11_coverageRevisit.m`.
 
+## Ephemeris files and deck access
+
+```matlab
+exportOEM(scenario, "Sat-1", "sat1.oem");        % CCSDS OEM for STK/GMAT
+sat = loadOEMFile("sat1.oem");                   % ephemeris-driven satellite
+deck = computeDeckAccess(scenario, "Denver GS"); % all sats vs one target
+```
+
+See `examples/example_15_ephemerisInterop.m`.
+
 ## TLE catalogs, element history, link budgets
 
 ```matlab
