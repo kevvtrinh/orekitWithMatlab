@@ -6,6 +6,10 @@ classdef MissionScenario
         Objects cell = {}
         PropagationResults struct = struct()
         AccessResults struct = struct()
+        SensorTasks cell = {}
+        TaskCandidates table = table()
+        TaskConflicts table = table()
+        SensorSchedule table = table()
         CurrentAnimationTime = datetime(2026, 1, 1, 0, 0, 0, "TimeZone", "UTC")
         Metadata struct = struct()
     end
@@ -113,6 +117,10 @@ classdef MissionScenario
             end
             data.PropagationResults = obj.PropagationResults;
             data.AccessResults = obj.AccessResults;
+            data.SensorTasks = obj.SensorTasks;
+            data.TaskCandidates = obj.TaskCandidates;
+            data.TaskConflicts = obj.TaskConflicts;
+            data.SensorSchedule = obj.SensorSchedule;
             data.CurrentAnimationTime = obj.CurrentAnimationTime;
             data.Metadata = obj.Metadata;
         end
@@ -162,6 +170,18 @@ classdef MissionScenario
             end
             if isfield(data, "AccessResults")
                 obj.AccessResults = data.AccessResults;
+            end
+            if isfield(data, "SensorTasks")
+                obj.SensorTasks = data.SensorTasks;
+            end
+            if isfield(data, "TaskCandidates")
+                obj.TaskCandidates = data.TaskCandidates;
+            end
+            if isfield(data, "TaskConflicts")
+                obj.TaskConflicts = data.TaskConflicts;
+            end
+            if isfield(data, "SensorSchedule")
+                obj.SensorSchedule = data.SensorSchedule;
             end
             if isfield(data, "CurrentAnimationTime")
                 obj.CurrentAnimationTime = data.CurrentAnimationTime;

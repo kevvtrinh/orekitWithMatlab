@@ -30,8 +30,10 @@ objectTree = [];
 viewTabs = [];
 mapTab = [];
 globeTab = [];
+sensorViewerTab = [];
 mapAxes = [];
 globeAxes = [];
+sensorViewerAxes = [];
 selectedLabel = [];
 objectInfoText = [];
 accessSourceDrop = [];
@@ -47,6 +49,28 @@ sensorParentDrop = [];
 sensorDrop = [];
 sensorTargetDrop = [];
 lastSensorAccessResult = [];
+viewerSatelliteDrop = [];
+viewerSensorDrop = [];
+viewerShowBodyCheck = [];
+viewerShowAxesCheck = [];
+viewerShowMountsCheck = [];
+viewerShowLabelsCheck = [];
+viewerShowBoresightCheck = [];
+viewerShowFOVCheck = [];
+viewerShowFORCheck = [];
+viewerFOVScaleEdit = [];
+viewerFORScaleEdit = [];
+taskTypeDrop = [];
+taskTargetDrop = [];
+taskSensorDrop = [];
+taskPriorityEdit = [];
+taskDwellEdit = [];
+taskCoverageEdit = [];
+coverageTargetDrop = [];
+taskList = {};
+lastTaskCandidates = [];
+lastTaskConflicts = [];
+lastTaskSchedule = [];
 
 fig = uifigure("Name", "MATLAB Orekit Scenario", ...
     "Position", [70 70 1360 790]);
@@ -65,13 +89,25 @@ ribbon.Layout.Row = 1;
 scenarioTab = uitab(ribbon, "Title", "Scenario");
 insertTab = uitab(ribbon, "Title", "Insert");
 viewTab = uitab(ribbon, "Title", "View");
+targetTab = uitab(ribbon, "Title", "Targets");
+areaTargetTab = uitab(ribbon, "Title", "Area Targets");
 sensorTab = uitab(ribbon, "Title", "Sensors / Payloads");
+sensorTaskTab = uitab(ribbon, "Title", "Sensor Tasks");
+schedulingTab = uitab(ribbon, "Title", "Scheduling");
+coverageTab = uitab(ribbon, "Title", "Coverage");
+sensorViewerRibbonTab = uitab(ribbon, "Title", "Satellite / Sensor Viewer");
 ribbon.SelectedTab = insertTab;
 
 buildScenarioRibbon(scenarioTab);
 buildInsertRibbon(insertTab);
 buildViewRibbon(viewTab);
+buildTargetsRibbon(targetTab);
+buildAreaTargetsRibbon(areaTargetTab);
 buildSensorsRibbon(sensorTab);
+buildSensorTasksRibbon(sensorTaskTab);
+buildSchedulingRibbon(schedulingTab);
+buildCoverageRibbon(coverageTab);
+buildSensorViewerRibbon(sensorViewerRibbonTab);
 
 main = uigridlayout(root, [1 3]);
 main.Layout.Row = 2;
@@ -107,6 +143,10 @@ refreshAll();
             "MenuSelectedFcn", @openConstellationDialog);
         uimenu(insertMenu, "Text", "Place...", ...
             "MenuSelectedFcn", @openPlaceDialog);
+        uimenu(insertMenu, "Text", "Point Target...", ...
+            "MenuSelectedFcn", @openTargetDialog);
+        uimenu(insertMenu, "Text", "Area Target...", ...
+            "MenuSelectedFcn", @openAreaTargetDialog);
 
         optionsMenu = uimenu(fig, "Text", "Options");
         uimenu(optionsMenu, "Text", "Configure Orekit", ...
@@ -412,6 +452,261 @@ refreshAll();
         btn.Layout.Column = 12;
     end
 
+    function buildTargetsRibbon(parent)
+        grid = uigridlayout(parent, [2 8]);
+        grid.RowHeight = {56, 22};
+        grid.ColumnWidth = {128, 128, 128, 16, 128, 128, "1x", 116};
+        grid.Padding = [10 8 10 6];
+        grid.ColumnSpacing = 8;
+
+        btn = uibutton(grid, "Text", "Point Target", ...
+            "ButtonPushedFcn", @openTargetDialog);
+        btn.Layout.Row = 1;
+        btn.Layout.Column = 1;
+        lbl = uilabel(grid, "Text", "Fixed point", "HorizontalAlignment", "center");
+        lbl.Layout.Row = 2;
+        lbl.Layout.Column = 1;
+
+        btn = uibutton(grid, "Text", "Delete", ...
+            "ButtonPushedFcn", @deleteSelectedObject);
+        btn.Layout.Row = 1;
+        btn.Layout.Column = 2;
+
+        btn = uibutton(grid, "Text", "Focus", ...
+            "ButtonPushedFcn", @focusSelectedObject);
+        btn.Layout.Row = 1;
+        btn.Layout.Column = 3;
+
+        btn = uibutton(grid, "Text", "Compute Access", ...
+            "ButtonPushedFcn", @computeAccessCallback);
+        btn.Layout.Row = 1;
+        btn.Layout.Column = 5;
+    end
+
+    function buildAreaTargetsRibbon(parent)
+        grid = uigridlayout(parent, [2 9]);
+        grid.RowHeight = {56, 22};
+        grid.ColumnWidth = {128, 128, 128, 16, 128, 128, "1x", 116, 116};
+        grid.Padding = [10 8 10 6];
+        grid.ColumnSpacing = 8;
+
+        btn = uibutton(grid, "Text", "Polygon Area", ...
+            "ButtonPushedFcn", @openAreaTargetDialog);
+        btn.Layout.Row = 1;
+        btn.Layout.Column = 1;
+        lbl = uilabel(grid, "Text", "Grid target", "HorizontalAlignment", "center");
+        lbl.Layout.Row = 2;
+        lbl.Layout.Column = 1;
+
+        btn = uibutton(grid, "Text", "Plot Area", ...
+            "ButtonPushedFcn", @plotSelectedAreaTargetCallback);
+        btn.Layout.Row = 1;
+        btn.Layout.Column = 2;
+
+        btn = uibutton(grid, "Text", "Focus", ...
+            "ButtonPushedFcn", @focusSelectedObject);
+        btn.Layout.Row = 1;
+        btn.Layout.Column = 3;
+
+        btn = uibutton(grid, "Text", "Generate Grid", ...
+            "ButtonPushedFcn", @generateSelectedAreaGridCallback);
+        btn.Layout.Row = 1;
+        btn.Layout.Column = 5;
+    end
+
+    function buildSensorTasksRibbon(parent)
+        grid = uigridlayout(parent, [2 13]);
+        grid.RowHeight = {56, 22};
+        grid.ColumnWidth = {142, 142, 142, 74, 74, 86, 16, 118, 118, 118, "1x", 118, 118};
+        grid.Padding = [10 8 10 6];
+        grid.ColumnSpacing = 8;
+
+        taskTypeDrop = uidropdown(grid, "Items", ...
+            {'TrackPointTarget', 'ScanAreaTarget', 'MultiSensorTrackPointTarget', 'MultiSensorScanAreaTarget'}, ...
+            "Value", "TrackPointTarget");
+        taskTypeDrop.Layout.Row = 1;
+        taskTypeDrop.Layout.Column = 1;
+        lbl = uilabel(grid, "Text", "Task type", "HorizontalAlignment", "center");
+        lbl.Layout.Row = 2;
+        lbl.Layout.Column = 1;
+
+        taskTargetDrop = uidropdown(grid, "Items", {'<none>'});
+        taskTargetDrop.Layout.Row = 1;
+        taskTargetDrop.Layout.Column = 2;
+        lbl = uilabel(grid, "Text", "Target", "HorizontalAlignment", "center");
+        lbl.Layout.Row = 2;
+        lbl.Layout.Column = 2;
+
+        taskSensorDrop = uidropdown(grid, "Items", {'<any>'});
+        taskSensorDrop.Layout.Row = 1;
+        taskSensorDrop.Layout.Column = 3;
+        lbl = uilabel(grid, "Text", "Allowed sensor", "HorizontalAlignment", "center");
+        lbl.Layout.Row = 2;
+        lbl.Layout.Column = 3;
+
+        taskPriorityEdit = uieditfield(grid, "numeric", "Value", 5, "Limits", [0 Inf]);
+        taskPriorityEdit.Layout.Row = 1;
+        taskPriorityEdit.Layout.Column = 4;
+        lbl = uilabel(grid, "Text", "Priority", "HorizontalAlignment", "center");
+        lbl.Layout.Row = 2;
+        lbl.Layout.Column = 4;
+
+        taskDwellEdit = uieditfield(grid, "numeric", "Value", 120, "Limits", [0 Inf]);
+        taskDwellEdit.Layout.Row = 1;
+        taskDwellEdit.Layout.Column = 5;
+        lbl = uilabel(grid, "Text", "Dwell s", "HorizontalAlignment", "center");
+        lbl.Layout.Row = 2;
+        lbl.Layout.Column = 5;
+
+        taskCoverageEdit = uieditfield(grid, "numeric", "Value", 25, "Limits", [0 100]);
+        taskCoverageEdit.Layout.Row = 1;
+        taskCoverageEdit.Layout.Column = 6;
+        lbl = uilabel(grid, "Text", "Coverage %", "HorizontalAlignment", "center");
+        lbl.Layout.Row = 2;
+        lbl.Layout.Column = 6;
+
+        btn = uibutton(grid, "Text", "Add Task", ...
+            "ButtonPushedFcn", @addSensorTaskCallback);
+        btn.Layout.Row = 1;
+        btn.Layout.Column = 8;
+
+        btn = uibutton(grid, "Text", "Clear Tasks", ...
+            "ButtonPushedFcn", @clearSensorTasksCallback);
+        btn.Layout.Row = 1;
+        btn.Layout.Column = 9;
+
+        btn = uibutton(grid, "Text", "Generate", ...
+            "ButtonPushedFcn", @generateTaskCandidatesCallback);
+        btn.Layout.Row = 1;
+        btn.Layout.Column = 10;
+
+        btn = uibutton(grid, "Text", "Schedule", ...
+            "ButtonPushedFcn", @runGreedySchedulerCallback);
+        btn.Layout.Row = 1;
+        btn.Layout.Column = 12;
+    end
+
+    function buildSchedulingRibbon(parent)
+        grid = uigridlayout(parent, [2 9]);
+        grid.RowHeight = {56, 22};
+        grid.ColumnWidth = {142, 142, 142, 142, 142, 16, "1x", 128, 128};
+        grid.Padding = [10 8 10 6];
+        grid.ColumnSpacing = 8;
+
+        btn = uibutton(grid, "Text", "Generate Candidates", ...
+            "ButtonPushedFcn", @generateTaskCandidatesCallback);
+        btn.Layout.Row = 1;
+        btn.Layout.Column = 1;
+
+        btn = uibutton(grid, "Text", "Detect Conflicts", ...
+            "ButtonPushedFcn", @detectTaskConflictsCallback);
+        btn.Layout.Row = 1;
+        btn.Layout.Column = 2;
+
+        btn = uibutton(grid, "Text", "Greedy Schedule", ...
+            "ButtonPushedFcn", @runGreedySchedulerCallback);
+        btn.Layout.Row = 1;
+        btn.Layout.Column = 3;
+
+        btn = uibutton(grid, "Text", "Timeline", ...
+            "ButtonPushedFcn", @plotTaskTimelineCallback);
+        btn.Layout.Row = 1;
+        btn.Layout.Column = 4;
+
+        btn = uibutton(grid, "Text", "Export MILP", ...
+            "ButtonPushedFcn", @exportMilpInputsCallback);
+        btn.Layout.Row = 1;
+        btn.Layout.Column = 5;
+    end
+
+    function buildCoverageRibbon(parent)
+        grid = uigridlayout(parent, [2 8]);
+        grid.RowHeight = {56, 22};
+        grid.ColumnWidth = {180, 128, 128, 16, 128, "1x", 128, 128};
+        grid.Padding = [10 8 10 6];
+        grid.ColumnSpacing = 8;
+
+        coverageTargetDrop = uidropdown(grid, "Items", {'<none>'});
+        coverageTargetDrop.Layout.Row = 1;
+        coverageTargetDrop.Layout.Column = 1;
+        lbl = uilabel(grid, "Text", "Area target", "HorizontalAlignment", "center");
+        lbl.Layout.Row = 2;
+        lbl.Layout.Column = 1;
+
+        btn = uibutton(grid, "Text", "Plot Area", ...
+            "ButtonPushedFcn", @plotCoverageCallback);
+        btn.Layout.Row = 1;
+        btn.Layout.Column = 2;
+
+        btn = uibutton(grid, "Text", "Timeline", ...
+            "ButtonPushedFcn", @plotTaskTimelineCallback);
+        btn.Layout.Row = 1;
+        btn.Layout.Column = 3;
+    end
+
+    function buildSensorViewerRibbon(parent)
+        grid = uigridlayout(parent, [2 14]);
+        grid.RowHeight = {56, 22};
+        grid.ColumnWidth = {142, 142, 92, 92, 92, 92, 92, 92, 70, 70, 16, 118, 118, "1x"};
+        grid.Padding = [10 8 10 6];
+        grid.ColumnSpacing = 8;
+
+        viewerSatelliteDrop = uidropdown(grid, "Items", {'<none>'}, ...
+            "ValueChangedFcn", @viewerSatelliteChanged);
+        viewerSatelliteDrop.Layout.Row = 1;
+        viewerSatelliteDrop.Layout.Column = 1;
+        lbl = uilabel(grid, "Text", "Satellite", "HorizontalAlignment", "center");
+        lbl.Layout.Row = 2;
+        lbl.Layout.Column = 1;
+
+        viewerSensorDrop = uidropdown(grid, "Items", {'<all>'});
+        viewerSensorDrop.Layout.Row = 1;
+        viewerSensorDrop.Layout.Column = 2;
+        lbl = uilabel(grid, "Text", "Sensor", "HorizontalAlignment", "center");
+        lbl.Layout.Row = 2;
+        lbl.Layout.Column = 2;
+
+        viewerShowBodyCheck = uicheckbox(grid, "Text", "Body", "Value", true);
+        viewerShowBodyCheck.Layout.Row = 1;
+        viewerShowBodyCheck.Layout.Column = 3;
+        viewerShowAxesCheck = uicheckbox(grid, "Text", "Axes", "Value", true);
+        viewerShowAxesCheck.Layout.Row = 1;
+        viewerShowAxesCheck.Layout.Column = 4;
+        viewerShowMountsCheck = uicheckbox(grid, "Text", "Mounts", "Value", true);
+        viewerShowMountsCheck.Layout.Row = 1;
+        viewerShowMountsCheck.Layout.Column = 5;
+        viewerShowLabelsCheck = uicheckbox(grid, "Text", "Labels", "Value", true);
+        viewerShowLabelsCheck.Layout.Row = 1;
+        viewerShowLabelsCheck.Layout.Column = 6;
+        viewerShowBoresightCheck = uicheckbox(grid, "Text", "Boresight", "Value", true);
+        viewerShowBoresightCheck.Layout.Row = 1;
+        viewerShowBoresightCheck.Layout.Column = 7;
+        viewerShowFOVCheck = uicheckbox(grid, "Text", "FOV", "Value", true);
+        viewerShowFOVCheck.Layout.Row = 1;
+        viewerShowFOVCheck.Layout.Column = 8;
+
+        viewerShowFORCheck = uicheckbox(grid, "Text", "FOR", "Value", false);
+        viewerShowFORCheck.Layout.Row = 1;
+        viewerShowFORCheck.Layout.Column = 9;
+        viewerFOVScaleEdit = uieditfield(grid, "numeric", "Value", 1.5, "Limits", [0.1 Inf]);
+        viewerFOVScaleEdit.Layout.Row = 1;
+        viewerFOVScaleEdit.Layout.Column = 10;
+        lbl = uilabel(grid, "Text", "FOV scale", "HorizontalAlignment", "center");
+        lbl.Layout.Row = 2;
+        lbl.Layout.Column = 10;
+        viewerFORScaleEdit = uieditfield(grid, "numeric", "Value", 2.5, "Limits", [0.1 Inf]);
+        viewerFORScaleEdit.Layout.Row = 1;
+        viewerFORScaleEdit.Layout.Column = 12;
+        lbl = uilabel(grid, "Text", "FOR scale", "HorizontalAlignment", "center");
+        lbl.Layout.Row = 2;
+        lbl.Layout.Column = 12;
+
+        btn = uibutton(grid, "Text", "Refresh Viewer", ...
+            "ButtonPushedFcn", @refreshSensorViewerCallback);
+        btn.Layout.Row = 1;
+        btn.Layout.Column = 13;
+    end
+
     function buildObjectBrowser(parent)
         panel = uipanel(parent, "Title", "Object Browser");
         panel.Layout.Column = 1;
@@ -433,6 +728,7 @@ refreshAll();
         viewTabs.Layout.Column = 2;
         mapTab = uitab(viewTabs, "Title", "2D Graphics");
         globeTab = uitab(viewTabs, "Title", "3D Graphics");
+        sensorViewerTab = uitab(viewTabs, "Title", "Satellite / Sensor Viewer");
         viewTabs.SelectedTab = mapTab;
 
         grid = uigridlayout(mapTab, [2 1]);
@@ -446,6 +742,10 @@ refreshAll();
         grid = uigridlayout(globeTab, [1 1]);
         grid.Padding = [4 4 4 4];
         globeAxes = uiaxes(grid);
+
+        grid = uigridlayout(sensorViewerTab, [1 1]);
+        grid.Padding = [4 4 4 4];
+        sensorViewerAxes = uiaxes(grid);
     end
 
     function buildPropertiesPanel(parent)
@@ -1139,6 +1439,148 @@ refreshAll();
         end
     end
 
+    function openTargetDialog(~, ~)
+        dialog = uifigure("Name", "Insert Point Target", "Position", [240 180 420 300]);
+        grid = uigridlayout(dialog, [6 2]);
+        grid.RowHeight = {34, 34, 34, 34, 34, 38};
+        grid.ColumnWidth = {140, "1x"};
+        grid.Padding = [12 12 12 12];
+        grid.RowSpacing = 7;
+
+        uilabel(grid, "Text", "Name");
+        nameEdit = uieditfield(grid, "text", "Value", nextObjectName("Target"));
+        nameEdit.Layout.Row = 1;
+        nameEdit.Layout.Column = 2;
+
+        uilabel(grid, "Text", "Latitude deg");
+        latEdit = uieditfield(grid, "numeric", "Value", 39.7392, "Limits", [-90 90]);
+        latEdit.Layout.Row = 2;
+        latEdit.Layout.Column = 2;
+
+        uilabel(grid, "Text", "Longitude deg");
+        lonEdit = uieditfield(grid, "numeric", "Value", -104.9903, "Limits", [-180 180]);
+        lonEdit.Layout.Row = 3;
+        lonEdit.Layout.Column = 2;
+
+        uilabel(grid, "Text", "Altitude km");
+        altEdit = uieditfield(grid, "numeric", "Value", 1.609);
+        altEdit.Layout.Row = 4;
+        altEdit.Layout.Column = 2;
+
+        uilabel(grid, "Text", "Priority");
+        priorityEdit = uieditfield(grid, "numeric", "Value", 5, "Limits", [0 Inf]);
+        priorityEdit.Layout.Row = 5;
+        priorityEdit.Layout.Column = 2;
+
+        btn = uibutton(grid, "Text", "Insert Point Target", ...
+            "ButtonPushedFcn", @insertTarget);
+        btn.Layout.Row = 6;
+        btn.Layout.Column = [1 2];
+
+        function insertTarget(~, ~)
+            progress = [];
+            try
+                progress = openProgress("Insert Point Target", ...
+                    "Reading target inputs...", 0.10);
+                applyScenarioConfig();
+                updateProgress(progress, 0.45, "Creating target object...");
+                name = cleanObjectName(nameEdit.Value);
+                assertUniqueObjectName(name);
+                target = TargetObject(name, latEdit.Value, lonEdit.Value, altEdit.Value * 1000.0);
+                target.Priority = priorityEdit.Value;
+                scenario = scenario.addObject(target);
+                selectedKind = "Target";
+                selectedName = string(name);
+                delete(dialog);
+                updateProgress(progress, 0.85, "Updating object browser and task controls...");
+                refreshAll();
+                finishProgress(progress, "Point target inserted.");
+            catch err
+                closeProgress(progress);
+                uialert(fig, getReport(err, "extended", "hyperlinks", "off"), ...
+                    "Could not insert point target");
+            end
+        end
+    end
+
+    function openAreaTargetDialog(~, ~)
+        dialog = uifigure("Name", "Insert Area Target", "Position", [240 130 500 430]);
+        grid = uigridlayout(dialog, [8 2]);
+        grid.RowHeight = {34, 34, 34, 96, 34, 34, 34, 38};
+        grid.ColumnWidth = {160, "1x"};
+        grid.Padding = [12 12 12 12];
+        grid.RowSpacing = 7;
+
+        uilabel(grid, "Text", "Name");
+        nameEdit = uieditfield(grid, "text", "Value", nextObjectName("AreaTarget"));
+        nameEdit.Layout.Row = 1;
+        nameEdit.Layout.Column = 2;
+
+        uilabel(grid, "Text", "Boundary lat deg");
+        latText = uitextarea(grid, "Value", {'39.25,39.25,40.10,40.10'});
+        latText.Layout.Row = 2;
+        latText.Layout.Column = 2;
+
+        uilabel(grid, "Text", "Boundary lon deg");
+        lonText = uitextarea(grid, "Value", {'-105.45,-104.45,-104.45,-105.45'});
+        lonText.Layout.Row = 3;
+        lonText.Layout.Column = 2;
+
+        uilabel(grid, "Text", "Grid resolution km");
+        gridResolutionEdit = uieditfield(grid, "numeric", "Value", 35, "Limits", [0.1 Inf]);
+        gridResolutionEdit.Layout.Row = 5;
+        gridResolutionEdit.Layout.Column = 2;
+
+        uilabel(grid, "Text", "Required coverage %");
+        coverageEdit = uieditfield(grid, "numeric", "Value", 30, "Limits", [0 100]);
+        coverageEdit.Layout.Row = 6;
+        coverageEdit.Layout.Column = 2;
+
+        uilabel(grid, "Text", "Altitude km");
+        altEdit = uieditfield(grid, "numeric", "Value", 0);
+        altEdit.Layout.Row = 7;
+        altEdit.Layout.Column = 2;
+
+        btn = uibutton(grid, "Text", "Insert Area Target", ...
+            "ButtonPushedFcn", @insertAreaTarget);
+        btn.Layout.Row = 8;
+        btn.Layout.Column = [1 2];
+
+        function insertAreaTarget(~, ~)
+            progress = [];
+            try
+                progress = openProgress("Insert Area Target", ...
+                    "Reading polygon inputs...", 0.10);
+                applyScenarioConfig();
+                updateProgress(progress, 0.35, "Creating area target object...");
+                name = cleanObjectName(nameEdit.Value);
+                assertUniqueObjectName(name);
+                lat = parseNumericVector(cleanTextareaValue(latText.Value), numel(split(cleanTextareaValue(latText.Value), ",")));
+                lon = parseNumericVector(cleanTextareaValue(lonText.Value), numel(split(cleanTextareaValue(lonText.Value), ",")));
+                if numel(lat) ~= numel(lon) || numel(lat) < 3
+                    error("OrekitUI:InvalidAreaBoundary", ...
+                        "Area target boundaries need matching latitude/longitude vectors with at least three vertices.");
+                end
+                area = AreaTargetObject(name, lat(:), lon(:), altEdit.Value * 1000.0);
+                area.GridResolutionKm = gridResolutionEdit.Value;
+                area.RequiredCoveragePercent = coverageEdit.Value;
+                updateProgress(progress, 0.65, "Generating area grid...");
+                area.GridPoints = area.generateGrid();
+                scenario = scenario.addObject(area);
+                selectedKind = "AreaTarget";
+                selectedName = string(name);
+                delete(dialog);
+                updateProgress(progress, 0.90, "Updating object browser and coverage controls...");
+                refreshAll();
+                finishProgress(progress, "Area target inserted.");
+            catch err
+                closeProgress(progress);
+                uialert(fig, getReport(err, "extended", "hyperlinks", "off"), ...
+                    "Could not insert area target");
+            end
+        end
+    end
+
     function openSensorDialog(~, ~)
         parentName = string(sensorParentDrop.Value);
         if parentName == "<none>" || strlength(parentName) == 0
@@ -1274,11 +1716,306 @@ refreshAll();
         end
     end
 
+    function addSensorTaskCallback(~, ~)
+        try
+            targetName = string(taskTargetDrop.Value);
+            if targetName == "<none>" || strlength(targetName) == 0
+                error("OrekitUI:MissingTaskTarget", "Choose a target or area target for the task.");
+            end
+            taskType = string(taskTypeDrop.Value);
+            taskID = "UI-TASK-" + compose("%03d", numel(taskList) + 1);
+            task = SensorTask("TaskID", taskID, ...
+                "TaskName", taskType + " " + targetName, ...
+                "TaskType", taskType, ...
+                "TargetName", targetName, ...
+                "Priority", taskPriorityEdit.Value, ...
+                "RequiredDwellTimeSeconds", taskDwellEdit.Value, ...
+                "RequiredCoveragePercent", taskCoverageEdit.Value);
+            sensorChoice = string(taskSensorDrop.Value);
+            if sensorChoice ~= "<any>"
+                task.AllowedSensorNames = sensorChoice;
+            end
+            if contains(upper(taskType), "MULTISENSOR")
+                task.RequiredSensorCount = 2;
+                task.RequiresSimultaneousSensors = contains(upper(taskType), "TRACK");
+            end
+            taskList{end + 1} = task;
+            syncTaskProductsToScenario();
+            setTaskSummary(sprintf("Added %s. Task list now has %d item(s).", task.TaskID, numel(taskList)));
+            setStatus("Sensor task added", [0.10 0.42 0.14]);
+        catch err
+            uialert(fig, getReport(err, "extended", "hyperlinks", "off"), ...
+                "Could not add sensor task");
+        end
+    end
+
+    function clearSensorTasksCallback(~, ~)
+        taskList = {};
+        lastTaskCandidates = [];
+        lastTaskConflicts = [];
+        lastTaskSchedule = [];
+        syncTaskProductsToScenario();
+        setTaskSummary("Cleared sensor tasks and scheduling products.");
+        setStatus("Sensor tasks cleared", [0.35 0.35 0.35]);
+    end
+
+    function generateTaskCandidatesCallback(~, ~)
+        progress = [];
+        try
+            if isempty(taskList)
+                error("OrekitUI:NoSensorTasks", "Add at least one sensor task first.");
+            end
+            progress = openProgress("Generate Task Candidates", ...
+                "Applying scenario settings...", 0.05);
+            applyScenarioConfig();
+            updateProgress(progress, 0.18, "Checking propagation state...");
+            if hasSatellites() && anySatellitesNeedPropagation()
+                propagateScenarioInternal(progress, 0.18, 0.58);
+            end
+            updateProgress(progress, 0.65, "Generating backend task candidates...");
+            options = SchedulerOptions("MinimumCandidateDurationSeconds", max(0, taskDwellEdit.Value));
+            lastTaskCandidates = generateTaskCandidates(scenario, taskList, options);
+            lastTaskConflicts = [];
+            lastTaskSchedule = [];
+            syncTaskProductsToScenario();
+            updateProgress(progress, 0.92, "Updating task summary...");
+            setTaskSummary(sprintf("Generated %d candidate(s) from %d task(s).", ...
+                height(lastTaskCandidates), numel(taskList)));
+            finishProgress(progress, "Task candidates generated.");
+        catch err
+            closeProgress(progress);
+            uialert(fig, getReport(err, "extended", "hyperlinks", "off"), ...
+                "Candidate generation failed");
+        end
+    end
+
+    function detectTaskConflictsCallback(~, ~)
+        progress = [];
+        try
+            if isempty(lastTaskCandidates)
+                generateTaskCandidatesCallback([], []);
+            end
+            if isempty(lastTaskCandidates)
+                return;
+            end
+            progress = openProgress("Detect Task Conflicts", ...
+                "Checking candidate overlap and slew gaps...", 0.25);
+            options = SchedulerOptions("MinimumCandidateDurationSeconds", max(0, taskDwellEdit.Value));
+            lastTaskConflicts = detectTaskConflicts(lastTaskCandidates, options);
+            syncTaskProductsToScenario();
+            setTaskSummary(sprintf("Candidates: %d\nConflicts: %d", ...
+                height(lastTaskCandidates), height(lastTaskConflicts)));
+            finishProgress(progress, "Task conflicts detected.");
+        catch err
+            closeProgress(progress);
+            uialert(fig, getReport(err, "extended", "hyperlinks", "off"), ...
+                "Conflict detection failed");
+        end
+    end
+
+    function runGreedySchedulerCallback(~, ~)
+        progress = [];
+        try
+            if isempty(lastTaskCandidates)
+                generateTaskCandidatesCallback([], []);
+            end
+            if isempty(lastTaskCandidates)
+                return;
+            end
+            progress = openProgress("Greedy Sensor Scheduling", ...
+                "Sorting candidates by priority and quality...", 0.20);
+            options = SchedulerOptions("MinimumCandidateDurationSeconds", max(0, taskDwellEdit.Value));
+            lastTaskSchedule = scheduleSensorTasksGreedy(scenario, lastTaskCandidates, options);
+            lastTaskConflicts = detectTaskConflicts(lastTaskCandidates, options);
+            syncTaskProductsToScenario();
+            validation = validateSchedule(lastTaskSchedule, options);
+            setTaskSummary(sprintf("Candidates: %d\nConflicts: %d\nScheduled: %d\nSchedule valid: %d", ...
+                height(lastTaskCandidates), height(lastTaskConflicts), ...
+                height(lastTaskSchedule), validation.IsValid));
+            finishProgress(progress, "Greedy schedule complete.");
+        catch err
+            closeProgress(progress);
+            uialert(fig, getReport(err, "extended", "hyperlinks", "off"), ...
+                "Greedy scheduling failed");
+        end
+    end
+
+    function exportMilpInputsCallback(~, ~)
+        progress = [];
+        try
+            if isempty(lastTaskCandidates)
+                generateTaskCandidatesCallback([], []);
+            end
+            if isempty(lastTaskConflicts)
+                lastTaskConflicts = detectTaskConflicts(lastTaskCandidates, SchedulerOptions());
+            end
+            folder = uigetdir(pwd, "Select folder for MILP input CSV files");
+            if ~(ischar(folder) || isstring(folder))
+                return;
+            end
+            progress = openProgress("Export MILP Inputs", "Writing scheduler tables...", 0.30);
+            files = exportMILPInputs(lastTaskCandidates, lastTaskConflicts, taskList, folder);
+            setTaskSummary(["Exported MILP-ready inputs:"; string(files.Candidates); string(files.Conflicts); string(files.Tasks)]);
+            finishProgress(progress, "MILP inputs exported.");
+        catch err
+            closeProgress(progress);
+            uialert(fig, getReport(err, "extended", "hyperlinks", "off"), ...
+                "MILP export failed");
+        end
+    end
+
+    function plotTaskTimelineCallback(~, ~)
+        try
+            if isempty(lastTaskSchedule)
+                runGreedySchedulerCallback([], []);
+            end
+            if ~isempty(lastTaskSchedule)
+                plotSensorTimeline(lastTaskSchedule);
+            end
+        catch err
+            uialert(fig, getReport(err, "extended", "hyperlinks", "off"), ...
+                "Timeline plot failed");
+        end
+    end
+
+    function plotSelectedAreaTargetCallback(~, ~)
+        try
+            if selectedKind ~= "AreaTarget" || ~scenario.hasObject(selectedName)
+                error("OrekitUI:NoAreaTargetSelected", "Select an area target first.");
+            end
+            plotAreaInMap(scenario.getObject(selectedName));
+        catch err
+            uialert(fig, getReport(err, "basic", "hyperlinks", "off"), ...
+                "Area plot failed");
+        end
+    end
+
+    function generateSelectedAreaGridCallback(~, ~)
+        try
+            if selectedKind ~= "AreaTarget" || ~scenario.hasObject(selectedName)
+                error("OrekitUI:NoAreaTargetSelected", "Select an area target first.");
+            end
+            area = scenario.getObject(selectedName);
+            area.GridPoints = area.generateGrid(area.GridResolutionKm);
+            scenario = scenario.updateObject(area);
+            refreshAll();
+            setStatus(sprintf("Generated %d area grid point(s)", height(area.GridPoints)), [0.10 0.42 0.14]);
+        catch err
+            uialert(fig, getReport(err, "basic", "hyperlinks", "off"), ...
+                "Grid generation failed");
+        end
+    end
+
+    function plotCoverageCallback(~, ~)
+        try
+            name = string(coverageTargetDrop.Value);
+            if name == "<none>" || ~scenario.hasObject(name)
+                error("OrekitUI:NoAreaTargetSelected", "Choose an area target first.");
+            end
+            plotAreaInMap(scenario.getObject(name));
+        catch err
+            uialert(fig, getReport(err, "basic", "hyperlinks", "off"), ...
+                "Coverage plot failed");
+        end
+    end
+
+    function refreshSensorViewerCallback(~, ~)
+        try
+            satelliteName = string(viewerSatelliteDrop.Value);
+            if satelliteName == "<none>" || ~scenario.hasObject(satelliteName)
+                error("OrekitUI:NoSatelliteSelected", "Choose a satellite for the sensor viewer.");
+            end
+            opts = readSensorViewerOptionsFromUI();
+            viewTabs.SelectedTab = sensorViewerTab;
+            plotSatelliteSensorViewer(scenario, satelliteName, opts);
+            setStatus("Sensor viewer refreshed", [0.10 0.42 0.14]);
+        catch err
+            uialert(fig, getReport(err, "extended", "hyperlinks", "off"), ...
+                "Sensor viewer failed");
+        end
+    end
+
+    function viewerSatelliteChanged(~, ~)
+        refreshViewerSensorDropdown();
+    end
+
+    function opts = readSensorViewerOptionsFromUI()
+        opts = SensorViewerOptions();
+        opts.ParentAxes = sensorViewerAxes;
+        opts.ShowSatelliteBody = viewerShowBodyCheck.Value;
+        opts.ShowBodyFrame = viewerShowAxesCheck.Value;
+        opts.ShowSensorMounts = viewerShowMountsCheck.Value;
+        opts.ShowLabels = viewerShowLabelsCheck.Value;
+        opts.ShowBoresight = viewerShowBoresightCheck.Value;
+        opts.ShowFOV = viewerShowFOVCheck.Value;
+        opts.ShowFOR = viewerShowFORCheck.Value;
+        opts.FOVScale = viewerFOVScaleEdit.Value;
+        opts.FORScale = viewerFORScaleEdit.Value;
+        sensorName = string(viewerSensorDrop.Value);
+        if sensorName ~= "<all>"
+            opts.SelectedSensorName = sensorName;
+        end
+    end
+
+    function plotAreaInMap(area)
+        viewTabs.SelectedTab = mapTab;
+        cla(mapAxes);
+        plotAreaTarget(area, mapAxes);
+        title(mapAxes, "Coverage - " + area.Name);
+    end
+
+    function setTaskSummary(lines)
+        setTextArea(accessSummaryText, lines);
+    end
+
+    function syncTaskProductsToScenario()
+        scenario.SensorTasks = taskList;
+        if istable(lastTaskCandidates)
+            scenario.TaskCandidates = lastTaskCandidates;
+        else
+            scenario.TaskCandidates = table();
+        end
+        if istable(lastTaskConflicts)
+            scenario.TaskConflicts = lastTaskConflicts;
+        else
+            scenario.TaskConflicts = table();
+        end
+        if istable(lastTaskSchedule)
+            scenario.SensorSchedule = lastTaskSchedule;
+        else
+            scenario.SensorSchedule = table();
+        end
+    end
+
+    function restoreTaskProductsFromScenario()
+        if isprop(scenario, "SensorTasks")
+            taskList = scenario.SensorTasks;
+        else
+            taskList = {};
+        end
+        if isprop(scenario, "TaskCandidates") && ~isempty(scenario.TaskCandidates)
+            lastTaskCandidates = scenario.TaskCandidates;
+        else
+            lastTaskCandidates = [];
+        end
+        if isprop(scenario, "TaskConflicts") && ~isempty(scenario.TaskConflicts)
+            lastTaskConflicts = scenario.TaskConflicts;
+        else
+            lastTaskConflicts = [];
+        end
+        if isprop(scenario, "SensorSchedule") && ~isempty(scenario.SensorSchedule)
+            lastTaskSchedule = scenario.SensorSchedule;
+        else
+            lastTaskSchedule = [];
+        end
+    end
+
     function refreshAll()
         updateScenarioControls();
         refreshObjectBrowser();
         refreshAccessDropdowns();
         refreshSensorDropdowns();
+        refreshTaskingDropdowns();
         refreshInspector();
         refreshVisualization();
     end
@@ -1302,6 +2039,12 @@ refreshAll();
         placeFolder = uitreenode(scenarioNode, ...
             "Text", sprintf("Places (%d)", groundStationCount()), ...
             "NodeData", struct("Kind", "Folder", "Name", ""));
+        targetFolder = uitreenode(scenarioNode, ...
+            "Text", sprintf("Targets (%d)", targetCount()), ...
+            "NodeData", struct("Kind", "Folder", "Name", ""));
+        areaFolder = uitreenode(scenarioNode, ...
+            "Text", sprintf("Area Targets (%d)", areaTargetCount()), ...
+            "NodeData", struct("Kind", "Folder", "Name", ""));
 
         selectedNode = scenarioNode;
         for k = 1:numel(scenario.Objects)
@@ -1309,6 +2052,12 @@ refreshAll();
             if isa(obj, "SatelliteObject")
                 node = uitreenode(satFolder, "Text", char(obj.Name), ...
                     "NodeData", struct("Kind", "Satellite", "Name", char(obj.Name)));
+            elseif isa(obj, "TargetObject")
+                node = uitreenode(targetFolder, "Text", char(obj.Name), ...
+                    "NodeData", struct("Kind", "Target", "Name", char(obj.Name)));
+            elseif isa(obj, "AreaTargetObject")
+                node = uitreenode(areaFolder, "Text", char(obj.Name), ...
+                    "NodeData", struct("Kind", "AreaTarget", "Name", char(obj.Name)));
             elseif isFixedLocationObject(obj)
                 node = uitreenode(placeFolder, "Text", char(obj.Name), ...
                     "NodeData", struct("Kind", "GroundStation", "Name", char(obj.Name)));
@@ -1334,6 +2083,8 @@ refreshAll();
         expandNode(scenarioNode);
         expandNode(satFolder);
         expandNode(placeFolder);
+        expandNode(targetFolder);
+        expandNode(areaFolder);
         objectTree.SelectedNodes = selectedNode;
     end
 
@@ -1400,11 +2151,32 @@ refreshAll();
             return;
         end
 
-        if selectedKind == "GroundStation" && scenario.hasObject(selectedName)
+        if selectedKind == "AreaTarget" && scenario.hasObject(selectedName)
+            area = scenario.getObject(selectedName);
+            selectedLabel.Text = char(area.Name);
+            gridPoints = area.getGridPoints();
+            setTextArea(objectInfoText, [
+                "Type: Area Target"
+                "Area type: " + area.AreaType
+                sprintf("Centroid: %.6f lat, %.6f lon", area.LatitudeDeg, area.LongitudeDeg)
+                sprintf("Boundary vertices: %d", numel(area.BoundaryLatDeg))
+                sprintf("Grid points: %d", height(gridPoints))
+                sprintf("Grid resolution: %.3f km", area.GridResolutionKm)
+                sprintf("Required coverage: %.1f %%", area.RequiredCoveragePercent)
+                sprintf("Approx area: %.3f km^2", area.getAreaKm2())
+                ]);
+            return;
+        end
+
+        if (selectedKind == "GroundStation" || selectedKind == "Target") && scenario.hasObject(selectedName)
             place = scenario.getObject(selectedName);
             selectedLabel.Text = char(place.Name);
+            objectTypeLabel = "Place";
+            if isa(place, "TargetObject")
+                objectTypeLabel = "Target";
+            end
             lines = [
-                "Type: Place"
+                "Type: " + objectTypeLabel
                 sprintf("Latitude: %.6f deg", place.LatitudeDeg)
                 sprintf("Longitude: %.6f deg", place.LongitudeDeg)
                 sprintf("Altitude: %.3f km", place.AltitudeMeters / 1000.0)
@@ -1450,6 +2222,9 @@ refreshAll();
             sprintf("Time step: %.3f s", seconds(scenario.Config.TimeStep))
             sprintf("Satellites: %d", satelliteCount())
             sprintf("Places: %d", groundStationCount())
+            sprintf("Targets: %d", targetCount())
+            sprintf("Area targets: %d", areaTargetCount())
+            sprintf("Sensor tasks: %d", numel(taskList))
             "Scenario UTC: " + formatUtc(scenario.CurrentAnimationTime)
             ]);
     end
@@ -1653,7 +2428,7 @@ refreshAll();
                 mapAxes.XLim = clampWindow(lla(2), 55, -180, 180);
                 mapAxes.YLim = clampWindow(lla(1), 35, -90, 90);
             end
-        elseif selectedKind == "GroundStation" && scenario.hasObject(selectedName)
+        elseif any(selectedKind == ["GroundStation", "Target", "AreaTarget"]) && scenario.hasObject(selectedName)
             place = scenario.getObject(selectedName);
             mapAxes.XLim = clampWindow(place.LongitudeDeg, 55, -180, 180);
             mapAxes.YLim = clampWindow(place.LatitudeDeg, 35, -90, 90);
@@ -1675,7 +2450,8 @@ refreshAll();
             refreshAll();
             return;
         end
-        if selectedKind ~= "Satellite" && selectedKind ~= "GroundStation"
+        if selectedKind ~= "Satellite" && selectedKind ~= "GroundStation" && ...
+                selectedKind ~= "Target" && selectedKind ~= "AreaTarget"
             return;
         end
         nameToRemove = selectedName;
@@ -1925,6 +2701,7 @@ refreshAll();
         progress = [];
         try
             applyScenarioConfig();
+            syncTaskProductsToScenario();
             [file, folder] = uiputfile("*.mat", "Save Orekit Scenario", ...
                 "orekit-scenario.mat");
             if isequal(file, 0)
@@ -1959,6 +2736,11 @@ refreshAll();
             selectedParentName = "";
             lastAccessResult = [];
             lastSensorAccessResult = [];
+            taskList = {};
+            lastTaskCandidates = [];
+            lastTaskConflicts = [];
+            lastTaskSchedule = [];
+            restoreTaskProductsFromScenario();
             updateScenarioControls();
             updateProgress(progress, 0.80, "Updating object browser and views...");
             refreshAll();
@@ -1978,6 +2760,10 @@ refreshAll();
         selectedParentName = "";
         lastAccessResult = [];
         lastSensorAccessResult = [];
+        taskList = {};
+        lastTaskCandidates = [];
+        lastTaskConflicts = [];
+        lastTaskSchedule = [];
         updateScenarioControls();
         refreshAll();
         setStatus("Scenario closed", [0.35 0.35 0.35]);
@@ -2050,6 +2836,53 @@ refreshAll();
         sensorTargetDrop.Value = chooseDropdownValue(targetItems, oldTarget, min(2, numel(targetItems)));
     end
 
+    function refreshTaskingDropdowns()
+        targetItems = objectItemsOrNone();
+        sensorItems = sensorFlatItems();
+        areaItems = areaTargetItems();
+        satelliteItems = satelliteItemsOrNone();
+
+        if ~isempty(taskTargetDrop) && isvalid(taskTargetDrop)
+            old = string(taskTargetDrop.Value);
+            taskTargetDrop.Items = targetItems;
+            taskTargetDrop.Value = chooseDropdownValue(targetItems, old, 1);
+        end
+        if ~isempty(taskSensorDrop) && isvalid(taskSensorDrop)
+            old = string(taskSensorDrop.Value);
+            taskSensorDrop.Items = sensorItems;
+            taskSensorDrop.Value = chooseDropdownValue(sensorItems, old, 1);
+        end
+        if ~isempty(coverageTargetDrop) && isvalid(coverageTargetDrop)
+            old = string(coverageTargetDrop.Value);
+            coverageTargetDrop.Items = areaItems;
+            coverageTargetDrop.Value = chooseDropdownValue(areaItems, old, 1);
+        end
+        if ~isempty(viewerSatelliteDrop) && isvalid(viewerSatelliteDrop)
+            old = string(viewerSatelliteDrop.Value);
+            viewerSatelliteDrop.Items = satelliteItems;
+            viewerSatelliteDrop.Value = chooseDropdownValue(satelliteItems, old, 1);
+            refreshViewerSensorDropdown();
+        end
+    end
+
+    function refreshViewerSensorDropdown()
+        if isempty(viewerSensorDrop) || ~isvalid(viewerSensorDrop)
+            return;
+        end
+        if isempty(viewerSatelliteDrop) || ~isvalid(viewerSatelliteDrop)
+            return;
+        end
+        sensorItems = sensorItemsForParent(viewerSatelliteDrop.Value);
+        if isscalar(sensorItems) && strcmp(sensorItems{1}, "<none>")
+            items = {'<all>'};
+        else
+            items = [{'<all>'}, sensorItems];
+        end
+        old = string(viewerSensorDrop.Value);
+        viewerSensorDrop.Items = items;
+        viewerSensorDrop.Value = chooseDropdownValue(items, old, 1);
+    end
+
     function items = sensorParentItems()
         names = strings(0, 1);
         for k = 1:numel(scenario.Objects)
@@ -2090,6 +2923,44 @@ refreshAll();
         else
             items = cellstr(names).';
         end
+    end
+
+    function items = satelliteItemsOrNone()
+        names = strings(0, 1);
+        for k = 1:numel(scenario.Objects)
+            if isa(scenario.Objects{k}, "SatelliteObject")
+                names(end + 1, 1) = scenario.Objects{k}.Name; %#ok<AGROW>
+            end
+        end
+        if isempty(names)
+            items = {'<none>'};
+        else
+            items = cellstr(names).';
+        end
+    end
+
+    function items = areaTargetItems()
+        names = strings(0, 1);
+        for k = 1:numel(scenario.Objects)
+            if isa(scenario.Objects{k}, "AreaTargetObject")
+                names(end + 1, 1) = scenario.Objects{k}.Name; %#ok<AGROW>
+            end
+        end
+        if isempty(names)
+            items = {'<none>'};
+        else
+            items = cellstr(names).';
+        end
+    end
+
+    function items = sensorFlatItems()
+        sensors = scenarioSensorTable(scenario);
+        if isempty(sensors) || height(sensors) == 0
+            items = {'<any>'};
+            return;
+        end
+        names = unique(sensors.SensorName, "stable");
+        items = [{'<any>'}, cellstr(names).'];
     end
 
     function value = chooseDropdownValue(items, oldValue, preferredIndex)
@@ -2135,7 +3006,27 @@ refreshAll();
     function n = groundStationCount()
         n = 0;
         for k = 1:numel(scenario.Objects)
-            if isFixedLocationObject(scenario.Objects{k})
+            if isFixedLocationObject(scenario.Objects{k}) && ...
+                    ~isa(scenario.Objects{k}, "TargetObject") && ...
+                    ~isa(scenario.Objects{k}, "AreaTargetObject")
+                n = n + 1;
+            end
+        end
+    end
+
+    function n = targetCount()
+        n = 0;
+        for k = 1:numel(scenario.Objects)
+            if isa(scenario.Objects{k}, "TargetObject")
+                n = n + 1;
+            end
+        end
+    end
+
+    function n = areaTargetCount()
+        n = 0;
+        for k = 1:numel(scenario.Objects)
+            if isa(scenario.Objects{k}, "AreaTargetObject")
                 n = n + 1;
             end
         end

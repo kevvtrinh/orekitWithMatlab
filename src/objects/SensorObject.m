@@ -3,13 +3,18 @@ classdef SensorObject < MissionObject
 
     properties
         ParentName string = ""
+        ParentObjectName string = ""
         ParentType string = ""
         SensorType string = "SimpleConic"
         PointingMode string = "Nadir"
         MountingFrame string = "Parent"
+        BoresightFrame string = "Parent"
         BoresightVector double = [0 0 1]
         UpVector double = [0 0 1]
         FieldOfViewType string = "SimpleConic"
+        FieldOfViewShape string = "Cone"
+        FieldOfViewDeg double = NaN
+        FieldOfRegardDeg double = 180
         ConeHalfAngleDeg double = 20
         InnerHalfAngleDeg double = 0
         OuterHalfAngleDeg double = 20
@@ -21,13 +26,39 @@ classdef SensorObject < MissionObject
         MinElevationDeg double = 0
         MaxLookAngleDeg double = 180
         MinLookAngleDeg double = 0
+        MinOffNadirDeg double = 0
+        MaxOffNadirDeg double = 180
         SlewRateDegPerSec double = Inf
         SlewAccelerationDegPerSec2 double = Inf
+        MaxSlewRateDegPerSec double = Inf
+        MaxSlewAccelDegPerSec2 double = Inf
+        SettlingTimeSeconds double = 0
+        MinDwellTimeSeconds double = 0
+        MaxDwellTimeSeconds double = Inf
+        ScanRateDegPerSec double = Inf
+        SwathWidthKm double = NaN
+        ResolutionModel string = "None"
+        DataRateBps double = 0
+        PowerWatts double = 0
         CurrentPointingTarget string = ""
         PreviousPointingTarget string = ""
         AvailabilityWindows table = table()
+        CurrentPointingState struct = struct()
+        TaskQueue cell = {}
         Constraints struct = struct()
         Metadata struct = struct()
+        MountLocationBody double = [0 0 -0.5]
+        MountNormalBody double = [0 0 -1]
+        BoresightBody double = [0 0 -1]
+        SensorBodyFrame string = "Body"
+        MountFace string = "-Z"
+        MountOffsetMeters double = [0 0 0]
+        SensorSizeMeters double = [0.18 0.18 0.12]
+        ShowInViewer logical = true
+        FOVVisible logical = true
+        FORVisible logical = false
+        BoresightVisible logical = true
+        LabelVisible logical = true
     end
 
     methods
@@ -39,16 +70,20 @@ classdef SensorObject < MissionObject
             end
             if nargin >= 2
                 obj.ParentName = string(parentName);
+                obj.ParentObjectName = string(parentName);
             end
         end
 
         function validate(obj)
             validate@MissionObject(obj);
+            if strlength(strtrim(obj.ParentName)) == 0 && strlength(strtrim(obj.ParentObjectName)) > 0
+                obj.ParentName = obj.ParentObjectName;
+            end
             if strlength(strtrim(obj.ParentName)) == 0
                 error("SensorObject:MissingParent", ...
                     "Sensor '%s' must have a ParentName.", obj.Name);
             end
-            if obj.ConeHalfAngleDeg < 0 || obj.ConeHalfAngleDeg > 180
+            if obj.effectiveConeHalfAngleDeg() < 0 || obj.effectiveConeHalfAngleDeg() > 180
                 error("SensorObject:InvalidConeHalfAngle", ...
                     "Cone half-angle must be between 0 and 180 degrees.");
             end
@@ -72,16 +107,26 @@ classdef SensorObject < MissionObject
                 error("SensorObject:InvalidUpVector", ...
                     "UpVector cannot be zero.");
             end
+            if norm(obj.BoresightBody) == 0
+                error("SensorObject:InvalidBoresightBody", ...
+                    "BoresightBody cannot be zero.");
+            end
+            if norm(obj.MountNormalBody) == 0
+                error("SensorObject:InvalidMountNormal", ...
+                    "MountNormalBody cannot be zero.");
+            end
         end
 
         function obj = attachTo(obj, parentObject)
             obj.ParentName = string(parentObject.Name);
+            obj.ParentObjectName = string(parentObject.Name);
             obj.ParentType = string(parentObject.ObjectType);
             obj.validate();
         end
 
         function obj = detach(obj)
             obj.ParentName = "";
+            obj.ParentObjectName = "";
             obj.ParentType = "";
         end
 
@@ -147,7 +192,9 @@ classdef SensorObject < MissionObject
             geometry.Time = time;
             geometry.FieldOfViewType = obj.FieldOfViewType;
             geometry.BoresightVector = obj.getBoresightVector(time, scenario);
-            geometry.ConeHalfAngleDeg = obj.ConeHalfAngleDeg;
+            geometry.ConeHalfAngleDeg = obj.effectiveConeHalfAngleDeg();
+            geometry.FieldOfViewDeg = obj.effectiveConeHalfAngleDeg();
+            geometry.FieldOfRegardDeg = obj.FieldOfRegardDeg;
             geometry.RectangularHalfAngleXDeg = obj.RectangularHalfAngleXDeg;
             geometry.RectangularHalfAngleYDeg = obj.RectangularHalfAngleYDeg;
         end
@@ -210,7 +257,7 @@ classdef SensorObject < MissionObject
 
             switch upper(string(obj.FieldOfViewType))
                 case {"SIMPLECONIC", "CONIC", "CIRCULAR"}
-                    tf = offBoresightDeg <= obj.ConeHalfAngleDeg;
+                    tf = offBoresightDeg <= obj.effectiveConeHalfAngleDeg();
                 case "RECTANGULAR"
                     [xAngleDeg, yAngleDeg] = obj.rectangularAnglesDeg(lookVector, boresightVector);
                     tf = abs(xAngleDeg) <= obj.RectangularHalfAngleXDeg && ...
@@ -243,6 +290,122 @@ classdef SensorObject < MissionObject
         function newObj = copy(obj)
             newObj = obj;
         end
+
+        function obj = addTask(obj, task)
+            obj.TaskQueue{end + 1} = task;
+        end
+
+        function obj = removeTask(obj, taskID)
+            keep = true(size(obj.TaskQueue));
+            for k = 1:numel(obj.TaskQueue)
+                item = obj.TaskQueue{k};
+                if isobject(item) && isprop(item, "TaskID")
+                    keep(k) = string(item.TaskID) ~= string(taskID);
+                elseif isstruct(item) && isfield(item, "TaskID")
+                    keep(k) = string(item.TaskID) ~= string(taskID);
+                end
+            end
+            obj.TaskQueue = obj.TaskQueue(keep);
+        end
+
+        function obj = clearTasks(obj)
+            obj.TaskQueue = {};
+        end
+
+        function tasks = listTasks(obj)
+            if isempty(obj.TaskQueue)
+                tasks = table(strings(0, 1), strings(0, 1), strings(0, 1), ...
+                    'VariableNames', {'TaskID', 'TaskName', 'TaskType'});
+                return;
+            end
+            taskID = strings(numel(obj.TaskQueue), 1);
+            taskName = strings(numel(obj.TaskQueue), 1);
+            taskType = strings(numel(obj.TaskQueue), 1);
+            for k = 1:numel(obj.TaskQueue)
+                item = obj.TaskQueue{k};
+                if isobject(item) || isstruct(item)
+                    taskID(k) = string(item.TaskID);
+                    taskName(k) = string(item.TaskName);
+                    taskType(k) = string(item.TaskType);
+                end
+            end
+            tasks = table(taskID, taskName, taskType, ...
+                'VariableNames', {'TaskID', 'TaskName', 'TaskType'});
+        end
+
+        function accessLogical = canObserveTarget(obj, scenario, targetName, timeVector, options)
+            if nargin < 5
+                options = struct();
+            end
+            accessLogical = obj.canSeeTarget(scenario, targetName, timeVector, options);
+        end
+
+        function opportunities = computeObservationWindows(obj, scenario, task, options)
+            if nargin < 4
+                options = SchedulerOptions();
+            end
+            task.AssignedSensorName = obj.Name;
+            task.AssignedPlatformName = obj.ParentName;
+            task.AllowedSensorNames = obj.Name;
+            opportunities = computeSensorTaskOpportunities(scenario, task, options);
+        end
+
+        function opportunities = computeScanOpportunities(obj, scenario, task, options)
+            if nargin < 4
+                options = SchedulerOptions();
+            end
+            task.AssignedSensorName = obj.Name;
+            task.AssignedPlatformName = obj.ParentName;
+            task.AllowedSensorNames = obj.Name;
+            opportunities = computeAreaScanOpportunities(scenario, task, options);
+        end
+
+        function slewTimeSeconds = computeSlewTime(obj, fromPointing, toPointing)
+            slewAngleDeg = computeSlewAngle(fromPointing, toPointing);
+            slewTimeSeconds = computeSlewTime(slewAngleDeg, ...
+                obj.effectiveSlewRateDegPerSec(), obj.effectiveSlewAccelDegPerSec2()) + ...
+                obj.SettlingTimeSeconds;
+        end
+
+        function dataVolumeMb = estimateDataVolume(obj, ~, durationSeconds)
+            dataVolumeMb = obj.DataRateBps .* max(durationSeconds, 0) ./ 8 ./ 1e6;
+        end
+
+        function quality = estimateObservationQuality(obj, ~, geometry)
+            quality = 1.0;
+            if isstruct(geometry)
+                if isfield(geometry, "MeanOffNadirDeg") && isfinite(geometry.MeanOffNadirDeg)
+                    quality = quality * max(0, 1 - geometry.MeanOffNadirDeg / max(obj.FieldOfRegardDeg, eps));
+                end
+                if isfield(geometry, "MeanRangeKm") && isfinite(geometry.MeanRangeKm) && isfinite(obj.MaxRangeKm)
+                    quality = quality * max(0, 1 - geometry.MeanRangeKm / max(obj.MaxRangeKm, eps));
+                end
+            end
+        end
+
+        function angleDeg = effectiveConeHalfAngleDeg(obj)
+            if isfinite(obj.FieldOfViewDeg) && obj.FieldOfViewDeg > 0
+                angleDeg = obj.FieldOfViewDeg;
+            else
+                angleDeg = obj.ConeHalfAngleDeg;
+            end
+        end
+
+        function slewRate = effectiveSlewRateDegPerSec(obj)
+            if isfinite(obj.MaxSlewRateDegPerSec) && obj.MaxSlewRateDegPerSec > 0
+                slewRate = obj.MaxSlewRateDegPerSec;
+            else
+                slewRate = obj.SlewRateDegPerSec;
+            end
+        end
+
+        function slewAccel = effectiveSlewAccelDegPerSec2(obj)
+            if isfinite(obj.MaxSlewAccelDegPerSec2) && obj.MaxSlewAccelDegPerSec2 > 0
+                slewAccel = obj.MaxSlewAccelDegPerSec2;
+            else
+                slewAccel = obj.SlewAccelerationDegPerSec2;
+            end
+        end
     end
 
     methods (Static)
@@ -250,7 +413,9 @@ classdef SensorObject < MissionObject
             obj = SensorObject(name, parentName);
             obj.SensorType = "SimpleConic";
             obj.FieldOfViewType = "SimpleConic";
+            obj.FieldOfViewShape = "Cone";
             obj.ConeHalfAngleDeg = coneHalfAngleDeg;
+            obj.FieldOfViewDeg = coneHalfAngleDeg;
             obj.PointingMode = "Nadir";
         end
 
@@ -262,8 +427,10 @@ classdef SensorObject < MissionObject
             obj = SensorObject(name, parentName);
             obj.SensorType = "Rectangular";
             obj.FieldOfViewType = "Rectangular";
+            obj.FieldOfViewShape = "Rectangular";
             obj.RectangularHalfAngleXDeg = halfAngleXDeg;
             obj.RectangularHalfAngleYDeg = halfAngleYDeg;
+            obj.FieldOfViewDeg = max([halfAngleXDeg, halfAngleYDeg]);
             obj.PointingMode = "Nadir";
         end
 

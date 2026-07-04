@@ -18,6 +18,12 @@ classdef SatelliteObject < MissionObject
         Sensors cell = {}
         Terminals cell = {}
         OrekitPropagator = []
+        BodyModelType string = "Cube"
+        BodyDimensionsMeters double = [1 1 1]
+        BodyColor double = [0.72 0.76 0.80]
+        ShowBodyFrame logical = true
+        ShowSensorMounts logical = true
+        VisualModel struct = struct()
     end
 
     methods

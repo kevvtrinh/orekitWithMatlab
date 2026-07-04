@@ -6,6 +6,14 @@ function status = startupOrekitSuite(varargin)
 
 repoRoot = fileparts(mfilename("fullpath"));
 addpath(genpath(fullfile(repoRoot, "src")));
+matlabRoot = fullfile(repoRoot, "matlab");
+if isfolder(matlabRoot)
+    addpath(matlabRoot);
+end
+examplesRoot = fullfile(repoRoot, "examples");
+if isfolder(examplesRoot)
+    addpath(genpath(examplesRoot));
+end
 
 parser = inputParser;
 parser.addParameter("JarRoot", fullfile(repoRoot, "vendor", "orekit", "lib"));
@@ -19,4 +27,3 @@ if parser.Results.InitializeOrekit
         parser.Results.JarRoot, parser.Results.DataRoot);
 end
 end
-

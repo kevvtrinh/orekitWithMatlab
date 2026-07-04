@@ -2,10 +2,18 @@ classdef AreaTargetObject < MissionObject
     %AREATARGETOBJECT Polygon/region placeholder for future coverage analysis.
 
     properties
+        AreaType string = "Polygon"
         LatitudeDeg double = 0
         LongitudeDeg double = 0
+        BoundaryLatLon double = zeros(0, 2)
         BoundaryLatDeg double = []
         BoundaryLonDeg double = []
+        GridPoints table = table()
+        GridResolutionKm double = 50
+        Priority double = 1
+        RequiredCoveragePercent double = 50
+        RequiredRevisitTimeSeconds double = Inf
+        RequiredDwellPerGridPointSeconds double = 0
         AltitudeMeters double = 0
         Metadata struct = struct()
     end
@@ -20,6 +28,7 @@ classdef AreaTargetObject < MissionObject
             if nargin >= 3
                 obj.BoundaryLatDeg = boundaryLatDeg(:);
                 obj.BoundaryLonDeg = boundaryLonDeg(:);
+                obj.BoundaryLatLon = [obj.BoundaryLatDeg, obj.BoundaryLonDeg];
                 centroid = obj.getCentroid();
                 obj.LatitudeDeg = centroid(1);
                 obj.LongitudeDeg = centroid(2);
@@ -39,6 +48,10 @@ classdef AreaTargetObject < MissionObject
                 error("AreaTargetObject:InvalidBoundary", ...
                     "Area target boundary must contain at least three points.");
             end
+            if obj.GridResolutionKm <= 0
+                error("AreaTargetObject:InvalidGridResolution", ...
+                    "GridResolutionKm must be positive.");
+            end
         end
 
         function tf = containsPoint(obj, latDeg, lonDeg)
@@ -51,6 +64,67 @@ classdef AreaTargetObject < MissionObject
             else
                 centroid = [mean(obj.BoundaryLatDeg, "omitnan"), ...
                     mean(obj.BoundaryLonDeg, "omitnan")];
+            end
+        end
+
+        function gridPoints = generateGrid(obj, gridResolutionKm)
+            if nargin < 2 || isempty(gridResolutionKm)
+                gridResolutionKm = obj.GridResolutionKm;
+            end
+            obj.validate();
+            latStep = max(gridResolutionKm / 111.0, 0.01);
+            meanLat = mean(obj.BoundaryLatDeg, "omitnan");
+            lonStep = max(gridResolutionKm / max(111.0 * cosd(meanLat), 1.0), 0.01);
+            latValues = (min(obj.BoundaryLatDeg):latStep:max(obj.BoundaryLatDeg)).';
+            lonValues = (min(obj.BoundaryLonDeg):lonStep:max(obj.BoundaryLonDeg)).';
+            [lonGrid, latGrid] = meshgrid(lonValues, latValues);
+            inside = inpolygon(lonGrid(:), latGrid(:), obj.BoundaryLonDeg, obj.BoundaryLatDeg);
+            lat = latGrid(inside);
+            lon = lonGrid(inside);
+            if isempty(lat)
+                centroid = obj.getCentroid();
+                lat = centroid(1);
+                lon = centroid(2);
+            end
+            gridPointID = "GP-" + compose("%03d", (1:numel(lat)).');
+            covered = false(numel(lat), 1);
+            gridPoints = table(gridPointID, lat(:), lon(:), covered, ...
+                'VariableNames', {'GridPointID', 'LatitudeDeg', 'LongitudeDeg', 'Covered'});
+        end
+
+        function boundary = getBoundary(obj)
+            boundary = table(obj.BoundaryLatDeg(:), obj.BoundaryLonDeg(:), ...
+                'VariableNames', {'LatitudeDeg', 'LongitudeDeg'});
+        end
+
+        function gridPoints = getGridPoints(obj)
+            if isempty(obj.GridPoints) || height(obj.GridPoints) == 0
+                gridPoints = obj.generateGrid(obj.GridResolutionKm);
+            else
+                gridPoints = obj.GridPoints;
+            end
+        end
+
+        function areaKm2 = getAreaKm2(obj)
+            obj.validate();
+            meanLat = mean(obj.BoundaryLatDeg, "omitnan");
+            x = obj.BoundaryLonDeg(:) * 111.0 * cosd(meanLat);
+            y = obj.BoundaryLatDeg(:) * 111.0;
+            areaKm2 = 0.5 * abs(sum(x .* circshift(y, -1) - circshift(x, -1) .* y));
+        end
+
+        function ax = plotArea(obj, ax)
+            ax = obj.plotBoundary(ax);
+            holdState = ishold(ax);
+            hold(ax, "on");
+            gridPoints = obj.getGridPoints();
+            if ~isempty(gridPoints) && height(gridPoints) > 0
+                scatter(ax, gridPoints.LongitudeDeg, gridPoints.LatitudeDeg, ...
+                    18, "filled", "MarkerFaceColor", obj.Color, ...
+                    "MarkerFaceAlpha", 0.45);
+            end
+            if ~holdState
+                hold(ax, "off");
             end
         end
 
