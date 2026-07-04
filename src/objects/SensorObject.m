@@ -178,6 +178,11 @@ classdef SensorObject < MissionObject
                         boresight = state(4:6);
                     end
 
+                case {"SUNPOINTING", "SUN"}
+                    sunEcef = OrekitBodies.sunPositions(time, "ECEF");
+                    boresight = [sunEcef.X_m(1), sunEcef.Y_m(1), sunEcef.Z_m(1)] ...
+                        - parentPosition;
+
                 otherwise
                     boresight = reshape(obj.BoresightVector, 1, 3);
             end

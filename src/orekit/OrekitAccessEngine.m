@@ -3,12 +3,19 @@ classdef OrekitAccessEngine
 
     methods (Static)
         function aer = azElRange(satellite, groundStation, timeVector)
+            timeVector = OrekitTime.ensureUtc(timeVector(:));
+
+            % Prefer stored ephemeris: it reflects maneuvers, which the
+            % raw propagator handle from the last segment does not.
+            aer = OrekitAccessEngine.azElRangeFromEphemeris(satellite, groundStation, timeVector);
+            if ~isempty(aer)
+                return;
+            end
+
             if isempty(satellite.OrekitPropagator)
                 error("OrekitAccessEngine:MissingPropagator", ...
                     "Satellite '%s' must be propagated before access can be computed.", satellite.Name);
             end
-
-            timeVector = OrekitTime.ensureUtc(timeVector(:));
             n = numel(timeVector);
             az = zeros(n, 1);
             el = zeros(n, 1);
@@ -27,6 +34,26 @@ classdef OrekitAccessEngine
             end
 
             aer = table(timeVector, az, el, rangeKm, ...
+                'VariableNames', {'Time', 'AzimuthDeg', 'ElevationDeg', 'RangeKm'});
+        end
+
+        function aer = azElRangeFromEphemeris(satellite, groundStation, timeVector)
+            %AZELRANGEFROMEPHEMERIS ENU geometry from stored ECEF ephemeris.
+            % Returns [] when the ephemeris does not cover the requested times.
+            aer = [];
+            ephemeris = satellite.Ephemeris;
+            required = ["Time", "ECEF_X_m", "ECEF_Y_m", "ECEF_Z_m"];
+            if isempty(ephemeris) || ~all(ismember(required, ephemeris.Properties.VariableNames))
+                return;
+            end
+            [found, idx] = ismember(timeVector, ephemeris.Time);
+            if ~all(found)
+                return;
+            end
+            ecef = [ephemeris.ECEF_X_m(idx), ephemeris.ECEF_Y_m(idx), ephemeris.ECEF_Z_m(idx)];
+            [az, el, rangeM] = enuAzElRange(groundStation.LatitudeDeg, ...
+                groundStation.LongitudeDeg, groundStation.AltitudeMeters, ecef);
+            aer = table(timeVector, az, el, rangeM / 1000.0, ...
                 'VariableNames', {'Time', 'AzimuthDeg', 'ElevationDeg', 'RangeKm'});
         end
     end

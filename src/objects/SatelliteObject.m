@@ -12,8 +12,15 @@ classdef SatelliteObject < MissionObject
         CartesianState double = nan(1, 6)
         TLELine1 string = ""
         TLELine2 string = ""
+        SourceEphemeris table = table()
         PropagatorType string = "Keplerian"
         MassKg double = 1000
+        DragAreaM2 double = 4
+        DragCoefficient double = 2.2
+        SRPAreaM2 double = 4
+        ReflectivityCoefficient double = 1.5
+        ForceModel ForceModelOptions = ForceModelOptions()
+        Maneuvers cell = {}
         Attitude string = "Default"
         Sensors cell = {}
         Terminals cell = {}
@@ -59,6 +66,13 @@ classdef SatelliteObject < MissionObject
                         error("SatelliteObject:IncompleteTLE", ...
                             "TLE satellite '%s' requires two TLE lines.", obj.Name);
                     end
+                case "Ephemeris"
+                    required = ["Time", "X_m", "Y_m", "Z_m", "VX_mps", "VY_mps", "VZ_mps"];
+                    if isempty(obj.SourceEphemeris) || ...
+                            ~all(ismember(required, obj.SourceEphemeris.Properties.VariableNames))
+                        error("SatelliteObject:IncompleteEphemeris", ...
+                            "Ephemeris satellite '%s' requires a SourceEphemeris table with time and GCRF state columns.", obj.Name);
+                    end
                 otherwise
                     error("SatelliteObject:UnsupportedOrbitType", ...
                         "Unsupported orbit definition type: %s", obj.OrbitDefinitionType);
@@ -75,9 +89,15 @@ classdef SatelliteObject < MissionObject
 
         function obj = propagate(obj, timeVector, config)
             obj.validate();
-            propagator = obj.buildOrekitPropagator(config);
+            if strcmp(obj.OrbitDefinitionType, "Ephemeris")
+                obj.Ephemeris = OrekitEphemeris.resample(obj.SourceEphemeris, timeVector);
+                obj.OrekitPropagator = [];
+                obj.IsPropagated = true;
+                return;
+            end
+            [ephemeris, propagator] = OrekitPropagatorFactory.propagateWithManeuvers( ...
+                obj, config, timeVector);
             obj.OrekitPropagator = propagator;
-            ephemeris = OrekitPropagatorFactory.propagate(propagator, timeVector);
             obj.Ephemeris = ephemeris;
             obj.IsPropagated = true;
         end
@@ -87,12 +107,55 @@ classdef SatelliteObject < MissionObject
         end
 
         function position = getECEF(obj, time)
+            position = obj.getECEFMatrix(time);
+        end
+
+        function positions = getECEFMatrix(obj, timeVector)
+            %GETECEFMATRIX Interpolated ECEF positions (numel(timeVector) x 3, meters).
+            %
+            % Spherical interpolation between ephemeris samples: direction
+            % is slerped and radius blended linearly, so interpolated points
+            % stay on the orbit arc instead of cutting a chord through it
+            % (a straight chord dips hundreds of km on coarse time grids).
+            % Clamped to the ephemeris span; exact at the sample times.
             if isempty(obj.Ephemeris) || ~all(ismember(["ECEF_X_m", "ECEF_Y_m", "ECEF_Z_m"], obj.Ephemeris.Properties.VariableNames))
                 error("SatelliteObject:NoECEF", ...
                     "Satellite '%s' does not have ECEF ephemeris.", obj.Name);
             end
-            [~, idx] = min(abs(obj.Ephemeris.Time - time));
-            position = [obj.Ephemeris.ECEF_X_m(idx), obj.Ephemeris.ECEF_Y_m(idx), obj.Ephemeris.ECEF_Z_m(idx)];
+            ephemeris = obj.Ephemeris;
+            timeVector = timeVector(:);
+            timeVector.TimeZone = ephemeris.Time.TimeZone;
+            samples = [ephemeris.ECEF_X_m, ephemeris.ECEF_Y_m, ephemeris.ECEF_Z_m];
+            if height(ephemeris) == 1
+                positions = repmat(samples, numel(timeVector), 1);
+                return;
+            end
+
+            sampleSeconds = seconds(ephemeris.Time - ephemeris.Time(1));
+            querySeconds = seconds(timeVector - ephemeris.Time(1));
+            querySeconds = min(max(querySeconds, sampleSeconds(1)), sampleSeconds(end));
+
+            idx = discretize(querySeconds, sampleSeconds);
+            idx = min(max(idx, 1), height(ephemeris) - 1);
+            s = (querySeconds - sampleSeconds(idx)) ./ ...
+                (sampleSeconds(idx + 1) - sampleSeconds(idx));
+
+            radii = sqrt(sum(samples.^2, 2));
+            units = samples ./ radii;
+            u0 = units(idx, :);
+            u1 = units(idx + 1, :);
+            omega = acos(max(min(sum(u0 .* u1, 2), 1), -1));
+
+            w0 = 1 - s;
+            w1 = s;
+            curved = omega > 1e-8;
+            w0(curved) = sin((1 - s(curved)) .* omega(curved)) ./ sin(omega(curved));
+            w1(curved) = sin(s(curved) .* omega(curved)) ./ sin(omega(curved));
+
+            direction = w0 .* u0 + w1 .* u1;
+            direction = direction ./ max(sqrt(sum(direction.^2, 2)), eps);
+            radius = (1 - s) .* radii(idx) + s .* radii(idx + 1);
+            positions = radius .* direction;
         end
 
         function lla = getLLA(obj, time)
@@ -134,6 +197,39 @@ classdef SatelliteObject < MissionObject
         function sensors = listSensors(obj)
             sensors = sensorListTable(obj.Sensors);
         end
+
+        function obj = addManeuver(obj, maneuver)
+            if isstruct(maneuver)
+                maneuver = ImpulsiveManeuver.fromStruct(maneuver);
+            end
+            maneuver.validate();
+            obj.Maneuvers{end + 1} = maneuver;
+        end
+
+        function obj = clearManeuvers(obj)
+            obj.Maneuvers = {};
+        end
+
+        function maneuvers = listManeuvers(obj)
+            n = numel(obj.Maneuvers);
+            names = strings(n, 1);
+            times = NaT(n, 1, "TimeZone", "UTC");
+            frames = strings(n, 1);
+            deltaV = zeros(n, 3);
+            magnitudes = zeros(n, 1);
+            for k = 1:n
+                maneuver = obj.Maneuvers{k};
+                names(k) = maneuver.Name;
+                burnTime = maneuver.Time;
+                burnTime.TimeZone = "UTC";
+                times(k) = burnTime;
+                frames(k) = maneuver.Frame;
+                deltaV(k, :) = maneuver.DeltaVmps;
+                magnitudes(k) = norm(maneuver.DeltaVmps);
+            end
+            maneuvers = table(names, times, frames, deltaV, magnitudes, ...
+                'VariableNames', {'Name', 'Time', 'Frame', 'DeltaVmps', 'MagnitudeMps'});
+        end
     end
 
     methods (Access = private)
@@ -168,6 +264,13 @@ classdef SatelliteObject < MissionObject
             obj.CartesianState = reshape(stateVector, 1, 6);
         end
 
+        function obj = fromEphemeris(name, sourceEphemeris)
+            obj = SatelliteObject(name);
+            obj.OrbitDefinitionType = "Ephemeris";
+            obj.PropagatorType = "Ephemeris";
+            obj.SourceEphemeris = sourceEphemeris;
+        end
+
         function obj = fromTLE(name, line1, line2)
             obj = SatelliteObject(name);
             obj.OrbitDefinitionType = "TLE";
@@ -181,7 +284,18 @@ classdef SatelliteObject < MissionObject
             names = fieldnames(data);
             for k = 1:numel(names)
                 if isprop(obj, names{k}) && ~strcmp(names{k}, "OrekitPropagator")
-                    obj.(names{k}) = restoreSensorCellIfNeeded(data.(names{k}), names{k});
+                    value = restoreSensorCellIfNeeded(data.(names{k}), names{k});
+                    if strcmp(names{k}, "ForceModel") && isstruct(value)
+                        value = ForceModelOptions.fromStruct(value);
+                    end
+                    if strcmp(names{k}, "Maneuvers")
+                        for m = 1:numel(value)
+                            if isstruct(value{m})
+                                value{m} = ImpulsiveManeuver.fromStruct(value{m});
+                            end
+                        end
+                    end
+                    obj.(names{k}) = value;
                 end
             end
             obj.OrekitPropagator = [];

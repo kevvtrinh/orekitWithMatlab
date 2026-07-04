@@ -67,6 +67,10 @@ taskPriorityEdit = [];
 taskDwellEdit = [];
 taskCoverageEdit = [];
 coverageTargetDrop = [];
+analysisSatelliteDrop = [];
+analysisStationDrop = [];
+showSensorFovCheck = [];
+showSensorForCheck = [];
 taskList = {};
 lastTaskCandidates = [];
 lastTaskConflicts = [];
@@ -95,6 +99,7 @@ sensorTab = uitab(ribbon, "Title", "Sensors / Payloads");
 sensorTaskTab = uitab(ribbon, "Title", "Sensor Tasks");
 schedulingTab = uitab(ribbon, "Title", "Scheduling");
 coverageTab = uitab(ribbon, "Title", "Coverage");
+analysisTab = uitab(ribbon, "Title", "Analysis");
 sensorViewerRibbonTab = uitab(ribbon, "Title", "Satellite / Sensor Viewer");
 ribbon.SelectedTab = insertTab;
 
@@ -107,6 +112,7 @@ buildSensorsRibbon(sensorTab);
 buildSensorTasksRibbon(sensorTaskTab);
 buildSchedulingRibbon(schedulingTab);
 buildCoverageRibbon(coverageTab);
+buildAnalysisRibbon(analysisTab);
 buildSensorViewerRibbon(sensorViewerRibbonTab);
 
 main = uigridlayout(root, [1 3]);
@@ -348,6 +354,16 @@ refreshAll();
             "Value", true, "ValueChangedFcn", @refreshViewsCallback);
         showPlacesCheck.Layout.Row = 1;
         showPlacesCheck.Layout.Column = 7;
+
+        showSensorFovCheck = uicheckbox(grid, "Text", "Sensor FOV", ...
+            "Value", false, "ValueChangedFcn", @refreshViewsCallback);
+        showSensorFovCheck.Layout.Row = 2;
+        showSensorFovCheck.Layout.Column = 5;
+
+        showSensorForCheck = uicheckbox(grid, "Text", "Sensor FOR", ...
+            "Value", false, "ValueChangedFcn", @refreshViewsCallback);
+        showSensorForCheck.Layout.Row = 2;
+        showSensorForCheck.Layout.Column = 6;
 
         frame3DDrop = uidropdown(grid, "Items", {'ECEF', 'ECI'}, ...
             "Value", "ECEF", "ValueChangedFcn", @refreshViewsCallback);
@@ -642,6 +658,168 @@ refreshAll();
             "ButtonPushedFcn", @plotTaskTimelineCallback);
         btn.Layout.Row = 1;
         btn.Layout.Column = 3;
+    end
+
+    function buildAnalysisRibbon(parent)
+        grid = uigridlayout(parent, [3 8]);
+        grid.RowHeight = {34, 34, 34};
+        grid.ColumnWidth = {70, 180, 12, 140, 140, 140, 140, "1x"};
+        grid.Padding = [10 8 10 6];
+        grid.RowSpacing = 6;
+        grid.ColumnSpacing = 8;
+
+        lbl = uilabel(grid, "Text", "Satellite");
+        lbl.Layout.Row = 1;
+        lbl.Layout.Column = 1;
+        analysisSatelliteDrop = uidropdown(grid, "Items", {'<none>'});
+        analysisSatelliteDrop.Layout.Row = 1;
+        analysisSatelliteDrop.Layout.Column = 2;
+
+        btn = uibutton(grid, "Text", "Eclipse Timeline", ...
+            "ButtonPushedFcn", @eclipseTimelineCallback);
+        btn.Layout.Row = 1;
+        btn.Layout.Column = 4;
+        btn = uibutton(grid, "Text", "Orbital Elements", ...
+            "ButtonPushedFcn", @orbitalElementsCallback);
+        btn.Layout.Row = 1;
+        btn.Layout.Column = 5;
+        btn = uibutton(grid, "Text", "Export OEM...", ...
+            "ButtonPushedFcn", @exportOemCallback);
+        btn.Layout.Row = 1;
+        btn.Layout.Column = 6;
+
+        lbl = uilabel(grid, "Text", "Station");
+        lbl.Layout.Row = 2;
+        lbl.Layout.Column = 1;
+        analysisStationDrop = uidropdown(grid, "Items", {'<none>'});
+        analysisStationDrop.Layout.Row = 2;
+        analysisStationDrop.Layout.Column = 2;
+
+        btn = uibutton(grid, "Text", "Deck Access", ...
+            "ButtonPushedFcn", @deckAccessCallback);
+        btn.Layout.Row = 2;
+        btn.Layout.Column = 4;
+        btn = uibutton(grid, "Text", "Global Coverage", ...
+            "ButtonPushedFcn", @globalCoverageCallback);
+        btn.Layout.Row = 2;
+        btn.Layout.Column = 5;
+    end
+
+    function name = requireAnalysisSatellite()
+        name = string(analysisSatelliteDrop.Value);
+        if name == "<none>"
+            error("OrekitUI:NoSatelliteSelected", ...
+                "Add a satellite and choose it in the Analysis tab first.");
+        end
+    end
+
+    function ensurePropagatedForAnalysis(progress, startValue, endValue)
+        applyScenarioConfig();
+        requireConfigured();
+        if hasSatellites() && anySatellitesNeedPropagation()
+            propagateScenarioInternal(progress, startValue, endValue);
+        end
+    end
+
+    function eclipseTimelineCallback(~, ~)
+        progress = [];
+        try
+            progress = openProgress("Eclipse Analysis", "Preparing scenario...", 0.05);
+            ensurePropagatedForAnalysis(progress, 0.15, 0.55);
+            satName = requireAnalysisSatellite();
+            updateProgress(progress, 0.65, "Computing eclipse intervals...");
+            eclipse = computeEclipse(scenario, satName);
+            updateProgress(progress, 0.90, "Plotting lighting timeline...");
+            plotEclipseTimeline(eclipse);
+            finishProgress(progress, "Eclipse analysis complete.");
+        catch err
+            closeProgress(progress);
+            uialert(fig, getReport(err, "extended", "hyperlinks", "off"), ...
+                "Eclipse analysis failed");
+        end
+    end
+
+    function orbitalElementsCallback(~, ~)
+        progress = [];
+        try
+            progress = openProgress("Orbital Elements", "Preparing scenario...", 0.05);
+            ensurePropagatedForAnalysis(progress, 0.15, 0.55);
+            satName = requireAnalysisSatellite();
+            updateProgress(progress, 0.65, "Computing osculating elements...");
+            elements = computeOrbitalElements(scenario, satName);
+            updateProgress(progress, 0.90, "Plotting element history...");
+            plotOrbitalElements(elements, satName);
+            finishProgress(progress, "Element report complete.");
+        catch err
+            closeProgress(progress);
+            uialert(fig, getReport(err, "extended", "hyperlinks", "off"), ...
+                "Element report failed");
+        end
+    end
+
+    function exportOemCallback(~, ~)
+        progress = [];
+        try
+            satName = requireAnalysisSatellite();
+            [file, folder] = uiputfile("*.oem", "Export OEM Ephemeris", ...
+                char(satName + ".oem"));
+            if isequal(file, 0)
+                return;
+            end
+            progress = openProgress("Export OEM", "Preparing scenario...", 0.05);
+            ensurePropagatedForAnalysis(progress, 0.15, 0.65);
+            updateProgress(progress, 0.80, "Writing CCSDS OEM file...");
+            exportOEM(scenario, satName, fullfile(folder, file));
+            finishProgress(progress, "OEM export complete.");
+        catch err
+            closeProgress(progress);
+            uialert(fig, getReport(err, "extended", "hyperlinks", "off"), ...
+                "OEM export failed");
+        end
+    end
+
+    function deckAccessCallback(~, ~)
+        progress = [];
+        try
+            progress = openProgress("Deck Access", "Preparing scenario...", 0.05);
+            ensurePropagatedForAnalysis(progress, 0.15, 0.55);
+            stationName = string(analysisStationDrop.Value);
+            if stationName == "<none>"
+                error("OrekitUI:NoStationSelected", ...
+                    "Add a ground station and choose it in the Analysis tab first.");
+            end
+            updateProgress(progress, 0.65, "Computing deck access...");
+            deck = computeDeckAccess(scenario, stationName);
+            finishProgress(progress, "Deck access complete.");
+
+            resultFig = uifigure("Name", "Deck Access - " + stationName, ...
+                "Position", [220 160 820 420]);
+            resultGrid = uigridlayout(resultFig, [1 1]);
+            resultGrid.Padding = [8 8 8 8];
+            uitable(resultGrid, "Data", deck.AccessWindows);
+        catch err
+            closeProgress(progress);
+            uialert(fig, getReport(err, "extended", "hyperlinks", "off"), ...
+                "Deck access failed");
+        end
+    end
+
+    function globalCoverageCallback(~, ~)
+        progress = [];
+        try
+            progress = openProgress("Global Coverage", "Preparing scenario...", 0.05);
+            ensurePropagatedForAnalysis(progress, 0.15, 0.55);
+            updateProgress(progress, 0.60, "Computing coverage grid (this can take a moment)...");
+            coverage = computeCoverage(scenario, CoverageGrid.globalGrid(6), ...
+                struct("MinElevationDeg", 5));
+            updateProgress(progress, 0.90, "Plotting coverage map...");
+            plotCoverageMap(coverage, "CoveragePercent");
+            finishProgress(progress, "Coverage analysis complete.");
+        catch err
+            closeProgress(progress);
+            uialert(fig, getReport(err, "extended", "hyperlinks", "off"), ...
+                "Coverage analysis failed");
+        end
     end
 
     function buildSensorViewerRibbon(parent)
@@ -1105,8 +1283,8 @@ refreshAll();
         typeTabs = uitabgroup(dialogGrid);
 
         kepTab = uitab(typeTabs, "Title", "Keplerian");
-        kepGrid = uigridlayout(kepTab, [9 2]);
-        kepGrid.RowHeight = repmat({34}, 1, 9);
+        kepGrid = uigridlayout(kepTab, [10 2]);
+        kepGrid.RowHeight = repmat({34}, 1, 10);
         kepGrid.ColumnWidth = {170, "1x"};
         kepGrid.Padding = [12 12 12 12];
         kepGrid.RowSpacing = 7;
@@ -1152,14 +1330,22 @@ refreshAll();
         kepMass.Layout.Row = 8;
         kepMass.Layout.Column = 2;
 
+        uilabel(kepGrid, "Text", "Propagator");
+        kepPropagator = uidropdown(kepGrid, ...
+            "Items", {'Keplerian (two-body)', 'Eckstein-Hechler (J2-J6)', 'Numerical (HPOP)'}, ...
+            "ItemsData", {'Keplerian', 'EcksteinHechler', 'Numerical'}, ...
+            "Value", 'Keplerian');
+        kepPropagator.Layout.Row = 9;
+        kepPropagator.Layout.Column = 2;
+
         btn = uibutton(kepGrid, "Text", "Insert Satellite", ...
             "ButtonPushedFcn", @insertKeplerianSatellite);
-        btn.Layout.Row = 9;
+        btn.Layout.Row = 10;
         btn.Layout.Column = [1 2];
 
         tleTab = uitab(typeTabs, "Title", "TLE");
-        tleGrid = uigridlayout(tleTab, [7 2]);
-        tleGrid.RowHeight = {34, 24, 92, 24, 92, 36, "1x"};
+        tleGrid = uigridlayout(tleTab, [8 2]);
+        tleGrid.RowHeight = {34, 24, 92, 24, 92, 34, 36, "1x"};
         tleGrid.ColumnWidth = {88, "1x"};
         tleGrid.Padding = [12 12 12 12];
 
@@ -1184,9 +1370,19 @@ refreshAll();
         tleLine2.Layout.Row = 5;
         tleLine2.Layout.Column = [1 2];
 
+        lbl = uilabel(tleGrid, "Text", "Propagator");
+        lbl.Layout.Row = 6;
+        lbl.Layout.Column = 1;
+        tlePropagator = uidropdown(tleGrid, ...
+            "Items", {'SGP4 (TLE)', 'Numerical (HPOP, seeded from TLE)'}, ...
+            "ItemsData", {'TLE', 'Numerical'}, ...
+            "Value", 'TLE');
+        tlePropagator.Layout.Row = 6;
+        tlePropagator.Layout.Column = 2;
+
         btn = uibutton(tleGrid, "Text", "Insert Satellite", ...
             "ButtonPushedFcn", @insertTleSatellite);
-        btn.Layout.Row = 6;
+        btn.Layout.Row = 7;
         btn.Layout.Column = [1 2];
 
         function insertKeplerianSatellite(~, ~)
@@ -1205,6 +1401,7 @@ refreshAll();
                     kepEcc.Value, kepInc.Value, kepRaan.Value, ...
                     kepArgPerigee.Value, kepTrueAnomaly.Value);
                 sat.MassKg = kepMass.Value;
+                sat.PropagatorType = string(kepPropagator.Value);
                 scenario = scenario.addObject(sat);
                 selectedKind = "Satellite";
                 selectedName = string(name);
@@ -1234,6 +1431,7 @@ refreshAll();
                 sat = SatelliteObject.fromTLE(name, ...
                     cleanTextareaValue(tleLine1.Value), ...
                     cleanTextareaValue(tleLine2.Value));
+                sat.PropagatorType = string(tlePropagator.Value);
                 scenario = scenario.addObject(sat);
                 selectedKind = "Satellite";
                 selectedName = string(name);
@@ -2016,6 +2214,7 @@ refreshAll();
         refreshAccessDropdowns();
         refreshSensorDropdowns();
         refreshTaskingDropdowns();
+        refreshAnalysisDropdowns();
         refreshInspector();
         refreshVisualization();
     end
@@ -2263,7 +2462,61 @@ refreshAll();
             drawPlaces2D();
         end
         drawSatellites2D();
+        drawSensorFootprints2D();
         hold(mapAxes, "off");
+    end
+
+    function drawSensorFootprints2D()
+        for footprint = collectSensorFootprints()
+            [lon, lat] = splitDateline(footprint{1}.LongitudeDeg, footprint{1}.LatitudeDeg);
+            if footprint{1}.Type == "FOR"
+                plot(mapAxes, lon, lat, "--", "Color", [0.20 0.55 0.95], ...
+                    "LineWidth", 1.2);
+            else
+                plot(mapAxes, lon, lat, "-", "Color", footprint{1}.Color, ...
+                    "LineWidth", 1.4);
+            end
+        end
+    end
+
+    function footprints = collectSensorFootprints()
+        %COLLECTSENSORFOOTPRINTS Footprints for every satellite sensor at the
+        % current scenario time, honoring the FOV/FOR view toggles. Sensors
+        % whose footprint cannot be computed (e.g. targeted sensors without a
+        % target) are skipped silently so one bad sensor never blocks redraw.
+        footprints = {};
+        if isempty(showSensorFovCheck) || ...
+                (~showSensorFovCheck.Value && ~showSensorForCheck.Value)
+            return;
+        end
+        time = scenario.CurrentAnimationTime;
+        for k = 1:numel(scenario.Objects)
+            obj = scenario.Objects{k};
+            if ~isa(obj, "SatelliteObject") || isempty(obj.Ephemeris)
+                continue;
+            end
+            for s = 1:numel(obj.Sensors)
+                sensor = obj.Sensors{s};
+                if showSensorFovCheck.Value
+                    try
+                        footprint = computeSensorFootprint(scenario, obj.Name, ...
+                            sensor.Name, time);
+                        footprint.Color = sensor.Color;
+                        footprints{end + 1} = footprint; %#ok<AGROW>
+                    catch
+                    end
+                end
+                if showSensorForCheck.Value
+                    try
+                        footprint = computeSensorFootprint(scenario, obj.Name, ...
+                            sensor.Name, time, struct("UseFieldOfRegard", true));
+                        footprint.Color = sensor.Color;
+                        footprints{end + 1} = footprint; %#ok<AGROW>
+                    catch
+                    end
+                end
+            end
+        end
     end
 
     function drawPlaces2D()
@@ -2336,6 +2589,7 @@ refreshAll();
             maxRangeKm = max(maxRangeKm, drawPlaces3D(radiusKm, frameName, earthAngleRad));
         end
         maxRangeKm = max(maxRangeKm, drawSatellites3D(frameName));
+        drawSensorFootprints3D(frameName, earthAngleRad);
 
         axis(globeAxes, "equal");
         lim = max(8000, maxRangeKm * 1.08);
@@ -2394,6 +2648,39 @@ refreshAll();
                 "MarkerEdgeColor", edgeColor, "LineWidth", 1.1);
             plot3(globeAxes, [0 xKm(idx)], [0 yKm(idx)], [0 zKm(idx)], ...
                 "Color", [0.95 0.74 0.18], "LineWidth", 0.8);
+        end
+    end
+
+    function drawSensorFootprints3D(frameName, earthAngleRad)
+        for footprint = collectSensorFootprints()
+            data = footprint{1};
+            parent = scenario.getObject(data.ParentName);
+            apexKm = parent.getECEF(scenario.CurrentAnimationTime) / 1000.0;
+            % Lift the outline slightly off the globe so it stays visible.
+            rimKm = data.EcefMeters / 1000.0 * 1.004;
+            [rx, ry, rz] = earthFixedToViewFrame(rimKm(:, 1), rimKm(:, 2), ...
+                rimKm(:, 3), frameName, earthAngleRad);
+            [ax3, ay3, az3] = earthFixedToViewFrame(apexKm(1), apexKm(2), ...
+                apexKm(3), frameName, earthAngleRad);
+
+            if data.Type == "FOR"
+                color = [0.20 0.55 0.95];
+                faceAlpha = 0.06;
+                lineStyle = "--";
+            else
+                color = data.Color;
+                faceAlpha = 0.12;
+                lineStyle = "-";
+            end
+            plot3(globeAxes, rx, ry, rz, lineStyle, "Color", color, ...
+                "LineWidth", 1.3);
+
+            vertices = [ax3, ay3, az3; rx(:), ry(:), rz(:)];
+            n = numel(rx);
+            faces = [ones(n - 1, 1), (2:n).', (3:n + 1).'];
+            patch(globeAxes, "Vertices", vertices, "Faces", faces, ...
+                "FaceColor", color, "FaceAlpha", faceAlpha, ...
+                "EdgeColor", "none");
         end
     end
 
@@ -2834,6 +3121,32 @@ refreshAll();
         sensorDrop.Value = chooseDropdownValue(sensorItems, oldSensor, 1);
         sensorTargetDrop.Items = targetItems;
         sensorTargetDrop.Value = chooseDropdownValue(targetItems, oldTarget, min(2, numel(targetItems)));
+    end
+
+    function refreshAnalysisDropdowns()
+        if isempty(analysisSatelliteDrop) || ~isvalid(analysisSatelliteDrop)
+            return;
+        end
+
+        satItems = satelliteItemsOrNone();
+        old = string(analysisSatelliteDrop.Value);
+        analysisSatelliteDrop.Items = satItems;
+        analysisSatelliteDrop.Value = chooseDropdownValue(satItems, old, 1);
+
+        stationNames = strings(0, 1);
+        for k = 1:numel(scenario.Objects)
+            if isa(scenario.Objects{k}, "GroundStationObject")
+                stationNames(end + 1, 1) = string(scenario.Objects{k}.Name); %#ok<AGROW>
+            end
+        end
+        if isempty(stationNames)
+            stationItems = {'<none>'};
+        else
+            stationItems = cellstr(stationNames).';
+        end
+        old = string(analysisStationDrop.Value);
+        analysisStationDrop.Items = stationItems;
+        analysisStationDrop.Value = chooseDropdownValue(stationItems, old, 1);
     end
 
     function refreshTaskingDropdowns()
