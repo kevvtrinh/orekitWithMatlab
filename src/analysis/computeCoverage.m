@@ -9,6 +9,9 @@ function coverageResult = computeCoverage(scenario, grid, options)
 %                    propagated satellite in the scenario.
 %   MinElevationDeg  Elevation mask each grid point applies to the assets.
 %                    Default 5 degrees.
+%   MaxOffNadirDeg   Optional sensor cone: a point only counts as covered
+%                    while it also lies within this angle of the asset's
+%                    nadir direction (models a nadir-pointed imager).
 %
 % A grid point is covered at a time step when at least one asset is above
 % the elevation mask. Figures of merit are reported per point and
@@ -38,6 +41,10 @@ minElevationDeg = 5;
 if isfield(options, "MinElevationDeg") && ~isempty(options.MinElevationDeg)
     minElevationDeg = options.MinElevationDeg;
 end
+maxOffNadirDeg = NaN;
+if isfield(options, "MaxOffNadirDeg") && ~isempty(options.MaxOffNadirDeg)
+    maxOffNadirDeg = options.MaxOffNadirDeg;
+end
 
 timeVector = scenario.Config.getTimeVector();
 n = numel(timeVector);
@@ -66,10 +73,21 @@ m = height(pointTable);
 covered = false(m, n);
 
 for p = 1:m
+    [pointX, pointY, pointZ] = OrekitFrames.geodeticToECEF( ...
+        pointTable.LatitudeDeg(p), pointTable.LongitudeDeg(p), grid.AltitudeMeters);
     for s = 1:numel(assetNames)
         [~, elDeg] = enuAzElRange(pointTable.LatitudeDeg(p), ...
             pointTable.LongitudeDeg(p), grid.AltitudeMeters, assetEcef{s});
-        covered(p, :) = covered(p, :) | (elDeg.' >= minElevationDeg);
+        visible = elDeg.' >= minElevationDeg;
+        if ~isnan(maxOffNadirDeg)
+            toPoint = [pointX, pointY, pointZ] - assetEcef{s};
+            nadir = -assetEcef{s};
+            cosOffNadir = sum(toPoint .* nadir, 2) ./ ...
+                (sqrt(sum(toPoint.^2, 2)) .* sqrt(sum(nadir.^2, 2)));
+            offNadirDeg = acosd(max(min(cosOffNadir, 1), -1));
+            visible = visible & (offNadirDeg.' <= maxOffNadirDeg);
+        end
+        covered(p, :) = covered(p, :) | visible;
     end
 end
 
@@ -118,7 +136,8 @@ coverageResult.Grid = grid;
 coverageResult.Points = pointTable;
 coverageResult.TimeVector = timeVector;
 coverageResult.CoveredLogical = covered;
-coverageResult.Options = struct("Assets", assetNames, "MinElevationDeg", minElevationDeg);
+coverageResult.Options = struct("Assets", assetNames, ...
+    "MinElevationDeg", minElevationDeg, "MaxOffNadirDeg", maxOffNadirDeg);
 coverageResult.Summary = summary;
 end
 

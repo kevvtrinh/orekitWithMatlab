@@ -64,6 +64,16 @@ scenario = scenario.propagate();
 
 Use `walkerStar` for the half-RAAN-span Walker Star pattern. See `examples/example_07_walkerConstellation.m`.
 
+Common mission orbits come from the orbit design wizard
+(`examples/example_16_orbitDesign.m`):
+
+```matlab
+sso = OrbitDesigner.sunSynchronous("SSO-1", 700e3, 10.5, cfg.Epoch); % alt, LTAN
+geo = OrbitDesigner.geostationary("GEO-75W", -75, cfg.Epoch);
+heo = OrbitDesigner.molniya("Molniya-1");
+a = OrbitDesigner.repeatGroundTrackSma(15, 1); % 15 revs per day
+```
+
 Sensors/payloads can also be created from scripts:
 
 ```matlab

@@ -12,6 +12,7 @@ Where to find the STK-equivalent capability in this suite.
 | Astrogator (impulsive burns) | `ImpulsiveManeuver`, `SatelliteObject.addManeuver`, `ManeuverPlanner` (Hohmann, plane change) |
 | Facility / Place / Target | `GroundStationObject`, `FacilityObject`, `PlaceObject`, `TargetObject`, `AreaTargetObject` |
 | Constellations (Walker) | `ConstellationFactory.walkerDelta` / `walkerStar` |
+| Orbit Wizard (SSO, GEO, Molniya, repeat track) | `OrbitDesigner` |
 | Deck access / catalog import | `loadTLEFile`, `computeDeckAccess` |
 | Ephemeris file import/export (CCSDS OEM) | `exportOEM`, `loadOEMFile`, `SatelliteObject.fromEphemeris` |
 | Sun exclusion access constraint | `computeAccess(..., struct("SunExclusionAngleDeg", ...))` |
@@ -25,6 +26,7 @@ Where to find the STK-equivalent capability in this suite.
 | Sensor tasking / scheduling | `src/scheduling` (`SensorTask`, greedy + MILP schedulers) |
 | Coverage definition + grid | `CoverageGrid.globalGrid` / `regionGrid` |
 | Coverage figures of merit (percent covered, revisit) | `computeCoverage`, `plotCoverageMap`, `exportCoverageReport` |
+| Sensor-constrained coverage (nadir imager cone) | `computeCoverage(..., struct("MaxOffNadirDeg", ...))` |
 | Orbital element report / graphs | `computeOrbitalElements`, `plotOrbitalElements` |
 | Communications link budget | `computeLinkBudget` |
 | Chains (multi-hop access) | `computeChainAccess` |

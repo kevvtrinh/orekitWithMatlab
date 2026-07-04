@@ -79,8 +79,14 @@ CSV exports, App Designer UI (`matlab/launchOrekitSatelliteUI.m`).
 - UI ribbon exposure of new backend features (propagator picker, force model
   panel, maneuver editor, coverage tab). UI file: `matlab/launchOrekitSatelliteUI.m`.
 - [x] Chains: `computeChainAccess` (multi-hop AND of link accesses).
-- Attitude profiles beyond "Default"/Nadir (sun-pointing, target-pointing tie-in
-  with existing sensor pointing).
+- Attitude profiles beyond "Default"/Nadir. Note: sensors already support
+  Nadir/FixedVector/Targeted pointing (SensorObject.PointingMode); the gap is
+  a sun-pointing mode needing sun direction inside SensorObject pointing code
+  (~line 144) via OrekitBodies.sunPositions.
+- [x] Orbit design wizard: `OrbitDesigner` (sunSynchronousInclination,
+  sunSynchronous with LTAN->RAAN, geostationary at a longitude, molniya,
+  repeatGroundTrackSma). Tests: testOrbitDesign, example_16.
+- [x] Sensor-cone coverage: `MaxOffNadirDeg` option in computeCoverage.
 - [x] CCSDS OEM export/import: `exportOEM`, `loadOEMFile`,
   `SatelliteObject.fromEphemeris` ("Ephemeris" orbit type, Hermite resampling
   via `OrekitEphemeris.resample`). Tests: testEphemerisInterop, example_15.
