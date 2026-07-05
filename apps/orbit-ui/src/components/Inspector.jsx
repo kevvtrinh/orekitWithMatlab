@@ -9,14 +9,25 @@ import {
 import { formatDuration } from "../lib/time.js";
 import MatlabPanel from "./MatlabPanel.jsx";
 
+const SOURCE_LABEL = {
+  matlab: { text: "MATLAB/Orekit", className: "badge--matlab" },
+  preview: { text: "browser preview", className: "badge--preview" },
+  pending: { text: "awaiting MATLAB run", className: "badge--pending" },
+};
+
 function SatelliteDetails({ sat, tSec }) {
-  const lla = satLlaAt(sat, tSec);
-  const eci = satEciAt(sat, tSec);
+  const src = SOURCE_LABEL[sat.source];
+  const lla = sat.ephemeris ? satLlaAt(sat, tSec) : null;
+  const eci = sat.ephemeris ? satEciAt(sat, tSec) : null;
   return (
     <>
       <dl className="kv">
         <dt>Type</dt>
         <dd>Satellite - {sat.propagatorType}</dd>
+        <dt>Ephemeris</dt>
+        <dd>
+          <span className={`badge ${src.className}`}>{src.text}</span>
+        </dd>
         {sat.elements && (
           <>
             <dt>a</dt>
@@ -29,22 +40,43 @@ function SatelliteDetails({ sat, tSec }) {
             <dd>{sat.elements.raanDeg.toFixed(2)} deg</dd>
             <dt>argp</dt>
             <dd>{sat.elements.argPerigeeDeg.toFixed(2)} deg</dd>
+            <dt>TA</dt>
+            <dd>{sat.elements.trueAnomalyDeg.toFixed(2)} deg</dd>
+          </>
+        )}
+        {sat.tle && (
+          <>
+            <dt>TLE</dt>
+            <dd style={{ whiteSpace: "pre-wrap", wordBreak: "break-all", fontSize: 10 }}>
+              {sat.tle.line1}
+              {"\n"}
+              {sat.tle.line2}
+            </dd>
           </>
         )}
       </dl>
-      <div className="panel-header">Current state</div>
-      <dl className="kv">
-        <dt>Latitude</dt>
-        <dd>{lla[0].toFixed(3)} deg</dd>
-        <dt>Longitude</dt>
-        <dd>{lla[1].toFixed(3)} deg</dd>
-        <dt>Altitude</dt>
-        <dd>{lla[2].toFixed(1)} km</dd>
-        <dt>ECI position</dt>
-        <dd>
-          [{eci.map((v) => v.toFixed(0)).join(", ")}] km
-        </dd>
-      </dl>
+      {lla && (
+        <>
+          <div className="panel-header">Current state</div>
+          <dl className="kv">
+            <dt>Latitude</dt>
+            <dd>{lla[0].toFixed(3)} deg</dd>
+            <dt>Longitude</dt>
+            <dd>{lla[1].toFixed(3)} deg</dd>
+            <dt>Altitude</dt>
+            <dd>{lla[2].toFixed(1)} km</dd>
+            <dt>ECI position</dt>
+            <dd>
+              [{eci.map((v) => v.toFixed(0)).join(", ")}] km
+            </dd>
+          </dl>
+        </>
+      )}
+      {!lla && (
+        <div className="empty-note">
+          No ephemeris yet - run MATLAB to propagate this satellite.
+        </div>
+      )}
     </>
   );
 }
@@ -53,7 +85,7 @@ function GroundDetails({ gp }) {
   return (
     <dl className="kv">
       <dt>Type</dt>
-      <dd>{gp.type}</dd>
+      <dd>{gp.kind === "target" ? "Point Target" : "Ground Station"}</dd>
       <dt>Latitude</dt>
       <dd>{gp.latitudeDeg.toFixed(4)} deg</dd>
       <dt>Longitude</dt>
@@ -64,6 +96,12 @@ function GroundDetails({ gp }) {
         <>
           <dt>Min elevation</dt>
           <dd>{gp.minElevationDeg.toFixed(1)} deg</dd>
+        </>
+      )}
+      {gp.priority !== undefined && (
+        <>
+          <dt>Priority</dt>
+          <dd>{gp.priority}</dd>
         </>
       )}
     </dl>
@@ -85,13 +123,22 @@ function AccessWindows({ accesses, tSec }) {
   return (
     <ul className="window-list">
       {rows.map(({ pair, w }, i) => {
-        const active = tSec >= w.startSec && tSec <= w.stopSec;
+        const active = !pair.stale && tSec >= w.startSec && tSec <= w.stopSec;
         return (
-          <li key={i} className={`window-item ${active ? "active" : ""}`}>
-            <span className="pair" title={`${pair.source} -> ${pair.target}`}>
+          <li
+            key={i}
+            className={`window-item ${active ? "active" : ""} ${pair.stale ? "stale" : ""}`}
+            title={
+              pair.stale
+                ? `${pair.source} -> ${pair.target} (stale: scenario edited since MATLAB run)`
+                : `${pair.source} -> ${pair.target}`
+            }
+          >
+            <span className="pair">
               {w.startUtc.slice(11, 19)}Z
             </span>
             <span>{formatDuration(w.durationSeconds)}</span>
+            {pair.stale && <span className="badge badge--pending">stale</span>}
             <span className="grow" />
             <span title="Max elevation">el {w.maxElevationDeg.toFixed(0)} deg</span>
             <button
@@ -109,20 +156,29 @@ function AccessWindows({ accesses, tSec }) {
   );
 }
 
-export default function Inspector({ scenario, selection, job, onRunMatlab }) {
+export default function Inspector({
+  scenario,
+  selection,
+  job,
+  onRunMatlab,
+  onOpenDialog,
+  onDeleteObject,
+}) {
   const { tSec } = useSyncExternalStore(clock.subscribe, clock.getSnapshot);
 
   const sat = scenario?.satellites.find((s) => s.name === selection);
   const gp = scenario?.groundPoints.find((g) => g.name === selection);
   const related = scenario ? accessesForObject(scenario.accesses, selection) : [];
 
-  // Count currently-active windows across the scenario for the header badge.
   const activeCount = scenario
     ? scenario.accesses.reduce(
-        (n, a) => n + (windowStateAt(a.windows, tSec).active ? 1 : 0),
+        (n, a) =>
+          n + (!a.stale && windowStateAt(a.windows, tSec).active ? 1 : 0),
         0,
       )
     : 0;
+
+  const selectedSpec = sat?.spec ?? gp?.spec;
 
   return (
     <aside className="panel panel--right">
@@ -139,8 +195,35 @@ export default function Inspector({ scenario, selection, job, onRunMatlab }) {
           </div>
         )}
         {selection && (
-          <div className="panel-header" style={{ paddingTop: 0, textTransform: "none", fontSize: 13, color: "var(--text)" }}>
-            {selection}
+          <div
+            className="panel-header"
+            style={{ paddingTop: 0, textTransform: "none", fontSize: 13, color: "var(--text)" }}
+          >
+            <span>{selection}</span>
+            {selectedSpec && (
+              <span className="inspector-actions">
+                <button
+                  className="btn btn--icon"
+                  onClick={() =>
+                    onOpenDialog(
+                      sat
+                        ? { type: "satellite", initial: selectedSpec }
+                        : { type: "ground", initial: selectedSpec },
+                    )
+                  }
+                  title="Edit this object's definition"
+                >
+                  Edit
+                </button>
+                <button
+                  className="btn btn--icon btn--danger"
+                  onClick={() => onDeleteObject(selection)}
+                  title="Delete this object from the scenario"
+                >
+                  Del
+                </button>
+              </span>
+            )}
           </div>
         )}
         {sat && <SatelliteDetails sat={sat} tSec={tSec} />}
@@ -156,7 +239,7 @@ export default function Inspector({ scenario, selection, job, onRunMatlab }) {
 
       <div className="panel-section" style={{ borderBottom: "none" }}>
         <div className="panel-header">MATLAB bridge</div>
-        <MatlabPanel job={job} onRunMatlab={onRunMatlab} />
+        <MatlabPanel job={job} onRunMatlab={onRunMatlab} dirty={scenario?.dirty} />
       </div>
     </aside>
   );

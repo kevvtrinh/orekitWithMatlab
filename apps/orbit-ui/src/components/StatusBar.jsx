@@ -1,6 +1,12 @@
-export default function StatusBar({ scenario, source, job }) {
-  const windowCount = scenario
-    ? scenario.accesses.reduce((n, a) => n + a.windows.length, 0)
+export default function StatusBar({ scenario, source, job, specError }) {
+  const freshWindows = scenario
+    ? scenario.accesses.reduce(
+        (n, a) => n + (a.stale ? 0 : a.windows.length),
+        0,
+      )
+    : 0;
+  const previewCount = scenario
+    ? scenario.satellites.filter((s) => s.source !== "matlab").length
     : 0;
 
   return (
@@ -15,7 +21,7 @@ export default function StatusBar({ scenario, source, job }) {
             ? "Bundled sample data (bridge server offline)"
             : "Bundled sample data"}
       </span>
-      {scenario && (
+      {scenario?.meta.generatedAtUtc && (
         <span>
           generated {scenario.meta.generatedAtUtc.replace("T", " ").slice(0, 16)}Z
         </span>
@@ -23,9 +29,17 @@ export default function StatusBar({ scenario, source, job }) {
       {scenario && (
         <span>
           {scenario.satellites.length} satellites - {scenario.groundPoints.length}{" "}
-          sites - {windowCount} access windows
+          sites - {freshWindows} access windows
         </span>
       )}
+      {scenario?.dirty && (
+        <span style={{ color: "var(--warn)" }}>
+          {previewCount > 0
+            ? `${previewCount} object${previewCount > 1 ? "s" : ""} previewed - run MATLAB for authoritative results`
+            : "edited since last MATLAB run"}
+        </span>
+      )}
+      {specError && <span className="error-text">{specError}</span>}
       <span className="grow" />
       <span>
         MATLAB bridge:{" "}

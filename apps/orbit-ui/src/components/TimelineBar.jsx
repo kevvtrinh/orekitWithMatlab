@@ -11,6 +11,7 @@ export default function TimelineBar({ scenario }) {
   const windows = [];
   if (scenario && durationSec > 0) {
     for (const a of scenario.accesses) {
+      if (a.stale) continue; // computed against an older scenario definition
       for (const w of a.windows) {
         windows.push({
           left: (w.startSec / durationSec) * 100,

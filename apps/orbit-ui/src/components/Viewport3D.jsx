@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { createViewer } from "../three/viewer.js";
 
 export default function Viewport3D({ scenario, selection, viewOptions, onSelect }) {
@@ -6,6 +6,17 @@ export default function Viewport3D({ scenario, selection, viewOptions, onSelect 
   const viewerRef = useRef(null);
   const onSelectRef = useRef(onSelect);
   onSelectRef.current = onSelect;
+
+  // The viewer draws only what has geometry: satellites without an ephemeris
+  // (TLE objects awaiting a MATLAB run) and stale access pairs are dropped.
+  const drawable = useMemo(() => {
+    if (!scenario) return null;
+    return {
+      ...scenario,
+      satellites: scenario.satellites.filter((s) => s.ephemeris),
+      accesses: scenario.accesses.filter((a) => !a.stale),
+    };
+  }, [scenario]);
 
   useEffect(() => {
     const viewer = createViewer(containerRef.current, {
@@ -19,16 +30,16 @@ export default function Viewport3D({ scenario, selection, viewOptions, onSelect 
   }, []);
 
   useEffect(() => {
-    viewerRef.current?.setScenario(scenario);
-  }, [scenario]);
+    viewerRef.current?.setScenario(drawable);
+  }, [drawable]);
 
   useEffect(() => {
     viewerRef.current?.setSelection(selection);
-  }, [selection, scenario]);
+  }, [selection, drawable]);
 
   useEffect(() => {
     viewerRef.current?.setOptions(viewOptions);
-  }, [viewOptions, scenario]);
+  }, [viewOptions, drawable]);
 
   return (
     <div className="viewport" ref={containerRef}>

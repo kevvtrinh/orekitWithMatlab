@@ -2,7 +2,38 @@ import { parseIsoUtc } from "./time.js";
 
 // Normalize the raw bridge/sample JSON into a render-friendly shape:
 // typed arrays for ephemerides, access windows converted to epoch offsets.
-const SAT_PALETTE = ["#e8a33d", "#4fb8d1", "#b58ae6", "#5fc98f", "#e0705c", "#d1c25a"];
+export const SAT_PALETTE = ["#e8a33d", "#4fb8d1", "#b58ae6", "#5fc98f", "#e0705c", "#d1c25a"];
+
+// Convert a raw payload ephemeris (parallel JSON arrays) into typed arrays.
+export function prepareEphemeris(rawEphemeris) {
+  const n = rawEphemeris.tOffsetSec.length;
+  const t = Float64Array.from(rawEphemeris.tOffsetSec);
+  const eci = new Float64Array(n * 3);
+  const lla = new Float64Array(n * 3);
+  for (let i = 0; i < n; i++) {
+    const p = rawEphemeris.eciKm[i];
+    eci[i * 3] = p[0];
+    eci[i * 3 + 1] = p[1];
+    eci[i * 3 + 2] = p[2];
+    const g = rawEphemeris.llaDeg[i];
+    lla[i * 3] = g[0];
+    lla[i * 3 + 1] = g[1];
+    lla[i * 3 + 2] = g[2]; // altitude km
+  }
+  return { n, t, eci, lla };
+}
+
+// Convert raw access entries into windows with epoch-offset seconds attached.
+export function prepareAccesses(rawAccesses, epochMs) {
+  return (rawAccesses ?? []).map((a) => ({
+    ...a,
+    windows: a.windows.map((w) => ({
+      ...w,
+      startSec: (parseIsoUtc(w.startUtc).getTime() - epochMs) / 1000,
+      stopSec: (parseIsoUtc(w.stopUtc).getTime() - epochMs) / 1000,
+    })),
+  }));
+}
 
 export function prepareScenario(raw) {
   const epochMs = parseIsoUtc(raw.meta.epochUtc).getTime();
@@ -16,32 +47,10 @@ export function prepareScenario(raw) {
       color = SAT_PALETTE[index % SAT_PALETTE.length];
     }
     seenColors.add(color);
-    sat = { ...sat, color };
-    const n = sat.ephemeris.tOffsetSec.length;
-    const t = Float64Array.from(sat.ephemeris.tOffsetSec);
-    const eci = new Float64Array(n * 3);
-    const lla = new Float64Array(n * 3);
-    for (let i = 0; i < n; i++) {
-      const p = sat.ephemeris.eciKm[i];
-      eci[i * 3] = p[0];
-      eci[i * 3 + 1] = p[1];
-      eci[i * 3 + 2] = p[2];
-      const g = sat.ephemeris.llaDeg[i];
-      lla[i * 3] = g[0];
-      lla[i * 3 + 1] = g[1];
-      lla[i * 3 + 2] = g[2]; // altitude km
-    }
-    return { ...sat, ephemeris: { n, t, eci, lla } };
+    return { ...sat, color, ephemeris: prepareEphemeris(sat.ephemeris) };
   });
 
-  const accesses = raw.accesses.map((a) => ({
-    ...a,
-    windows: a.windows.map((w) => ({
-      ...w,
-      startSec: (parseIsoUtc(w.startUtc).getTime() - epochMs) / 1000,
-      stopSec: (parseIsoUtc(w.stopUtc).getTime() - epochMs) / 1000,
-    })),
-  }));
+  const accesses = prepareAccesses(raw.accesses, epochMs);
 
   return {
     meta: raw.meta,

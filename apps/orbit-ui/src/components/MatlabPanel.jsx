@@ -6,7 +6,7 @@ const STATE_LABEL = {
   unreachable: "Bridge server offline",
 };
 
-export default function MatlabPanel({ job, onRunMatlab }) {
+export default function MatlabPanel({ job, onRunMatlab, dirty }) {
   const state = job?.state ?? "idle";
   const running = state === "running";
 
@@ -27,14 +27,18 @@ export default function MatlabPanel({ job, onRunMatlab }) {
         onClick={onRunMatlab}
         disabled={running || state === "unreachable"}
       >
-        {running ? "MATLAB running..." : "Run MATLAB demo scenario"}
+        {running
+          ? "MATLAB running..."
+          : dirty
+            ? "Run scenario in MATLAB (edits pending)"
+            : "Run scenario in MATLAB"}
       </button>
 
       <div className="hint-text">
-        Launches <code>matlab -batch</code> against the Orekit backend
-        (orbitUiDemoScenario), then reloads this view with the fresh
-        ephemeris and access results. First run takes a minute or two while
-        MATLAB starts.
+        Sends the scenario spec to <code>matlab -batch</code>, which rebuilds
+        it with the mission classes, propagates with Orekit, computes access,
+        and reloads this view with authoritative results. First run takes a
+        minute or two while MATLAB starts.
       </div>
 
       {job?.error && <div className="error-text">{job.error}</div>}

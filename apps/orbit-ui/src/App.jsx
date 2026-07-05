@@ -1,20 +1,38 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import TopBar from "./components/TopBar.jsx";
 import ObjectBrowser from "./components/ObjectBrowser.jsx";
 import Viewport3D from "./components/Viewport3D.jsx";
 import Inspector from "./components/Inspector.jsx";
 import TimelineBar from "./components/TimelineBar.jsx";
 import StatusBar from "./components/StatusBar.jsx";
-import { prepareScenario } from "./lib/scenarioUtils.js";
+import SatelliteDialog from "./components/dialogs/SatelliteDialog.jsx";
+import ConstellationDialog from "./components/dialogs/ConstellationDialog.jsx";
+import GroundDialog from "./components/dialogs/GroundDialog.jsx";
+import ScenarioSettingsDialog from "./components/dialogs/ScenarioSettingsDialog.jsx";
+import * as api from "./lib/api.js";
+import { buildRenderScenario } from "./lib/renderScenario.js";
+import { satLlaAt } from "./lib/scenarioUtils.js";
+import {
+  deriveSpecFromScenario,
+  stripEmptyFields,
+  validateSpec,
+} from "./lib/spec.js";
 import { clock } from "./lib/clock.js";
 
 const JOB_POLL_MS = 2500;
 
 export default function App() {
-  const [scenario, setScenario] = useState(null);
+  // The editable spec is the source of truth for what exists; the MATLAB
+  // payload is the source of truth for propagation. `specMode` is "server"
+  // when the bridge persists the spec, "local" for static hosting.
+  const [spec, setSpec] = useState(null);
+  const [specMode, setSpecMode] = useState("server");
+  const [specError, setSpecError] = useState(null);
+  const [matlabRaw, setMatlabRaw] = useState(null);
   const [source, setSource] = useState("sample");
   const [selection, setSelection] = useState(null);
   const [job, setJob] = useState({ state: "idle" });
+  const [dialog, setDialog] = useState(null);
   const [viewOptions, setViewOptions] = useState({
     labels: true,
     groundTracks: true,
@@ -22,55 +40,79 @@ export default function App() {
   });
   const jobStateRef = useRef("idle");
   const urlTimeApplied = useRef(false);
+  const importInputRef = useRef(null);
 
-  const applyScenario = useCallback((raw, src) => {
-    const prepared = prepareScenario(raw);
-    setScenario(prepared);
-    setSource(src);
-    clock.configure(prepared.meta.durationSeconds);
-    // Optional deep link: ?t=<seconds past epoch> positions the clock on load.
+  const scenario = useMemo(
+    () => (spec ? buildRenderScenario(spec, matlabRaw) : null),
+    [spec, matlabRaw],
+  );
+
+  // Keep the clock span in sync and apply the optional ?t= deep link once.
+  useEffect(() => {
+    if (!scenario) return;
+    clock.configure(scenario.meta.durationSeconds);
     if (!urlTimeApplied.current) {
       urlTimeApplied.current = true;
       const t = Number(new URLSearchParams(window.location.search).get("t"));
       if (Number.isFinite(t) && t > 0) clock.setTime(t);
     }
+  }, [scenario]);
+
+  // Keep the selection valid as objects come and go.
+  useEffect(() => {
+    if (!scenario) return;
     setSelection((sel) =>
       sel &&
-      (prepared.satellites.some((s) => s.name === sel) ||
-        prepared.groundPoints.some((g) => g.name === sel))
+      (scenario.satellites.some((s) => s.name === sel) ||
+        scenario.groundPoints.some((g) => g.name === sel))
         ? sel
-        : (prepared.satellites[0]?.name ?? null),
+        : (scenario.satellites[0]?.name ?? scenario.groundPoints[0]?.name ?? null),
     );
-  }, []);
+  }, [scenario]);
 
   const loadScenario = useCallback(async () => {
     // Preferred path: the bridge server (proxied under /api). Fallback: the
     // bundled sample JSON served statically, so the UI works with no backend.
     try {
-      const res = await fetch("/api/scenario");
-      if (res.ok) {
-        const body = await res.json();
-        applyScenario(body.scenario, body.source);
-        return;
-      }
+      const body = await api.fetchScenario();
+      setMatlabRaw(body.scenario);
+      setSource(body.source);
+      return body.scenario;
     } catch {
       /* bridge server not running */
     }
     try {
       const res = await fetch("/sample-scenario.json");
       if (res.ok) {
-        applyScenario(await res.json(), "sample-static");
+        const raw = await res.json();
+        setMatlabRaw(raw);
+        setSource("sample-static");
+        return raw;
       }
     } catch (err) {
       console.error("No scenario data available", err);
     }
-  }, [applyScenario]);
+    return null;
+  }, []);
+
+  const loadSpec = useCallback(
+    async (scenarioRaw) => {
+      try {
+        const body = await api.fetchSpec();
+        setSpec(body.spec);
+        setSpecMode("server");
+      } catch {
+        // Static hosting: edit an in-memory spec derived from the sample.
+        setSpecMode("local");
+        if (scenarioRaw) setSpec(deriveSpecFromScenario(scenarioRaw));
+      }
+    },
+    [],
+  );
 
   const pollJob = useCallback(async () => {
     try {
-      const res = await fetch("/api/matlab/job");
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const status = await res.json();
+      const status = await api.fetchJob();
       const previous = jobStateRef.current;
       jobStateRef.current = status.state;
       setJob(status);
@@ -86,9 +128,12 @@ export default function App() {
   }, [loadScenario]);
 
   useEffect(() => {
-    loadScenario();
-    pollJob();
-  }, [loadScenario, pollJob]);
+    (async () => {
+      const raw = await loadScenario();
+      await loadSpec(raw);
+      pollJob();
+    })();
+  }, [loadScenario, loadSpec, pollJob]);
 
   // Poll the job endpoint while a run is in flight.
   useEffect(() => {
@@ -97,28 +142,175 @@ export default function App() {
     return () => clearInterval(id);
   }, [job.state, pollJob]);
 
+  // ---------------------------------------------------------------------
+  // Spec editing. All mutations funnel through applySpec: validate locally,
+  // apply optimistically, persist to the bridge (authoritative validation).
+  // ---------------------------------------------------------------------
+
+  const applySpec = useCallback(
+    async (nextSpec) => {
+      const candidate = stripEmptyFields(nextSpec);
+      const errors = validateSpec(candidate);
+      if (errors.length > 0) return { errors };
+      setSpecError(null);
+      setSpec(candidate);
+      if (specMode === "server") {
+        try {
+          const body = await api.saveSpec(candidate);
+          setSpec(body.spec);
+        } catch (err) {
+          if (err.errors) return { errors: err.errors };
+          // Bridge went away mid-session: keep editing locally.
+          setSpecMode("local");
+          setSpecError("Bridge server unreachable - edits are not persisted.");
+        }
+      }
+      return { ok: true };
+    },
+    [specMode],
+  );
+
+  const insertObjects = useCallback(
+    (objects) => applySpec({ ...spec, objects: [...spec.objects, ...objects] }),
+    [applySpec, spec],
+  );
+
+  const replaceObject = useCallback(
+    (originalName, object) =>
+      applySpec({
+        ...spec,
+        objects: spec.objects.map((o) => (o.name === originalName ? object : o)),
+      }),
+    [applySpec, spec],
+  );
+
+  const deleteObject = useCallback(
+    (name) => {
+      if (!window.confirm(`Delete '${name}' from the scenario?`)) return;
+      applySpec({
+        ...spec,
+        objects: spec.objects.filter((o) => o.name !== name),
+      }).then((result) => {
+        if (result.errors) setSpecError(result.errors.join(" "));
+      });
+    },
+    [applySpec, spec],
+  );
+
+  const updateMeta = useCallback(
+    (meta) => applySpec({ ...spec, meta }),
+    [applySpec, spec],
+  );
+
+  const resetSpec = useCallback(async () => {
+    if (!window.confirm("Reset to the demo scenario? This discards all edits.")) {
+      return;
+    }
+    if (specMode === "server") {
+      try {
+        const body = await api.resetSpec();
+        setSpec(body.spec);
+        return;
+      } catch {
+        /* fall through to local reset */
+      }
+    }
+    if (matlabRaw) setSpec(deriveSpecFromScenario(matlabRaw));
+  }, [specMode, matlabRaw]);
+
+  // ---------------------------------------------------------------------
+  // MATLAB run / import / export
+  // ---------------------------------------------------------------------
+
   const runMatlab = useCallback(async () => {
     try {
-      const res = await fetch("/api/matlab/run-demo", { method: "POST" });
-      const body = await res.json();
-      if (res.ok || res.status === 409) {
+      const body = await api.runScenario(specMode === "server" ? spec : undefined);
+      jobStateRef.current = "running";
+      setJob(body.job ?? { state: "running" });
+    } catch (err) {
+      if (err.status === 409) {
         jobStateRef.current = "running";
-        setJob(body.job ?? { state: "running" });
-      } else {
-        setJob({ state: "failed", error: body.error ?? `HTTP ${res.status}` });
+        pollJob();
+        return;
       }
-    } catch {
       setJob({
-        state: "unreachable",
+        state: err.status ? "failed" : "unreachable",
         error:
+          err.message ??
           "Bridge server is not reachable. Start it with `npm run dev` (or `npm run dev:server`) in apps/orbit-ui.",
       });
     }
+  }, [spec, specMode, pollJob]);
+
+  const handleExport = useCallback(
+    (what) => {
+      if (what === "spec" && spec) {
+        api.downloadJson("scenario-spec.json", spec);
+      } else if (what === "scenario") {
+        if (matlabRaw) api.downloadJson("scenario.json", matlabRaw);
+        else setSpecError("No propagated scenario to export yet.");
+      } else if (what === "csv") {
+        const sat = scenario?.satellites.find(
+          (s) => s.name === selection && s.ephemeris,
+        );
+        if (!sat) {
+          setSpecError("Select a satellite with an ephemeris to export CSV.");
+          return;
+        }
+        const rows = ["tOffsetSec,xEciKm,yEciKm,zEciKm,latDeg,lonDeg,altKm"];
+        const { n, t, eci, lla } = sat.ephemeris;
+        for (let i = 0; i < n; i++) {
+          rows.push(
+            [
+              t[i],
+              eci[i * 3].toFixed(4),
+              eci[i * 3 + 1].toFixed(4),
+              eci[i * 3 + 2].toFixed(4),
+              lla[i * 3].toFixed(5),
+              lla[i * 3 + 1].toFixed(5),
+              lla[i * 3 + 2].toFixed(5),
+            ].join(","),
+          );
+        }
+        api.downloadText(
+          `${sat.name.replace(/[^\w-]+/g, "_")}_ephemeris.csv`,
+          rows.join("\n"),
+        );
+      }
+    },
+    [spec, matlabRaw, scenario, selection],
+  );
+
+  const handleImportSpec = useCallback(() => {
+    importInputRef.current?.click();
   }, []);
+
+  const onImportFile = useCallback(
+    async (e) => {
+      const file = e.target.files?.[0];
+      e.target.value = "";
+      if (!file) return;
+      try {
+        const imported = JSON.parse(await file.text());
+        const result = await applySpec(imported);
+        if (result.errors) {
+          setSpecError(`Import rejected: ${result.errors.join(" ")}`);
+        }
+      } catch {
+        setSpecError("Import failed: not a valid JSON file.");
+      }
+    },
+    [applySpec],
+  );
 
   const toggleOption = useCallback((key) => {
     setViewOptions((prev) => ({ ...prev, [key]: !prev[key] }));
   }, []);
+
+  // Fly the camera-side selection to a satellite's current subpoint is out of
+  // scope; selection from either panel or the 3D picker is by name.
+  const openDialog = useCallback((d) => setDialog(d), []);
+  const closeDialog = useCallback(() => setDialog(null), []);
 
   return (
     <div className="app">
@@ -127,6 +319,10 @@ export default function App() {
         source={source}
         viewOptions={viewOptions}
         onToggleOption={toggleOption}
+        onOpenDialog={openDialog}
+        onResetSpec={resetSpec}
+        onExport={handleExport}
+        onImportSpec={handleImportSpec}
       />
       <div className="main">
         <ObjectBrowser
@@ -148,9 +344,70 @@ export default function App() {
           selection={selection}
           job={job}
           onRunMatlab={runMatlab}
+          onOpenDialog={openDialog}
+          onDeleteObject={deleteObject}
         />
       </div>
-      <StatusBar scenario={scenario} source={source} job={job} />
+      <StatusBar scenario={scenario} source={source} job={job} specError={specError} />
+
+      <input
+        ref={importInputRef}
+        type="file"
+        accept="application/json"
+        style={{ display: "none" }}
+        onChange={onImportFile}
+      />
+
+      {dialog?.type === "satellite" && spec && (
+        <SatelliteDialog
+          spec={spec}
+          initial={dialog.initial ?? null}
+          onClose={closeDialog}
+          onSubmit={async (obj, originalName) => {
+            const result = originalName
+              ? await replaceObject(originalName, obj)
+              : await insertObjects([obj]);
+            if (result.ok && !originalName) setSelection(obj.name);
+            return result;
+          }}
+        />
+      )}
+      {dialog?.type === "constellation" && spec && (
+        <ConstellationDialog
+          spec={spec}
+          onClose={closeDialog}
+          onSubmit={async (sats) => {
+            const result = await insertObjects(sats);
+            if (result.ok && sats.length > 0) setSelection(sats[0].name);
+            return result;
+          }}
+        />
+      )}
+      {dialog?.type === "ground" && spec && (
+        <GroundDialog
+          spec={spec}
+          kind={dialog.kind}
+          initial={dialog.initial ?? null}
+          onClose={closeDialog}
+          onSubmit={async (obj, originalName) => {
+            const result = originalName
+              ? await replaceObject(originalName, obj)
+              : await insertObjects([obj]);
+            if (result.ok && !originalName) setSelection(obj.name);
+            return result;
+          }}
+        />
+      )}
+      {dialog?.type === "settings" && spec && (
+        <ScenarioSettingsDialog
+          meta={spec.meta}
+          onClose={closeDialog}
+          onSubmit={updateMeta}
+        />
+      )}
     </div>
   );
 }
+
+// (satLlaAt imported for potential camera-follow feature; keep tree-shaken)
+void satLlaAt;

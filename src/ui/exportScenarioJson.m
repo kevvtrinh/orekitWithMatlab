@@ -1,12 +1,15 @@
-function payload = exportScenarioJson(scenario, filename)
+function payload = exportScenarioJson(scenario, filename, options)
 %EXPORTSCENARIOJSON Serialize a propagated scenario to JSON for the web UI.
 %
 % payload = exportScenarioJson(scenario, filename)
+% payload = exportScenarioJson(scenario, filename, "Extra", extraStruct)
 %
 % Writes a compact JSON document that the apps/orbit-ui frontend can render
 % directly: scenario timing, satellite ephemerides (GCRF/ECI km positions,
 % geodetic lat/lon/alt), ground points, and any access results stored on
 % scenario.AccessResults. Returns the payload struct that was encoded.
+% Fields of options.Extra are merged into the top level of the payload
+% (e.g. the scenario spec the payload was generated from).
 %
 % Ephemeris samples are expressed as offsets in seconds from the scenario
 % epoch to keep the file small and parsing trivial.
@@ -14,6 +17,7 @@ function payload = exportScenarioJson(scenario, filename)
 arguments
     scenario MissionScenario
     filename (1, 1) string
+    options.Extra (1, 1) struct = struct()
 end
 
 epoch = scenario.Config.Epoch;
@@ -48,6 +52,11 @@ for k = 1:numel(accessNames)
         scenario.AccessResults.(accessNames{k})); %#ok<AGROW>
 end
 payload.accesses = accesses;
+
+extraFields = fieldnames(options.Extra);
+for k = 1:numel(extraFields)
+    payload.(extraFields{k}) = options.Extra.(extraFields{k});
+end
 
 fid = fopen(filename, "w");
 if fid == -1

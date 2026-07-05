@@ -7,11 +7,13 @@ import {
   jobStatus,
   readScenario,
   startDemoJob,
+  startSpecJob,
 } from "./matlabJob.js";
+import { loadSpec, resetSpec, saveSpec, writeRunSpec } from "./scenarioStore.js";
 
 const PORT = Number(process.env.ORBIT_UI_PORT || 5175);
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: "4mb" }));
 
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true, repoRoot: REPO_ROOT });
@@ -27,8 +29,53 @@ app.get("/api/scenario", (_req, res) => {
   res.json({ source: result.source, scenario: result.scenario });
 });
 
+// Editable scenario spec (what the user builds in the browser).
+app.get("/api/spec", (_req, res) => {
+  res.json({ spec: loadSpec() });
+});
+
+app.put("/api/spec", (req, res) => {
+  const result = saveSpec(req.body?.spec ?? req.body);
+  if (result.errors) {
+    res.status(400).json({ errors: result.errors });
+    return;
+  }
+  res.json({ spec: result.spec });
+});
+
+app.post("/api/spec/reset", (_req, res) => {
+  res.json({ spec: resetSpec() });
+});
+
 app.get("/api/matlab/job", (_req, res) => {
   res.json(jobStatus());
+});
+
+// Propagate the current spec through MATLAB/Orekit (single job at a time).
+app.post("/api/matlab/run", (req, res) => {
+  let spec;
+  if (req.body && req.body.spec) {
+    // Convenience: save-and-run in one request.
+    const saved = saveSpec(req.body.spec);
+    if (saved.errors) {
+      res.status(400).json({ errors: saved.errors });
+      return;
+    }
+    spec = saved.spec;
+  } else {
+    spec = loadSpec();
+  }
+  const specFile = writeRunSpec(spec);
+  const result = startSpecJob(specFile, {
+    onDone: (status) =>
+      console.log(`[matlab] scenario job finished: ${status.state}`, status.error ?? ""),
+  });
+  if (!result.ok) {
+    res.status(409).json({ error: result.reason, job: jobStatus() });
+    return;
+  }
+  console.log(`[matlab] scenario job started (spec rev ${spec.rev})`);
+  res.status(202).json({ job: result.status });
 });
 
 // Kick off the demo bridge run (matlab -batch, single job at a time).

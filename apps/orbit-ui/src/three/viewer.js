@@ -199,11 +199,13 @@ export function createViewer(container, { onSelect } = {}) {
         );
         positions.set([v.x, v.y, v.z], i * 3);
       }
+      // Browser-preview orbits render dimmer than authoritative MATLAB ones.
+      const baseOpacity = sat.source === "preview" ? 0.38 : 0.55;
       const pathGeometry = new THREE.BufferGeometry();
       pathGeometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
       const path = new THREE.Line(
         pathGeometry,
-        new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.55 }),
+        new THREE.LineBasicMaterial({ color, transparent: true, opacity: baseOpacity }),
       );
       group.add(path);
 
@@ -237,7 +239,7 @@ export function createViewer(container, { onSelect } = {}) {
       const label = makeLabel(sat.name, "obj-label obj-label--sat");
       marker.add(label);
 
-      return { data: sat, path, groundTrack, marker, label, color };
+      return { data: sat, path, groundTrack, marker, label, color, baseOpacity };
     });
 
     const stations = data.groundPoints.map((gp) => {
@@ -317,7 +319,7 @@ export function createViewer(container, { onSelect } = {}) {
     for (const s of scenarioContent.sats) {
       const selected = s.data.name === selectedName;
       s.marker.scale.setScalar(selected ? 1.7 : 1);
-      s.path.material.opacity = selected ? 1.0 : 0.55;
+      s.path.material.opacity = selected ? 1.0 : s.baseOpacity;
       s.label.element.classList.toggle("obj-label--selected", selected);
     }
     for (const st of scenarioContent.stations) {

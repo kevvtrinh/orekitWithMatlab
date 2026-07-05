@@ -1,15 +1,82 @@
 import { useSyncExternalStore } from "react";
 import { clock } from "../lib/clock.js";
 import { formatUtc } from "../lib/time.js";
+import Menu from "./Menu.jsx";
 
 const SPEEDS = [1, 10, 60, 300, 1000];
 
-export default function TopBar({ scenario, source, viewOptions, onToggleOption }) {
+export default function TopBar({
+  scenario,
+  source,
+  viewOptions,
+  onToggleOption,
+  onOpenDialog,
+  onResetSpec,
+  onExport,
+  onImportSpec,
+}) {
   const { tSec, playing, speed } = useSyncExternalStore(
     clock.subscribe,
     clock.getSnapshot,
   );
   const simDate = scenario ? new Date(scenario.epochMs + tSec * 1000) : null;
+  const hasMatlabData = source === "matlab";
+
+  const scenarioItems = [
+    {
+      label: "Scenario Settings...",
+      onClick: () => onOpenDialog({ type: "settings" }),
+    },
+    "---",
+    {
+      label: "Import Spec JSON...",
+      hint: "Load a scenario spec file exported from this UI",
+      onClick: onImportSpec,
+    },
+    {
+      label: "Export Spec JSON",
+      hint: "The editable scenario definition",
+      onClick: () => onExport("spec"),
+    },
+    {
+      label: "Export Scenario JSON",
+      hint: "Last propagated payload (ephemerides + access)",
+      onClick: () => onExport("scenario"),
+    },
+    {
+      label: "Export Ephemeris CSV",
+      hint: "Ephemeris of the selected satellite",
+      onClick: () => onExport("csv"),
+    },
+    "---",
+    {
+      label: "Reset to Demo Scenario",
+      hint: "Restore the bundled two-satellite demo spec",
+      onClick: onResetSpec,
+    },
+  ];
+
+  const insertItems = [
+    {
+      label: "Satellite...",
+      meta: "Keplerian / TLE",
+      onClick: () => onOpenDialog({ type: "satellite" }),
+    },
+    {
+      label: "Constellation...",
+      meta: "Walker",
+      onClick: () => onOpenDialog({ type: "constellation" }),
+    },
+    "---",
+    {
+      label: "Ground Station...",
+      onClick: () => onOpenDialog({ type: "ground", kind: "groundStation" }),
+    },
+    {
+      label: "Point Target...",
+      onClick: () => onOpenDialog({ type: "ground", kind: "target" }),
+    },
+  ];
 
   return (
     <header className="topbar">
@@ -18,13 +85,18 @@ export default function TopBar({ scenario, source, viewOptions, onToggleOption }
         <span className="brand-sub">Orekit / MATLAB mission suite</span>
       </div>
 
+      <div className="topbar-group">
+        <Menu label="Scenario" items={scenarioItems} />
+        <Menu label="Insert" items={insertItems} />
+      </div>
+
       <div className="scenario-chip" title="Active scenario">
         <span
-          className={`status-dot status-dot--${source === "matlab" ? "matlab" : "sample"}`}
+          className={`status-dot status-dot--${hasMatlabData ? "matlab" : "sample"}`}
         />
         <span>{scenario ? scenario.meta.name : "No scenario"}</span>
         <span style={{ color: "var(--text-faint)" }}>
-          {source === "matlab" ? "MATLAB data" : "sample data"}
+          {scenario?.dirty ? "edited" : hasMatlabData ? "MATLAB data" : "sample data"}
         </span>
       </div>
 

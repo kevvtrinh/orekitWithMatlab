@@ -24,6 +24,7 @@ const MAX_LOG_LINES = 400;
 // finished job but the JSON output on disk survives.
 const job = {
   state: "idle", // idle | running | succeeded | failed
+  label: null, // "demo" | "scenario"
   startedAt: null,
   finishedAt: null,
   exitCode: null,
@@ -45,6 +46,7 @@ function pushLog(text) {
 export function jobStatus() {
   return {
     state: job.state,
+    label: job.label,
     startedAt: job.startedAt,
     finishedAt: job.finishedAt,
     exitCode: job.exitCode,
@@ -71,18 +73,41 @@ export function readScenario() {
   return { source: "none", file: null, scenario: null };
 }
 
+// MATLAB single-quoted string literal: escape ' by doubling it.
+const quoteForMatlab = (text) => text.replace(/'/g, "''");
+
+// Demo job kept for the CLI smoke test (npm run bridge:demo): builds the
+// hard-coded demo scenario in MATLAB.
 export function startDemoJob({ onDone } = {}) {
+  const output = quoteForMatlab(LIVE_SCENARIO_FILE);
+  return startJob({
+    label: "demo",
+    batchCommand: `startupOrekitSuite(); orbitUiDemoScenario('${output}');`,
+    onDone,
+  });
+}
+
+// Spec job: hand the browser-authored scenario spec to MATLAB, which builds,
+// propagates, and exports the scenario with Orekit as the authority.
+export function startSpecJob(specFile, { onDone } = {}) {
+  const spec = quoteForMatlab(specFile);
+  const output = quoteForMatlab(LIVE_SCENARIO_FILE);
+  return startJob({
+    label: "scenario",
+    batchCommand: `startupOrekitSuite(); orbitUiRunScenario('${spec}', '${output}');`,
+    onDone,
+  });
+}
+
+function startJob({ label, batchCommand, onDone }) {
   if (job.state === "running") {
     return { ok: false, reason: "A MATLAB job is already running." };
   }
 
   mkdirSync(DATA_DIR, { recursive: true });
 
-  // MATLAB single-quoted string literal: escape ' by doubling it.
-  const outputForMatlab = LIVE_SCENARIO_FILE.replace(/'/g, "''");
-  const batchCommand = `startupOrekitSuite(); orbitUiDemoScenario('${outputForMatlab}');`;
-
   job.state = "running";
+  job.label = label;
   job.startedAt = new Date().toISOString();
   job.finishedAt = null;
   job.exitCode = null;
