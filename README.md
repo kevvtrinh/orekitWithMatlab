@@ -207,6 +207,23 @@ examples            headless examples
 docs                architecture and API notes
 ```
 
+## Web UI (Orbit Console)
+
+A non-MATLAB web frontend lives in `apps/orbit-ui`: an STK-style console
+(object browser, smooth Three.js 3D Earth/orbit viewport, inspector) served
+by a small Node bridge that calls this suite through `matlab -batch`. It loads
+instantly with bundled sample data and has a one-click action that reruns the
+MATLAB/Orekit backend (`src/ui/orbitUiDemoScenario.m` and
+`src/ui/exportScenarioJson.m`) and refreshes the view with live results.
+
+```powershell
+cd apps\orbit-ui
+npm install
+npm run dev     # http://localhost:5174
+```
+
+See `apps/orbit-ui/README.md` for details on the bridge and scripts.
+
 ## Current UI
 
 The STK-style MATLAB UI launcher is:
