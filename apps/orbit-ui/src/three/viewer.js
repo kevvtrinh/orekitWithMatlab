@@ -9,6 +9,11 @@ import { satEciAt, windowStateAt } from "../lib/scenarioUtils.js";
 import { pointingStateAt, scheduleForPlatform } from "../lib/schedule.js";
 import { lightingStateAt, sunDirectionAt } from "../lib/sun.js";
 import { clock } from "../lib/clock.js";
+import {
+  makeForSectorGeometry,
+  makeFovConeGeometry,
+  orientBoresight,
+} from "./sensorGeometry.js";
 
 // World scale: 1 scene unit = Earth radius (6371 km).
 const EARTH_RADIUS_KM = 6371;
@@ -365,15 +370,15 @@ export function createViewer(container, { onSelect } = {}) {
       const label = makeLabel(sat.name, "obj-label obj-label--sat");
       marker.add(label);
 
-      // Sensor visuals: instantaneous FOV cone, field-of-regard dome around
+      // Sensor visuals: instantaneous FOV cone, field-of-regard volume around
       // nadir, and a boresight line to the tracked target while a scheduled
-      // task (or the slew into it) is in progress.
+      // task (or the slew into it) is in progress. Both volumes are authored
+      // apex-at-origin along +Y (see sensorGeometry.js) so they always sit on
+      // the same boresight side of the satellite.
       let sensor = null;
       if (sat.sensor) {
-        const fovGeometry = new THREE.ConeGeometry(1, 1, 48, 1, true);
-        fovGeometry.translate(0, -0.5, 0); // apex at the satellite
         const fovCone = new THREE.Mesh(
-          fovGeometry,
+          makeFovConeGeometry(),
           new THREE.MeshBasicMaterial({
             color: 0x7fb4d8,
             transparent: true,
@@ -385,9 +390,8 @@ export function createViewer(container, { onSelect } = {}) {
         fovCone.frustumCulled = false;
         group.add(fovCone);
 
-        const forDeg = Math.min(sat.sensor.fieldOfRegardDeg ?? 60, 179);
         const forDome = new THREE.Mesh(
-          new THREE.SphereGeometry(1, 48, 24, 0, Math.PI * 2, 0, forDeg * DEG),
+          makeForSectorGeometry(sat.sensor.fieldOfRegardDeg ?? 60),
           new THREE.MeshBasicMaterial({
             color: 0xd8a75a,
             transparent: true,
@@ -563,8 +567,6 @@ export function createViewer(container, { onSelect } = {}) {
   });
 
   // --- Sensor pointing / FOV / FOR ---
-  const NEG_Y = new THREE.Vector3(0, -1, 0);
-  const POS_Y = new THREE.Vector3(0, 1, 0);
   const tmpNadir = new THREE.Vector3();
   const tmpDir = new THREE.Vector3();
   const tmpFrom = new THREE.Vector3();
@@ -644,7 +646,7 @@ export function createViewer(container, { onSelect } = {}) {
       if (!Number.isFinite(length) || length <= 0) length = r;
       const radius = length * Math.tan(viz.halfAngleRad);
       viz.fovCone.position.copy(p);
-      viz.fovCone.quaternion.setFromUnitVectors(NEG_Y, dir);
+      orientBoresight(viz.fovCone.quaternion, dir);
       viz.fovCone.scale.set(radius, length, radius);
       viz.fovCone.material.color.setHex(
         pointing.phase === "idle"
@@ -657,9 +659,12 @@ export function createViewer(container, { onSelect } = {}) {
 
     viz.forDome.visible = options.sensorFor;
     if (options.sensorFor) {
+      // Apex at the sensor, boresight along nadir, rim touching the surface
+      // at the subpoint - same reach as the idle FOV cone, so the cone slews
+      // inside the field-of-regard volume instead of beside it.
       viz.forDome.position.copy(p);
-      viz.forDome.quaternion.setFromUnitVectors(POS_Y, tmpNadir);
-      viz.forDome.scale.setScalar(Math.max((r - 1) * 0.85, 0.02));
+      orientBoresight(viz.forDome.quaternion, tmpNadir);
+      viz.forDome.scale.setScalar(Math.max(r - 1, 0.02));
     }
 
     viz.trackLine.visible = Boolean(tracking);

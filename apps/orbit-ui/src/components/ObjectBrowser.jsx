@@ -6,26 +6,78 @@ const SOURCE_BADGE = {
   pending: { text: "run", title: "Requires a MATLAB run (SGP4 propagates on the backend)" },
 };
 
-function SatelliteRow({ sat, selected, onSelect }) {
+function SatelliteRow({ sat, selected, onSelect, onEditSensor, onRemoveSensor }) {
   const badge = SOURCE_BADGE[sat.source];
   return (
-    <button
-      className={`tree-item ${selected ? "selected" : ""}`}
-      onClick={() => onSelect(sat.name)}
-    >
-      <span className="dot" style={{ background: sat.color }} />
-      {sat.name}
-      {badge && (
-        <span className={`badge badge--${sat.source}`} title={badge.title}>
-          {badge.text}
-        </span>
+    <div>
+      <button
+        className={`tree-item ${selected ? "selected" : ""}`}
+        onClick={() => onSelect(sat.name)}
+      >
+        <span className="dot" style={{ background: sat.color }} />
+        {sat.name}
+        {badge && (
+          <span className={`badge badge--${sat.source}`} title={badge.title}>
+            {badge.text}
+          </span>
+        )}
+        <span className="meta">{sat.propagatorType}</span>
+      </button>
+      {sat.sensor && (
+        // Child row, STK object-browser style. Selecting it selects the
+        // parent platform (the sensor has no standalone identity in the
+        // spec); the inspector then shows the sensor details.
+        <div
+          className={`tree-item tree-item--child ${selected ? "selected" : ""}`}
+          role="button"
+          tabIndex={0}
+          onClick={() => onSelect(sat.name)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") onSelect(sat.name);
+          }}
+          title={`Imaging sensor on ${sat.name}`}
+        >
+          <span className="branch">&#9492;</span>
+          <span className="sensor-glyph" />
+          Sensor
+          <span className="tree-actions">
+            <button
+              className="tree-action-btn"
+              onClick={(e) => {
+                e.stopPropagation();
+                onEditSensor(sat.name);
+              }}
+              title="Edit this sensor"
+            >
+              edit
+            </button>
+            <button
+              className="tree-action-btn tree-action-btn--danger"
+              onClick={(e) => {
+                e.stopPropagation();
+                onRemoveSensor(sat.name);
+              }}
+              title="Remove this sensor from the satellite"
+            >
+              del
+            </button>
+          </span>
+          <span className="meta">
+            {sat.sensor.coneHalfAngleDeg}/{sat.sensor.fieldOfRegardDeg} deg
+          </span>
+        </div>
       )}
-      <span className="meta">{sat.propagatorType}</span>
-    </button>
+    </div>
   );
 }
 
-export default function ObjectBrowser({ scenario, selection, onSelect }) {
+export default function ObjectBrowser({
+  scenario,
+  selection,
+  onSelect,
+  onEditSensor,
+  onRemoveSensor,
+}) {
   if (!scenario) {
     return (
       <aside className="panel panel--left">
@@ -70,6 +122,8 @@ export default function ObjectBrowser({ scenario, selection, onSelect }) {
               sat={sat}
               selected={selection === sat.name}
               onSelect={onSelect}
+              onEditSensor={onEditSensor}
+              onRemoveSensor={onRemoveSensor}
             />
           ))}
           {[...groups.entries()].map(([group, sats]) => (
@@ -83,6 +137,8 @@ export default function ObjectBrowser({ scenario, selection, onSelect }) {
                   sat={sat}
                   selected={selection === sat.name}
                   onSelect={onSelect}
+                  onEditSensor={onEditSensor}
+                  onRemoveSensor={onRemoveSensor}
                 />
               ))}
             </div>

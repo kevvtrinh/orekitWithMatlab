@@ -300,6 +300,64 @@ select.control:focus-visible {
   color: var(--text-faint);
 }
 
+/* Child rows (e.g. a satellite's sensor), STK object-browser style. */
+.tree-item--child {
+  padding-left: 26px;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.tree-item--child .branch {
+  color: var(--text-faint);
+  font-family: var(--mono);
+  flex: none;
+}
+
+.tree-item--child .sensor-glyph {
+  width: 0;
+  height: 0;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 8px solid #7fb4d8;
+  flex: none;
+}
+
+.tree-item--child .tree-actions {
+  display: none;
+  margin-left: auto;
+  gap: 4px;
+}
+
+.tree-item--child:hover .tree-actions {
+  display: inline-flex;
+}
+
+.tree-item--child:hover .meta {
+  display: none;
+}
+
+.tree-action-btn {
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: none;
+  color: var(--text-faint);
+  font: inherit;
+  font-size: 10.5px;
+  padding: 0 6px;
+  cursor: pointer;
+}
+
+.tree-action-btn:hover {
+  color: var(--text);
+  border-color: var(--text-faint);
+}
+
+.tree-action-btn--danger:hover {
+  color: var(--err);
+  border-color: var(--err);
+}
+
 /* ---------- Viewport ---------- */
 
 .viewport-wrap {

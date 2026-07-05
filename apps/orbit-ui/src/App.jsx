@@ -228,6 +228,21 @@ export default function App() {
     [applySpec, spec],
   );
 
+  const removeSensor = useCallback(
+    (name) => {
+      const obj = spec?.objects.find((o) => o.name === name);
+      if (!obj?.sensor) return;
+      if (!window.confirm(`Remove the sensor from '${name}'?`)) return;
+      const { sensor: _sensor, ...rest } = obj;
+      // replaceObject already re-points tasks pinned to this satellite at
+      // "any sensor" once the sensor is gone.
+      replaceObject(name, rest).then((result) => {
+        if (result.errors) setSpecError(result.errors.join(" "));
+      });
+    },
+    [spec, replaceObject],
+  );
+
   const updateMeta = useCallback(
     (meta) => applySpec({ ...spec, meta }),
     [applySpec, spec],
@@ -364,6 +379,11 @@ export default function App() {
           scenario={scenario}
           selection={selection}
           onSelect={setSelection}
+          onEditSensor={(name) => {
+            setSelection(name);
+            openDialog({ type: "sensor", satellite: name });
+          }}
+          onRemoveSensor={removeSensor}
         />
         <div className="viewport-wrap">
           <Viewport3D
