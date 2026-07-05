@@ -13,8 +13,10 @@ import {
   groundStationTemplate,
   keplerianSatelliteTemplate,
   nextObjectName,
+  sensorTemplate,
   stripEmptyFields,
   targetTemplate,
+  taskTemplate,
   tleSatelliteTemplate,
   validateSpec,
 } from "../src/lib/spec.js";
@@ -236,6 +238,145 @@ test("buildRenderScenario merges MATLAB results with spec edits", () => {
   const previewOnly = buildRenderScenario(spec, null);
   assert.ok(previewOnly.satellites.every((s) => s.source === "preview"));
   assert.equal(previewOnly.accesses.length, 0);
+});
+
+test("sensor and task validation", () => {
+  const sat = { ...keplerianSatelliteTemplate("Imager"), sensor: sensorTemplate() };
+  const withSensor = specWith([sat, targetTemplate("T1")]);
+  withSensor.tasks = [
+    {
+      id: "task-1",
+      satelliteName: "Imager",
+      targetName: "T1",
+      priority: 5,
+      dwellSeconds: 60,
+    },
+  ];
+  assert.deepEqual(validateSpec(stripEmptyFields(withSensor)), []);
+
+  // taskTemplate picks the first target and validates.
+  const templated = { ...withSensor, tasks: [taskTemplate(withSensor)] };
+  assert.equal(templated.tasks[0].targetName, "T1");
+  assert.deepEqual(validateSpec(stripEmptyFields(templated)), []);
+
+  // FOV wider than FOR is rejected.
+  const badSensor = structuredClone(withSensor);
+  badSensor.objects[0].sensor = { coneHalfAngleDeg: 45, fieldOfRegardDeg: 30 };
+  assert.ok(validateSpec(badSensor).some((e) => e.includes("field of regard")));
+
+  // Task must reference an existing point target.
+  const badTarget = structuredClone(withSensor);
+  badTarget.tasks[0].targetName = "Nope";
+  assert.ok(validateSpec(badTarget).some((e) => e.includes("targetName")));
+
+  // Pinned satellite must exist and carry a sensor.
+  const noSensorSat = structuredClone(withSensor);
+  delete noSensorSat.objects[0].sensor;
+  assert.ok(
+    validateSpec(noSensorSat).some((e) => e.includes("satelliteName")),
+  );
+
+  // Duplicate task ids are rejected.
+  const dupIds = structuredClone(withSensor);
+  dupIds.tasks.push({ ...dupIds.tasks[0] });
+  assert.ok(validateSpec(dupIds).some((e) => e.includes("duplicate task id")));
+});
+
+test("buildRenderScenario merges schedule, sensor accesses, and sun data", () => {
+  const spec = deriveSpecFromScenario(sample);
+  spec.objects.push(stripEmptyFields(targetTemplate("T1")));
+  const sat = spec.objects.find((o) => o.kind === "satellite");
+  sat.sensor = sensorTemplate();
+  spec.tasks = [
+    { id: "task-1", targetName: "T1", priority: 5, dwellSeconds: 60 },
+  ];
+
+  const epochIso = (sec) =>
+    new Date(Date.parse(spec.meta.epochUtc) + sec * 1000).toISOString();
+  const raw = {
+    ...sample,
+    spec: structuredClone(spec),
+    sensors: [
+      {
+        name: `${sat.name} Sensor`,
+        parent: sat.name,
+        coneHalfAngleDeg: 20,
+        fieldOfRegardDeg: 60,
+      },
+    ],
+    schedule: [
+      {
+        taskId: "task-1",
+        taskName: "task-1",
+        platformName: sat.name,
+        sensorName: `${sat.name} Sensor`,
+        targetName: "T1",
+        startUtc: epochIso(600),
+        stopUtc: epochIso(700),
+        slewTimeSeconds: 20,
+      },
+    ],
+    sensorAccesses: [
+      {
+        platform: sat.name,
+        sensor: `${sat.name} Sensor`,
+        target: "T1",
+        forWindows: [{ startUtc: epochIso(500), stopUtc: epochIso(800) }],
+        fovWindows: [{ startUtc: epochIso(620), stopUtc: epochIso(680) }],
+      },
+    ],
+    sun: {
+      ephemeris: { tOffsetSec: [0], eciKm: [[1.5e8, 0, 0]] },
+      eclipses: [{ satellite: sat.name, windows: [] }],
+      groundLighting: [
+        {
+          name: "T1",
+          daylightWindows: [{ startUtc: epochIso(0), stopUtc: epochIso(900) }],
+        },
+      ],
+    },
+  };
+
+  // Fresh: schedule/sensor data authoritative, sun present.
+  const fresh = buildRenderScenario(spec, raw);
+  assert.equal(fresh.schedule.length, 1);
+  assert.equal(fresh.schedule[0].stale, false);
+  assert.equal(fresh.schedule[0].slewStartSec, 580);
+  assert.equal(fresh.sensorAccesses[0].stale, false);
+  assert.ok(fresh.sun);
+  assert.equal(fresh.sun.groundLighting.length, 1);
+  assert.equal(
+    fresh.satellites.find((s) => s.name === sat.name).sensor.coneHalfAngleDeg,
+    20,
+  );
+  assert.equal(fresh.dirty, false);
+
+  // Editing the task list marks the schedule stale and the scenario dirty.
+  const editedTasks = structuredClone(spec);
+  editedTasks.tasks[0].priority = 9;
+  const staleSchedule = buildRenderScenario(editedTasks, raw);
+  assert.equal(staleSchedule.schedule[0].stale, true);
+  assert.equal(staleSchedule.dirty, true);
+  // Sensor accesses do not depend on tasks, so they stay fresh.
+  assert.equal(staleSchedule.sensorAccesses[0].stale, false);
+
+  // Editing the platform satellite stales its schedule + sensor accesses and
+  // drops its eclipse data.
+  const editedSat = structuredClone(spec);
+  editedSat.objects.find((o) => o.name === sat.name).orbit.raanDeg += 1;
+  const staleSat = buildRenderScenario(editedSat, raw);
+  assert.equal(staleSat.schedule[0].stale, true);
+  assert.equal(staleSat.sensorAccesses[0].stale, true);
+  assert.equal(staleSat.sun.eclipses.length, 0);
+  assert.equal(staleSat.sun.groundLighting.length, 1);
+
+  // Deleting the target removes its schedule entries and access pairs.
+  const deleted = structuredClone(spec);
+  deleted.objects = deleted.objects.filter((o) => o.name !== "T1");
+  deleted.tasks = [];
+  const afterDelete = buildRenderScenario(deleted, raw);
+  assert.equal(afterDelete.schedule.length, 0);
+  assert.equal(afterDelete.sensorAccesses.length, 0);
 });
 
 test("deepEqual ignores key order but not values", () => {

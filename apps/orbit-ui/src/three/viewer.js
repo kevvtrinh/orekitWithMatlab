@@ -6,6 +6,8 @@ import {
 } from "three/examples/jsm/renderers/CSS2DRenderer.js";
 import { gmstRad, sunDirectionEci } from "../lib/time.js";
 import { satEciAt, windowStateAt } from "../lib/scenarioUtils.js";
+import { pointingStateAt, scheduleForPlatform } from "../lib/schedule.js";
+import { lightingStateAt, sunDirectionAt } from "../lib/sun.js";
 import { clock } from "../lib/clock.js";
 
 // World scale: 1 scene unit = Earth radius (6371 km).
@@ -72,6 +74,24 @@ function proceduralEarthTexture() {
   return texture;
 }
 
+// Soft radial glow sprite for the Sun.
+function sunSpriteTexture() {
+  const canvas = document.createElement("canvas");
+  canvas.width = 128;
+  canvas.height = 128;
+  const ctx = canvas.getContext("2d");
+  const grad = ctx.createRadialGradient(64, 64, 4, 64, 64, 64);
+  grad.addColorStop(0, "rgba(255,248,224,1)");
+  grad.addColorStop(0.25, "rgba(255,236,170,0.85)");
+  grad.addColorStop(0.6, "rgba(255,214,110,0.25)");
+  grad.addColorStop(1, "rgba(255,200,80,0)");
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, 128, 128);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
+
 function makeStarfield() {
   const count = 1600;
   const positions = new Float32Array(count * 3);
@@ -121,6 +141,17 @@ export function createViewer(container, { onSelect } = {}) {
   const sunLight = new THREE.DirectionalLight(0xfff4e0, 2.4);
   scene.add(sunLight);
 
+  // Visible Sun marker along the light direction (far out, past the stars).
+  const sunSprite = new THREE.Sprite(
+    new THREE.SpriteMaterial({
+      map: sunSpriteTexture(),
+      transparent: true,
+      depthWrite: false,
+    }),
+  );
+  sunSprite.scale.setScalar(14);
+  scene.add(sunSprite);
+
   // --- Earth (rotates with GMST; ground objects are children) ---
   const earthGroup = new THREE.Group();
   scene.add(earthGroup);
@@ -153,7 +184,14 @@ export function createViewer(container, { onSelect } = {}) {
 
   // --- Dynamic content, rebuilt on setScenario ---
   let scenarioContent = null; // { group, groundGroup, sats, stations, accessGroup }
-  let options = { labels: true, groundTracks: true, accessLines: true };
+  let options = {
+    labels: true,
+    groundTracks: true,
+    accessLines: true,
+    sensorFov: true,
+    sensorFor: false,
+    sun: true,
+  };
   let selectedName = null;
   const pickables = [];
 
@@ -239,7 +277,75 @@ export function createViewer(container, { onSelect } = {}) {
       const label = makeLabel(sat.name, "obj-label obj-label--sat");
       marker.add(label);
 
-      return { data: sat, path, groundTrack, marker, label, color, baseOpacity };
+      // Sensor visuals: instantaneous FOV cone, field-of-regard dome around
+      // nadir, and a boresight line to the tracked target while a scheduled
+      // task (or the slew into it) is in progress.
+      let sensor = null;
+      if (sat.sensor) {
+        const fovGeometry = new THREE.ConeGeometry(1, 1, 48, 1, true);
+        fovGeometry.translate(0, -0.5, 0); // apex at the satellite
+        const fovCone = new THREE.Mesh(
+          fovGeometry,
+          new THREE.MeshBasicMaterial({
+            color: 0x7fb4d8,
+            transparent: true,
+            opacity: 0.16,
+            side: THREE.DoubleSide,
+            depthWrite: false,
+          }),
+        );
+        fovCone.frustumCulled = false;
+        group.add(fovCone);
+
+        const forDeg = Math.min(sat.sensor.fieldOfRegardDeg ?? 60, 179);
+        const forDome = new THREE.Mesh(
+          new THREE.SphereGeometry(1, 48, 24, 0, Math.PI * 2, 0, forDeg * DEG),
+          new THREE.MeshBasicMaterial({
+            color: 0xd8a75a,
+            transparent: true,
+            opacity: 0.09,
+            side: THREE.DoubleSide,
+            depthWrite: false,
+          }),
+        );
+        forDome.frustumCulled = false;
+        group.add(forDome);
+
+        const trackGeometry = new THREE.BufferGeometry();
+        trackGeometry.setAttribute(
+          "position",
+          new THREE.BufferAttribute(new Float32Array(6), 3),
+        );
+        const trackLine = new THREE.Line(
+          trackGeometry,
+          new THREE.LineBasicMaterial({
+            color: 0xe8a33d,
+            transparent: true,
+            opacity: 0.9,
+          }),
+        );
+        trackLine.frustumCulled = false;
+        group.add(trackLine);
+
+        sensor = {
+          fovCone,
+          forDome,
+          trackLine,
+          halfAngleRad: (sat.sensor.coneHalfAngleDeg ?? 20) * DEG,
+          entries: scheduleForPlatform(data.schedule, sat.name),
+        };
+      }
+
+      return {
+        data: sat,
+        path,
+        groundTrack,
+        marker,
+        label,
+        color,
+        baseOpacity,
+        sensor,
+      };
     });
 
     const stations = data.groundPoints.map((gp) => {
@@ -285,7 +391,21 @@ export function createViewer(container, { onSelect } = {}) {
     accessLines.frustumCulled = false;
     group.add(accessLines);
 
-    scenarioContent = { group, groundGroup, data, sats, stations, accessLines };
+    const stationByName = new Map(stations.map((st) => [st.data.name, st]));
+    const sensorAccessByKey = new Map(
+      (data.sensorAccesses ?? []).map((a) => [`${a.platform}|${a.target}`, a]),
+    );
+
+    scenarioContent = {
+      group,
+      groundGroup,
+      data,
+      sats,
+      stations,
+      accessLines,
+      stationByName,
+      sensorAccessByKey,
+    };
     applyOptions();
     applySelection();
   }
@@ -354,10 +474,124 @@ export function createViewer(container, { onSelect } = {}) {
     }
   });
 
+  // --- Sensor pointing / FOV / FOR ---
+  const NEG_Y = new THREE.Vector3(0, -1, 0);
+  const POS_Y = new THREE.Vector3(0, 1, 0);
+  const tmpNadir = new THREE.Vector3();
+  const tmpDir = new THREE.Vector3();
+  const tmpFrom = new THREE.Vector3();
+  const tmpTo = new THREE.Vector3();
+  const tmpTarget = new THREE.Vector3();
+  const SENSOR_IDLE = 0x7fb4d8;
+  const SENSOR_FOR_ONLY = 0xe8a33d; // reachable (FOR-valid), not in the beam
+  const SENSOR_FOV_IN_VIEW = 0x5fc98f; // target inside the instantaneous FOV
+
+  // Distance along unit direction `dir` from `origin` to the unit-sphere
+  // Earth; NaN when the ray misses (beam pointing past the limb).
+  function rayEarthDistance(origin, dir) {
+    const b = origin.dot(dir);
+    const disc = b * b - (origin.lengthSq() - 1);
+    if (disc <= 0 || b >= 0) return NaN;
+    return -b - Math.sqrt(disc);
+  }
+
+  function isFovActive(platformName, targetName, tSec) {
+    const pair = scenarioContent.sensorAccessByKey.get(
+      `${platformName}|${targetName}`,
+    );
+    return Boolean(pair && windowStateAt(pair.fovWindows, tSec).active);
+  }
+
+  function updateSensorViz(s, tSec) {
+    const viz = s.sensor;
+    const p = s.marker.position;
+    const r = p.length();
+    if (r <= 1.02) {
+      viz.fovCone.visible = false;
+      viz.forDome.visible = false;
+      viz.trackLine.visible = false;
+      return;
+    }
+    tmpNadir.copy(p).multiplyScalar(-1 / r);
+
+    // Boresight: nadir when idle, the task target while tracking, and an
+    // interpolated direction while slewing into a task.
+    const pointing = pointingStateAt(viz.entries, tSec);
+    const dir = tmpDir.copy(tmpNadir);
+    let targetPos = null;
+    if (pointing.phase !== "idle") {
+      const st = scenarioContent.stationByName.get(pointing.entry.targetName);
+      if (st) {
+        targetPos = st.marker.getWorldPosition(tmpTarget);
+        tmpTo.subVectors(targetPos, p).normalize();
+        if (pointing.phase === "track") {
+          dir.copy(tmpTo);
+        } else {
+          tmpFrom.copy(tmpNadir);
+          const prev = pointing.fromTarget
+            ? scenarioContent.stationByName.get(pointing.fromTarget)
+            : null;
+          if (prev) {
+            prev.marker.getWorldPosition(tmpVec2);
+            tmpFrom.subVectors(tmpVec2, p).normalize();
+          }
+          dir
+            .lerpVectors(tmpFrom, tmpTo, Math.min(pointing.progress, 1))
+            .normalize();
+        }
+      }
+    }
+
+    const tracking = pointing.phase !== "idle" && targetPos;
+    const fovActive = tracking
+      ? isFovActive(s.data.name, pointing.entry.targetName, tSec)
+      : false;
+
+    viz.fovCone.visible = options.sensorFov;
+    if (options.sensorFov) {
+      let length =
+        pointing.phase === "track" && targetPos
+          ? p.distanceTo(targetPos)
+          : rayEarthDistance(p, dir);
+      if (!Number.isFinite(length) || length <= 0) length = r;
+      const radius = length * Math.tan(viz.halfAngleRad);
+      viz.fovCone.position.copy(p);
+      viz.fovCone.quaternion.setFromUnitVectors(NEG_Y, dir);
+      viz.fovCone.scale.set(radius, length, radius);
+      viz.fovCone.material.color.setHex(
+        pointing.phase === "idle"
+          ? SENSOR_IDLE
+          : fovActive
+            ? SENSOR_FOV_IN_VIEW
+            : SENSOR_FOR_ONLY,
+      );
+    }
+
+    viz.forDome.visible = options.sensorFor;
+    if (options.sensorFor) {
+      viz.forDome.position.copy(p);
+      viz.forDome.quaternion.setFromUnitVectors(POS_Y, tmpNadir);
+      viz.forDome.scale.setScalar(Math.max((r - 1) * 0.85, 0.02));
+    }
+
+    viz.trackLine.visible = Boolean(tracking);
+    if (tracking) {
+      const attr = viz.trackLine.geometry.getAttribute("position");
+      attr.setXYZ(0, p.x, p.y, p.z);
+      attr.setXYZ(1, targetPos.x, targetPos.y, targetPos.z);
+      attr.needsUpdate = true;
+      viz.trackLine.material.color.setHex(
+        fovActive ? SENSOR_FOV_IN_VIEW : SENSOR_FOR_ONLY,
+      );
+      viz.trackLine.material.opacity = pointing.phase === "slew" ? 0.45 : 0.9;
+    }
+  }
+
   // --- Frame loop ---
   const tmpVec = new THREE.Vector3();
   const tmpVec2 = new THREE.Vector3();
   const eciOut = [0, 0, 0];
+  const sunOut = [0, 0, 0];
   let lastWall = performance.now();
   let epochMs = 0;
   let raf = 0;
@@ -373,14 +607,27 @@ export function createViewer(container, { onSelect } = {}) {
 
     earthGroup.rotation.y = gmstRad(date);
     earthGroup.updateMatrixWorld();
-    const sun = sunDirectionEci(date);
+    // Sun direction: MATLAB/Orekit ephemeris when the payload provides it,
+    // otherwise the low-precision analytic formula.
+    const sunData = scenarioContent?.data?.sun ?? null;
+    const sun = sunDirectionAt(sunData, tSec, sunOut) ?? sunDirectionEci(date);
     sunLight.position.set(sun[0] * 50, sun[2] * 50, -sun[1] * 50);
+    sunSprite.position.set(sun[0] * 100, sun[2] * 100, -sun[1] * 100);
+    sunSprite.visible = options.sun;
 
     if (scenarioContent) {
       for (const s of scenarioContent.sats) {
         satEciAt(s.data, tSec, eciOut);
         eciToThree(eciOut[0], eciOut[1], eciOut[2], s.marker.position);
         s.label.visible = options.labels && !isOccludedByEarth(s.marker.position);
+        // Eclipse shading: dim the marker while the satellite is shadowed.
+        if (sunData) {
+          const lighting = lightingStateAt(sunData, s.data.name, tSec);
+          const dim =
+            lighting === "Umbra" ? 0.3 : lighting === "Penumbra" ? 0.65 : 1;
+          s.marker.material.color.copy(s.color).multiplyScalar(dim);
+        }
+        if (s.sensor) updateSensorViz(s, tSec);
       }
       for (const st of scenarioContent.stations) {
         st.marker.getWorldPosition(tmpVec);

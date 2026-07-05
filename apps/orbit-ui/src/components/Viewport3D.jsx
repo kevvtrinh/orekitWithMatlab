@@ -8,13 +8,16 @@ export default function Viewport3D({ scenario, selection, viewOptions, onSelect 
   onSelectRef.current = onSelect;
 
   // The viewer draws only what has geometry: satellites without an ephemeris
-  // (TLE objects awaiting a MATLAB run) and stale access pairs are dropped.
+  // (TLE objects awaiting a MATLAB run) and stale access/schedule data are
+  // dropped.
   const drawable = useMemo(() => {
     if (!scenario) return null;
     return {
       ...scenario,
       satellites: scenario.satellites.filter((s) => s.ephemeris),
       accesses: scenario.accesses.filter((a) => !a.stale),
+      schedule: scenario.schedule.filter((e) => !e.stale),
+      sensorAccesses: scenario.sensorAccesses.filter((a) => !a.stale),
     };
   }, [scenario]);
 

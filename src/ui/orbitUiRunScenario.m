@@ -7,9 +7,10 @@ function payload = orbitUiRunScenario(specFile, outputFile)
 % when the user runs a scenario they built in the browser. Reads the scenario
 % spec JSON, rebuilds it with the mission classes (buildScenarioFromSpec),
 % propagates with the Orekit backend, computes access for every satellite /
-% ground-object pair (capped), and writes the payload JSON the frontend
-% renders. The spec is echoed into the payload so the frontend can tell which
-% objects the results are fresh for.
+% ground-object pair (capped), runs the sensor-tasking scheduler when the
+% spec requests tasks, adds Sun/eclipse/daylight data, and writes the payload
+% JSON the frontend renders. The spec is echoed into the payload so the
+% frontend can tell which objects the results are fresh for.
 
 arguments
     specFile (1, 1) string
@@ -63,7 +64,81 @@ if truncated
         MAX_ACCESS_PAIRS, numel(satNames), numel(groundNames));
 end
 
-payload = exportScenarioJson(scenario, outputFile, "Extra", struct("spec", spec));
-fprintf("orbitUiRunScenario: wrote %s (%d satellites, %d ground objects, %d access pairs)\n", ...
-    outputFile, numel(satNames), numel(groundNames), pairCount);
+extra = struct("spec", spec);
+
+% Sensor tasking: schedule the spec's tasks (TrackPointTarget against point
+% targets) and export sensors + schedule + FOR/FOV access windows. Sensors
+% without tasks still get their access windows so the UI can show FOR-valid
+% vs FOV-in-view geometry.
+tasks = buildSensorTasks(spec, scenario);
+schedule = emptySensorScheduleTable(scenario.Config.Epoch.TimeZone);
+if ~isempty(tasks)
+    schedulerOptions = SchedulerOptions("AccessTimeStepSeconds", 30, ...
+        "MinimumCandidateDurationSeconds", 30);
+    candidates = generateTaskCandidates(scenario, tasks, schedulerOptions);
+    schedule = scheduleSensorTasksGreedy(scenario, candidates, schedulerOptions);
+end
+scheduleViz = exportScheduleViz(scenario, schedule);
+if ~isempty(scheduleViz.sensors) || ~isempty(tasks)
+    extra = mergeStructs(extra, scheduleViz);
+end
+
+% Sun geometry and lighting are cheap relative to propagation and always
+% useful in the 3D view.
+extra = mergeStructs(extra, exportSunViz(scenario));
+
+payload = exportScenarioJson(scenario, outputFile, "Extra", extra);
+fprintf("orbitUiRunScenario: wrote %s (%d satellites, %d ground objects, %d access pairs, %d scheduled tasks)\n", ...
+    outputFile, numel(satNames), numel(groundNames), pairCount, height(schedule));
+end
+
+function tasks = buildSensorTasks(spec, scenario)
+% Convert spec.tasks entries into SensorTask objects. A task names a point
+% target and optionally the satellite whose sensor must perform it; without
+% a satellite any sensor may be scheduled.
+tasks = {};
+if ~isfield(spec, "tasks") || isempty(spec.tasks)
+    return
+end
+entries = spec.tasks;
+if isstruct(entries)
+    entries = num2cell(entries);
+elseif ~iscell(entries)
+    return
+end
+for k = 1:numel(entries)
+    entry = entries{k};
+    taskId = string(taskFieldOr(entry, "id", sprintf("task-%d", k)));
+    allowedSensors = strings(0, 1);
+    satelliteName = string(taskFieldOr(entry, "satelliteName", ""));
+    if strlength(satelliteName) > 0
+        sat = scenario.getObject(satelliteName);
+        for s = 1:numel(sat.Sensors)
+            allowedSensors(end + 1, 1) = string(sat.Sensors{s}.Name); %#ok<AGROW>
+        end
+    end
+    tasks{end + 1} = SensorTask( ...
+        "TaskID", taskId, ...
+        "TaskName", string(taskFieldOr(entry, "name", taskId)), ...
+        "TaskType", "TrackPointTarget", ...
+        "TargetName", string(entry.targetName), ...
+        "Priority", double(taskFieldOr(entry, "priority", 1)), ...
+        "RequiredDwellTimeSeconds", double(taskFieldOr(entry, "dwellSeconds", 60)), ...
+        "AllowedSensorNames", allowedSensors); %#ok<AGROW>
+end
+end
+
+function value = taskFieldOr(entry, name, fallback)
+if isfield(entry, name) && ~isempty(entry.(name))
+    value = entry.(name);
+else
+    value = fallback;
+end
+end
+
+function merged = mergeStructs(merged, extra)
+names = fieldnames(extra);
+for k = 1:numel(names)
+    merged.(names{k}) = extra.(names{k});
+end
 end

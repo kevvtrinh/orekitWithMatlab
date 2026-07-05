@@ -6,6 +6,13 @@ import {
   satLlaAt,
   windowStateAt,
 } from "../lib/scenarioUtils.js";
+import {
+  pointingStateAt,
+  scheduleForObject,
+  scheduleForPlatform,
+  sensorAccessesForObject,
+} from "../lib/schedule.js";
+import { daylightAt, lightingStateAt } from "../lib/sun.js";
 import { formatDuration } from "../lib/time.js";
 import MatlabPanel from "./MatlabPanel.jsx";
 
@@ -15,10 +22,23 @@ const SOURCE_LABEL = {
   pending: { text: "awaiting MATLAB run", className: "badge--pending" },
 };
 
-function SatelliteDetails({ sat, tSec }) {
+const LIGHTING_LABEL = {
+  Sunlit: { text: "Sunlit", className: "badge--sunlit" },
+  Penumbra: { text: "Penumbra", className: "badge--eclipse" },
+  Umbra: { text: "Eclipse (umbra)", className: "badge--eclipse" },
+};
+
+function SatelliteDetails({ sat, tSec, sun, schedule }) {
   const src = SOURCE_LABEL[sat.source];
   const lla = sat.ephemeris ? satLlaAt(sat, tSec) : null;
   const eci = sat.ephemeris ? satEciAt(sat, tSec) : null;
+  const lighting = sun ? lightingStateAt(sun, sat.name, tSec) : null;
+  const pointing = sat.sensor
+    ? pointingStateAt(
+        scheduleForPlatform(schedule, sat.name).filter((e) => !e.stale),
+        tSec,
+      )
+    : null;
   return (
     <>
       <dl className="kv">
@@ -28,6 +48,35 @@ function SatelliteDetails({ sat, tSec }) {
         <dd>
           <span className={`badge ${src.className}`}>{src.text}</span>
         </dd>
+        {lighting && (
+          <>
+            <dt>Lighting</dt>
+            <dd>
+              <span className={`badge ${LIGHTING_LABEL[lighting].className}`}>
+                {LIGHTING_LABEL[lighting].text}
+              </span>
+            </dd>
+          </>
+        )}
+        {sat.sensor && (
+          <>
+            <dt>Sensor</dt>
+            <dd>
+              FOV {sat.sensor.coneHalfAngleDeg} deg / FOR{" "}
+              {sat.sensor.fieldOfRegardDeg} deg
+            </dd>
+            <dt>Pointing</dt>
+            <dd>
+              {pointing.phase === "idle" && "Nadir"}
+              {pointing.phase === "slew" &&
+                `Slewing to ${pointing.entry.targetName} (${Math.round(
+                  pointing.progress * 100,
+                )}%)`}
+              {pointing.phase === "track" &&
+                `Tracking ${pointing.entry.targetName}`}
+            </dd>
+          </>
+        )}
         {sat.elements && (
           <>
             <dt>a</dt>
@@ -81,11 +130,24 @@ function SatelliteDetails({ sat, tSec }) {
   );
 }
 
-function GroundDetails({ gp }) {
+function GroundDetails({ gp, tSec, sun }) {
+  const daylight = sun ? daylightAt(sun, gp.name, tSec) : null;
   return (
     <dl className="kv">
       <dt>Type</dt>
       <dd>{gp.kind === "target" ? "Point Target" : "Ground Station"}</dd>
+      {daylight !== null && (
+        <>
+          <dt>Local sun</dt>
+          <dd>
+            <span
+              className={`badge ${daylight ? "badge--sunlit" : "badge--eclipse"}`}
+            >
+              {daylight ? "Daylight" : "Night"}
+            </span>
+          </dd>
+        </>
+      )}
       <dt>Latitude</dt>
       <dd>{gp.latitudeDeg.toFixed(4)} deg</dd>
       <dt>Longitude</dt>
@@ -156,6 +218,108 @@ function AccessWindows({ accesses, tSec }) {
   );
 }
 
+// Scheduled sensor tasks touching the selected object.
+function ScheduleList({ entries, tSec }) {
+  if (entries.length === 0) {
+    return (
+      <div className="empty-note">
+        No scheduled tasks for this object. Add tasks under Insert &gt; Sensor
+        Tasks, then run MATLAB.
+      </div>
+    );
+  }
+  return (
+    <ul className="window-list">
+      {entries.map((e, i) => {
+        const active = !e.stale && tSec >= e.slewStartSec && tSec <= e.stopSec;
+        return (
+          <li
+            key={i}
+            className={`window-item ${active ? "active" : ""} ${e.stale ? "stale" : ""}`}
+            title={`${e.taskName}: ${e.sensorName} (${e.platformName}) -> ${e.targetName}`}
+          >
+            <span className="pair">{e.startUtc.slice(11, 19)}Z</span>
+            <span>{e.taskName}</span>
+            {e.stale && <span className="badge badge--pending">stale</span>}
+            <span className="grow" />
+            <span title="Dwell duration (plus slew lead-in)">
+              {formatDuration(e.durationSeconds)}
+              {e.slewTimeSeconds > 0 &&
+                ` (+${Math.round(e.slewTimeSeconds)}s slew)`}
+            </span>
+            <button
+              className="btn btn--icon"
+              style={{ padding: "1px 7px", fontSize: 10.5 }}
+              onClick={() => clock.setTime(Math.max(e.slewStartSec, 0))}
+              title="Jump scenario time to the start of the slew"
+            >
+              go
+            </button>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+// FOR-reachable vs FOV-in-view windows for sensor/target pairs touching the
+// selected object.
+function SensorAccessList({ pairs, tSec }) {
+  const rows = [];
+  for (const pair of pairs) {
+    for (const w of pair.forWindows) rows.push({ pair, w, mode: "FOR" });
+    for (const w of pair.fovWindows) rows.push({ pair, w, mode: "FOV" });
+  }
+  rows.sort((a, b) => a.w.startSec - b.w.startSec);
+  if (rows.length === 0) {
+    return (
+      <div className="empty-note">
+        No sensor-target visibility. FOR windows appear when a target is
+        reachable by slewing; FOV windows when it is inside the beam.
+      </div>
+    );
+  }
+  return (
+    <ul className="window-list">
+      {rows.map(({ pair, w, mode }, i) => {
+        const active = !pair.stale && tSec >= w.startSec && tSec <= w.stopSec;
+        return (
+          <li
+            key={i}
+            className={`window-item ${active ? "active" : ""} ${pair.stale ? "stale" : ""}`}
+            title={
+              mode === "FOR"
+                ? `${pair.sensor} can slew to see ${pair.target}`
+                : `${pair.target} inside ${pair.sensor}'s instantaneous beam`
+            }
+          >
+            <span
+              className={`badge ${mode === "FOR" ? "badge--for" : "badge--fov"}`}
+            >
+              {mode}
+            </span>
+            <span className="pair">{w.startUtc.slice(11, 19)}Z</span>
+            <span>
+              {pair.sensor} &gt; {pair.target}
+            </span>
+            {pair.stale && <span className="badge badge--pending">stale</span>}
+            <span className="grow" />
+            <span>{formatDuration(w.durationSeconds)}</span>
+            <button
+              className="btn btn--icon"
+              style={{ padding: "1px 7px", fontSize: 10.5 }}
+              onClick={() => clock.setTime(w.startSec)}
+              title="Jump scenario time to window start"
+            >
+              go
+            </button>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
 export default function Inspector({
   scenario,
   selection,
@@ -169,6 +333,12 @@ export default function Inspector({
   const sat = scenario?.satellites.find((s) => s.name === selection);
   const gp = scenario?.groundPoints.find((g) => g.name === selection);
   const related = scenario ? accessesForObject(scenario.accesses, selection) : [];
+  const relatedSchedule = scenario
+    ? scheduleForObject(scenario.schedule, selection)
+    : [];
+  const relatedSensorAccesses = scenario
+    ? sensorAccessesForObject(scenario.sensorAccesses, selection)
+    : [];
 
   const activeCount = scenario
     ? scenario.accesses.reduce(
@@ -226,14 +396,35 @@ export default function Inspector({
             )}
           </div>
         )}
-        {sat && <SatelliteDetails sat={sat} tSec={tSec} />}
-        {gp && <GroundDetails gp={gp} />}
+        {sat && (
+          <SatelliteDetails
+            sat={sat}
+            tSec={tSec}
+            sun={scenario?.sun}
+            schedule={scenario?.schedule ?? []}
+          />
+        )}
+        {gp && <GroundDetails gp={gp} tSec={tSec} sun={scenario?.sun} />}
       </div>
 
       {selection && (
         <div className="panel-section">
           <div className="panel-header">Access windows</div>
           <AccessWindows accesses={related} tSec={tSec} />
+        </div>
+      )}
+
+      {selection && (sat?.sensor || relatedSchedule.length > 0) && (
+        <div className="panel-section">
+          <div className="panel-header">Scheduled tasks</div>
+          <ScheduleList entries={relatedSchedule} tSec={tSec} />
+        </div>
+      )}
+
+      {selection && relatedSensorAccesses.length > 0 && (
+        <div className="panel-section">
+          <div className="panel-header">Sensor visibility (FOR / FOV)</div>
+          <SensorAccessList pairs={relatedSensorAccesses} tSec={tSec} />
         </div>
       )}
 

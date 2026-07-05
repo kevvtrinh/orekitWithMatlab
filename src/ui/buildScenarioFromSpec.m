@@ -80,6 +80,22 @@ end
 sat.PropagatorType = string(fieldOr(entry, "propagator", sat.PropagatorType));
 sat.MassKg = double(fieldOr(entry, "massKg", sat.MassKg));
 sat = applyColor(sat, entry);
+if isfield(entry, "sensor") && isstruct(entry.sensor)
+    sat = sat.addSensor(buildSensor(entry.sensor, string(entry.name)));
+end
+end
+
+function sensor = buildSensor(spec, satName)
+% Web-UI sensors are nadir-pointing conic imagers: the field of view is the
+% instantaneous beam, the field of regard is how far the sensor can slew off
+% nadir. Scheduling tasks slew the boresight; access is FOR-gated
+% (computeSensorAccess default) with FOV windows as the in-view subset.
+name = string(fieldOr(spec, "name", satName + " Sensor"));
+sensor = SensorObject.simpleConic(name, satName, ...
+    double(fieldOr(spec, "coneHalfAngleDeg", 20)));
+sensor.FieldOfRegardDeg = double(fieldOr(spec, "fieldOfRegardDeg", 60));
+sensor.PointingMode = "Nadir";
+sensor.MaxSlewRateDegPerSec = double(fieldOr(spec, "slewRateDegPerSec", 2));
 end
 
 function obj = applyColor(obj, entry)

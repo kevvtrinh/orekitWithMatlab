@@ -14,7 +14,9 @@
 // them instead of silently showing wrong windows.
 
 import { buildPreviewEphemeris } from "./preview.js";
+import { prepareSchedule, prepareSensorAccesses } from "./schedule.js";
 import { deepEqual, parseEpochMs } from "./spec.js";
+import { prepareSun } from "./sun.js";
 import {
   prepareAccesses,
   prepareEphemeris,
@@ -80,6 +82,7 @@ export function buildRenderScenario(spec, matlabRaw) {
         elements: obj.orbit.type === "keplerian" ? { ...obj.orbit } : null,
         tle: obj.orbit.type === "tle" ? { ...obj.orbit } : null,
         massKg: obj.massKg,
+        sensor: obj.sensor ?? null,
         source,
         ephemeris,
         spec: obj,
@@ -117,9 +120,56 @@ export function buildRenderScenario(spec, matlabRaw) {
       !metaFresh || !freshNames.has(a.source) || !freshNames.has(a.target),
   }));
 
+  // Sensor schedule + FOR/FOV accesses: MATLAB-only, like plain accesses.
+  // A schedule entry is stale as soon as either endpoint (or the task list)
+  // changed; the whole schedule is recomputed on the next run anyway.
+  const tasksFresh =
+    metaFresh && deepEqual(spec.tasks ?? [], runSpec?.tasks ?? []);
+  const schedule = prepareSchedule(
+    (matlabRaw?.schedule ?? []).filter(
+      (e) => specNames.has(e.platformName) && specNames.has(e.targetName),
+    ),
+    Number.isNaN(epochMs) ? 0 : epochMs,
+  ).map((e) => ({
+    ...e,
+    stale:
+      !tasksFresh ||
+      !freshNames.has(e.platformName) ||
+      !freshNames.has(e.targetName),
+  }));
+  const sensorAccesses = prepareSensorAccesses(
+    (matlabRaw?.sensorAccesses ?? []).filter(
+      (a) => specNames.has(a.platform) && specNames.has(a.target),
+    ),
+    Number.isNaN(epochMs) ? 0 : epochMs,
+  ).map((a) => ({
+    ...a,
+    stale:
+      !metaFresh || !freshNames.has(a.platform) || !freshNames.has(a.target),
+  }));
+
+  // Sun data depends only on scenario timing; per-satellite eclipses and
+  // per-site daylight additionally require that object to be fresh.
+  const rawSun = metaFresh ? matlabRaw?.sun : null;
+  const sun = rawSun
+    ? prepareSun(
+        {
+          ...rawSun,
+          eclipses: (rawSun.eclipses ?? []).filter((e) =>
+            freshNames.has(e.satellite),
+          ),
+          groundLighting: (rawSun.groundLighting ?? []).filter((g) =>
+            freshNames.has(g.name),
+          ),
+        },
+        epochMs,
+      )
+    : null;
+
   const dirty =
     !runSpec ||
     !metaFresh ||
+    !tasksFresh ||
     spec.objects.some((o) => !freshNames.has(o.name)) ||
     spec.objects.length !== (runSpec.objects?.length ?? 0);
 
@@ -132,6 +182,9 @@ export function buildRenderScenario(spec, matlabRaw) {
     satellites,
     groundPoints,
     accesses,
+    schedule,
+    sensorAccesses,
+    sun,
     dirty, // true when a MATLAB run is needed for authoritative results
   };
 }

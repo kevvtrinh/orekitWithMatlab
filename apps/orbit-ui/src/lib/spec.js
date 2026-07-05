@@ -16,6 +16,7 @@ export const PROPAGATORS = ["Keplerian", "EcksteinHechler", "Numerical", "TLE"];
 export const MAX_OBJECTS = 300;
 export const MAX_SATELLITES = 200;
 export const MAX_DURATION_SECONDS = 30 * 86400;
+export const MAX_TASKS = 24;
 
 const EARTH_RADIUS_KM = 6378.137;
 
@@ -81,6 +82,39 @@ export function targetTemplate(name) {
     altitudeM: 1609,
     priority: 5,
   };
+}
+
+// Nadir-pointing conic imaging sensor attached to a satellite. The cone
+// half-angle is the instantaneous beam (FOV); the field of regard is how far
+// the sensor can slew off nadir when tasked.
+export function sensorTemplate() {
+  return {
+    coneHalfAngleDeg: 20,
+    fieldOfRegardDeg: 60,
+    slewRateDegPerSec: 2,
+  };
+}
+
+// Point-target imaging task for the sensor scheduler. satelliteName "" means
+// any satellite sensor may perform it.
+export function taskTemplate(spec) {
+  const target = (spec?.objects ?? []).find((o) => o.kind === "target");
+  return {
+    id: nextTaskId(spec),
+    name: "",
+    satelliteName: "",
+    targetName: target?.name ?? "",
+    priority: 5,
+    dwellSeconds: 60,
+  };
+}
+
+export function nextTaskId(spec) {
+  const ids = new Set((spec?.tasks ?? []).map((t) => t.id));
+  for (let i = 1; ; i++) {
+    const candidate = `task-${i}`;
+    if (!ids.has(candidate)) return candidate;
+  }
 }
 
 export function constellationTemplate(prefix) {
@@ -215,9 +249,88 @@ export function parseEpochMs(epochUtc) {
   return new Date(epochUtc).getTime();
 }
 
+function validateSensor(sensor, errors, where) {
+  if (typeof sensor !== "object" || sensor === null) {
+    errors.push(`${where}: sensor must be an object.`);
+    return;
+  }
+  if (!inRange(sensor.coneHalfAngleDeg, 0.1, 90)) {
+    errors.push(`${where}: sensor cone half-angle must be in (0, 90] deg.`);
+  }
+  if (
+    !inRange(sensor.fieldOfRegardDeg, 0.1, 180) ||
+    (isFiniteNumber(sensor.coneHalfAngleDeg) &&
+      sensor.fieldOfRegardDeg < sensor.coneHalfAngleDeg)
+  ) {
+    errors.push(
+      `${where}: field of regard must be in [cone half-angle, 180] deg.`,
+    );
+  }
+  if (
+    sensor.slewRateDegPerSec !== undefined &&
+    !inRange(sensor.slewRateDegPerSec, 0.01, 60)
+  ) {
+    errors.push(`${where}: slew rate must be in (0, 60] deg/s.`);
+  }
+}
+
+function validateTasks(spec, errors) {
+  const tasks = spec.tasks;
+  if (tasks === undefined) return;
+  if (!Array.isArray(tasks)) {
+    errors.push("Spec tasks must be an array.");
+    return;
+  }
+  if (tasks.length > MAX_TASKS) {
+    errors.push(`At most ${MAX_TASKS} sensor tasks are supported.`);
+  }
+  const byName = new Map((spec.objects ?? []).map((o) => [o.name, o]));
+  const seenIds = new Set();
+  tasks.forEach((task, i) => {
+    const where = `tasks[${i}] (${task?.id ?? "?"})`;
+    if (!task || typeof task !== "object") {
+      errors.push(`${where}: must be an object.`);
+      return;
+    }
+    if (typeof task.id !== "string" || task.id.trim().length === 0) {
+      errors.push(`${where}: task id cannot be empty.`);
+    } else if (seenIds.has(task.id)) {
+      errors.push(`${where}: duplicate task id '${task.id}'.`);
+    } else {
+      seenIds.add(task.id);
+    }
+    const target = byName.get(task.targetName);
+    if (!target || target.kind !== "target") {
+      errors.push(
+        `${where}: targetName must reference a point target in the scenario.`,
+      );
+    }
+    if (task.satelliteName) {
+      const sat = byName.get(task.satelliteName);
+      if (!sat || sat.kind !== "satellite" || !sat.sensor) {
+        errors.push(
+          `${where}: satelliteName must reference a satellite with a sensor.`,
+        );
+      }
+    }
+    if (task.priority !== undefined && !inRange(task.priority, 0, 1e6)) {
+      errors.push(`${where}: priority must be a nonnegative number.`);
+    }
+    if (
+      task.dwellSeconds !== undefined &&
+      !inRange(task.dwellSeconds, 10, 86400)
+    ) {
+      errors.push(`${where}: dwell must be between 10 and 86400 seconds.`);
+    }
+  });
+}
+
 function validateSatellite(obj, errors, where) {
   if (!PROPAGATORS.includes(obj.propagator)) {
     errors.push(`${where}: unknown propagator '${obj.propagator}'.`);
+  }
+  if (obj.sensor !== undefined) {
+    validateSensor(obj.sensor, errors, where);
   }
   if (obj.massKg !== undefined && !inRange(obj.massKg, 0.1, 1e7)) {
     errors.push(`${where}: mass must be a positive number of kg.`);
@@ -374,6 +487,8 @@ export function validateSpec(spec) {
   if (satCount > MAX_SATELLITES) {
     errors.push(`At most ${MAX_SATELLITES} satellites are supported.`);
   }
+
+  validateTasks(spec, errors);
 
   return errors;
 }

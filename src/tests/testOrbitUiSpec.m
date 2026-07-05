@@ -19,6 +19,24 @@ json = ['{"version":1,"rev":3,"meta":{"name":"Spec Pipeline Test",' ...
     ']}'];
 end
 
+% Scheduling spec: near-equatorial satellite with a sensor plus an equatorial
+% point target, so a field-of-regard pass (and a scheduled task) is
+% guaranteed within the 3 h span regardless of epoch sidereal time.
+function json = schedulingSpecJson()
+json = ['{"version":1,"rev":1,"meta":{"name":"Scheduling Test",' ...
+    '"epochUtc":"2026-07-05T00:00:00Z","durationSeconds":10800,"stepSeconds":60},' ...
+    '"objects":[' ...
+    '{"kind":"satellite","name":"EqSat","propagator":"Keplerian","massKg":900,' ...
+    '"sensor":{"coneHalfAngleDeg":15,"fieldOfRegardDeg":60,"slewRateDegPerSec":2},' ...
+    '"orbit":{"type":"keplerian","semiMajorAxisKm":7000,"eccentricity":0.001,' ...
+    '"inclinationDeg":1,"raanDeg":0,"argPerigeeDeg":0,"trueAnomalyDeg":0}},' ...
+    '{"kind":"target","name":"Eq Target","latitudeDeg":0,' ...
+    '"longitudeDeg":0,"altitudeM":0,"priority":5}' ...
+    '],' ...
+    '"tasks":[{"id":"task-1","name":"Image Eq Target","satelliteName":"EqSat",' ...
+    '"targetName":"Eq Target","priority":5,"dwellSeconds":60}]}'];
+end
+
 function testBuildScenarioFromSpec(testCase)
 scenario = buildScenarioFromSpec(jsondecode(specJson()));
 
@@ -65,6 +83,76 @@ verifyError(testCase, @() buildScenarioFromSpec(spec), ...
     "buildScenarioFromSpec:UnsupportedVersion");
 end
 
+function testBuildScenarioFromSpecWithSensor(testCase)
+scenario = buildScenarioFromSpec(jsondecode(schedulingSpecJson()));
+sat = scenario.Objects{1};
+verifyEqual(testCase, numel(sat.Sensors), 1);
+sensor = sat.Sensors{1};
+verifyEqual(testCase, string(sensor.Name), "EqSat Sensor");
+verifyEqual(testCase, sensor.effectiveConeHalfAngleDeg(), 15);
+verifyEqual(testCase, sensor.FieldOfRegardDeg, 60);
+verifyEqual(testCase, string(sensor.PointingMode), "Nadir");
+verifyEqual(testCase, sensor.effectiveSlewRateDegPerSec(), 2);
+end
+
+function testRunScenarioWithScheduling(testCase)
+specFile = [tempname(), '.json'];
+outputFile = [tempname(), '.json'];
+cleanupFiles = onCleanup(@() cellfun(@deleteIfExists, {specFile, outputFile}));
+
+fid = fopen(specFile, "w");
+fwrite(fid, schedulingSpecJson(), "char");
+fclose(fid);
+
+payload = orbitUiRunScenario(specFile, outputFile);
+
+% Sensor definitions are exported for the frontend cones/domes.
+verifyEqual(testCase, numel(payload.sensors), 1);
+sensor = payload.sensors{1};
+verifyEqual(testCase, string(sensor.name), "EqSat Sensor");
+verifyEqual(testCase, string(sensor.parent), "EqSat");
+verifyEqual(testCase, sensor.coneHalfAngleDeg, 15);
+verifyEqual(testCase, sensor.fieldOfRegardDeg, 60);
+
+% The task was scheduled onto the sensor with a finite slew lead-in.
+verifyNotEmpty(testCase, payload.schedule);
+entry = payload.schedule{1};
+verifyEqual(testCase, string(entry.taskId), "task-1");
+verifyEqual(testCase, string(entry.platformName), "EqSat");
+verifyEqual(testCase, string(entry.sensorName), "EqSat Sensor");
+verifyEqual(testCase, string(entry.targetName), "Eq Target");
+verifyGreaterThanOrEqual(testCase, entry.durationSeconds, 60);
+verifyGreaterThanOrEqual(testCase, entry.slewTimeSeconds, 0);
+
+% FOR windows (reachable by slewing) must exist and enclose at least as
+% much time as the narrow-beam FOV windows.
+verifyEqual(testCase, numel(payload.sensorAccesses), 1);
+pair = payload.sensorAccesses{1};
+verifyEqual(testCase, string(pair.platform), "EqSat");
+verifyEqual(testCase, string(pair.target), "Eq Target");
+verifyNotEmpty(testCase, pair.forWindows);
+forSeconds = sum(cellfun(@(w) w.durationSeconds, pair.forWindows));
+fovSeconds = 0;
+if ~isempty(pair.fovWindows)
+    fovSeconds = sum(cellfun(@(w) w.durationSeconds, pair.fovWindows));
+end
+verifyGreaterThanOrEqual(testCase, forSeconds, fovSeconds);
+verifyGreaterThan(testCase, forSeconds, 0);
+
+% Sun block: ephemeris on the scenario grid, eclipse windows for the LEO
+% satellite (guaranteed for a near-equatorial orbit), target daylight.
+verifyTrue(testCase, isfield(payload, "sun"));
+verifyEqual(testCase, numel(payload.sun.ephemeris.tOffsetSec), 181);
+sunRadiusKm = sqrt(sum(payload.sun.ephemeris.eciKm(1, :).^2));
+verifyGreaterThan(testCase, sunRadiusKm, 1.4e8);
+verifyLessThan(testCase, sunRadiusKm, 1.6e8);
+verifyEqual(testCase, numel(payload.sun.eclipses), 1);
+verifyEqual(testCase, string(payload.sun.eclipses{1}.satellite), "EqSat");
+verifyNotEmpty(testCase, payload.sun.eclipses{1}.windows);
+verifyEqual(testCase, numel(payload.sun.groundLighting), 1);
+verifyEqual(testCase, string(payload.sun.groundLighting{1}.name), "Eq Target");
+end
+
 function testRunScenarioEndToEnd(testCase)
 specFile = [tempname(), '.json'];
 outputFile = [tempname(), '.json'];
@@ -100,6 +188,13 @@ verifyTrue(testCase, isfield(payload, "spec"));
 verifyEqual(testCase, payload.spec.rev, 3);
 verifyEqual(testCase, string(payload.spec.meta.epochUtc), ...
     "2026-07-05T00:00:00Z");
+
+% No sensors in the spec: no sensor/schedule payload blocks. Sun data is
+% always exported (satellite eclipses + daylight at both ground objects).
+verifyFalse(testCase, isfield(payload, "sensors"));
+verifyTrue(testCase, isfield(payload, "sun"));
+verifyEqual(testCase, numel(payload.sun.eclipses), 1);
+verifyEqual(testCase, numel(payload.sun.groundLighting), 2);
 end
 
 function deleteIfExists(file)

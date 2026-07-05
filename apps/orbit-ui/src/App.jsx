@@ -9,6 +9,7 @@ import SatelliteDialog from "./components/dialogs/SatelliteDialog.jsx";
 import ConstellationDialog from "./components/dialogs/ConstellationDialog.jsx";
 import GroundDialog from "./components/dialogs/GroundDialog.jsx";
 import ScenarioSettingsDialog from "./components/dialogs/ScenarioSettingsDialog.jsx";
+import TasksDialog from "./components/dialogs/TasksDialog.jsx";
 import * as api from "./lib/api.js";
 import { buildRenderScenario } from "./lib/renderScenario.js";
 import { satLlaAt } from "./lib/scenarioUtils.js";
@@ -37,6 +38,9 @@ export default function App() {
     labels: true,
     groundTracks: true,
     accessLines: true,
+    sensorFov: true,
+    sensorFor: false,
+    sun: true,
   });
   const jobStateRef = useRef("idle");
   const urlTimeApplied = useRef(false);
@@ -177,9 +181,25 @@ export default function App() {
 
   const replaceObject = useCallback(
     (originalName, object) =>
+      // Renames carry sensor tasks that reference the object along.
       applySpec({
         ...spec,
         objects: spec.objects.map((o) => (o.name === originalName ? object : o)),
+        tasks: (spec.tasks ?? []).map((t) => {
+          const satelliteName =
+            t.satelliteName === originalName ? object.name : t.satelliteName;
+          return {
+            ...t,
+            targetName:
+              t.targetName === originalName ? object.name : t.targetName,
+            // A task pinned to a satellite whose sensor was removed falls
+            // back to "any sensor" instead of failing validation.
+            satelliteName:
+              satelliteName === object.name && !object.sensor
+                ? ""
+                : satelliteName,
+          };
+        }),
       }),
     [applySpec, spec],
   );
@@ -187,9 +207,13 @@ export default function App() {
   const deleteObject = useCallback(
     (name) => {
       if (!window.confirm(`Delete '${name}' from the scenario?`)) return;
+      // Sensor tasks referencing the deleted object go with it.
       applySpec({
         ...spec,
         objects: spec.objects.filter((o) => o.name !== name),
+        tasks: (spec.tasks ?? []).filter(
+          (t) => t.targetName !== name && t.satelliteName !== name,
+        ),
       }).then((result) => {
         if (result.errors) setSpecError(result.errors.join(" "));
       });
@@ -199,6 +223,11 @@ export default function App() {
 
   const updateMeta = useCallback(
     (meta) => applySpec({ ...spec, meta }),
+    [applySpec, spec],
+  );
+
+  const updateTasks = useCallback(
+    (tasks) => applySpec({ ...spec, tasks }),
     [applySpec, spec],
   );
 
@@ -404,6 +433,9 @@ export default function App() {
           onClose={closeDialog}
           onSubmit={updateMeta}
         />
+      )}
+      {dialog?.type === "tasks" && spec && (
+        <TasksDialog spec={spec} onClose={closeDialog} onSubmit={updateTasks} />
       )}
     </div>
   );

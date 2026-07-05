@@ -4,6 +4,7 @@ import {
   keplerianSatelliteTemplate,
   nextObjectName,
   PROPAGATORS,
+  sensorTemplate,
   tleSatelliteTemplate,
 } from "../../lib/spec.js";
 
@@ -41,6 +42,8 @@ export default function SatelliteDialog({ spec, initial, onSubmit, onClose }) {
   const setField = (field, value) => setActive((s) => ({ ...s, [field]: value }));
   const setOrbit = (field, value) =>
     setActive((s) => ({ ...s, orbit: { ...s.orbit, [field]: value } }));
+  const setSensor = (field, value) =>
+    setActive((s) => ({ ...s, sensor: { ...s.sensor, [field]: value } }));
 
   const submit = async () => {
     const result = await onSubmit(active, initial?.name);
@@ -204,6 +207,53 @@ export default function SatelliteDialog({ spec, initial, onSubmit, onClose }) {
       )}
       {PROPAGATORS.includes(active.propagator) ? null : (
         <div className="error-text">Unknown propagator.</div>
+      )}
+
+      <FormRow
+        label="Imaging sensor"
+        hint="Nadir-pointing conic sensor the scheduler can task against point targets"
+      >
+        <input
+          type="checkbox"
+          checked={Boolean(active.sensor)}
+          onChange={(e) =>
+            setField("sensor", e.target.checked ? sensorTemplate() : undefined)
+          }
+        />
+      </FormRow>
+      {active.sensor && (
+        <>
+          <FormRow
+            label="FOV half-angle (deg)"
+            hint="Instantaneous beam: half-angle of the sensor cone"
+          >
+            <NumberInput
+              value={active.sensor.coneHalfAngleDeg}
+              onChange={(v) => setSensor("coneHalfAngleDeg", v)}
+              min={0.1}
+              max={90}
+            />
+          </FormRow>
+          <FormRow
+            label="FOR half-angle (deg)"
+            hint="Field of regard: how far the sensor can slew off nadir"
+          >
+            <NumberInput
+              value={active.sensor.fieldOfRegardDeg}
+              onChange={(v) => setSensor("fieldOfRegardDeg", v)}
+              min={0.1}
+              max={180}
+            />
+          </FormRow>
+          <FormRow label="Slew rate (deg/s)">
+            <NumberInput
+              value={active.sensor.slewRateDegPerSec}
+              onChange={(v) => setSensor("slewRateDegPerSec", v)}
+              min={0.01}
+              max={60}
+            />
+          </FormRow>
+        </>
       )}
     </Modal>
   );

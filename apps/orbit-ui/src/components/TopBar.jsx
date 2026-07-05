@@ -76,6 +76,12 @@ export default function TopBar({
       label: "Point Target...",
       onClick: () => onOpenDialog({ type: "ground", kind: "target" }),
     },
+    "---",
+    {
+      label: "Sensor Tasks...",
+      hint: "Schedule imaging tasks for satellite sensors",
+      onClick: () => onOpenDialog({ type: "tasks" }),
+    },
   ];
 
   return (
@@ -159,6 +165,30 @@ export default function TopBar({
           onClick={() => onToggleOption("accessLines")}
         >
           Access
+        </button>
+        <button
+          className="btn btn--toggle"
+          aria-pressed={viewOptions.sensorFov}
+          onClick={() => onToggleOption("sensorFov")}
+          title="Show sensor field-of-view cones (the instantaneous beam)"
+        >
+          FOV
+        </button>
+        <button
+          className="btn btn--toggle"
+          aria-pressed={viewOptions.sensorFor}
+          onClick={() => onToggleOption("sensorFor")}
+          title="Show sensor field-of-regard domes (how far the sensor can slew off nadir)"
+        >
+          FOR
+        </button>
+        <button
+          className="btn btn--toggle"
+          aria-pressed={viewOptions.sun}
+          onClick={() => onToggleOption("sun")}
+          title="Show the Sun in the 3D view"
+        >
+          Sun
         </button>
       </div>
     </header>
