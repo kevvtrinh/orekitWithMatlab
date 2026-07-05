@@ -59,6 +59,7 @@ scenario = localScenario(seconds(600));
 sat = scenario.getObject("Sat-1");
 sensor = SensorObject.fixedVector("NorthCam", "Sat-1", [0 0 1], 1);
 sensor.PointingMode = "FixedVector";
+sensor.FieldOfRegardDeg = 1; % non-slewable: FOR equals the fixed beam
 sat = sat.addSensor(sensor);
 scenario = scenario.updateObject(sat);
 verifyWarning(testCase, ...
@@ -72,6 +73,7 @@ scenario = MissionScenario(cfg);
 sat = SatelliteObject.fromKeplerian("Sat-1", 7000e3, 0.0001, 0.01, 0, 0, 0);
 sensor = SensorObject.simpleConic("Imager", "Sat-1", 20);
 sensor.PointingMode = "Nadir";
+sensor.FieldOfRegardDeg = 20; % non-slewable: passes stay short (~1 min)
 sat = sat.addSensor(sensor);
 scenario = scenario.addObject(sat);
 scenario = scenario.addObject(PlaceObject("EqTarget", 0, 0, 0));

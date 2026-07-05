@@ -9,12 +9,15 @@ function sensorAccessResult = computeSensorAccess(scenario, parentObjectName, se
 %                    miss every pass entirely. Satellite positions are
 %                    interpolated between ephemeris samples, so this can be
 %                    much finer than the propagation grid.
-%   UseFieldOfRegard Gate access on the sensor's field of regard around its
-%                    nominal pointing instead of the (narrow) field of view.
-%                    Answers "could a slewable/tasked sensor reach the
-%                    target" rather than "does the fixed beam see it now".
-%                    Sensor tasking uses this so opportunities cover the
-%                    whole reachable region (see taskAccessOptions).
+%   UseFieldOfRegard Default true. Access answers "can the sensor slew and
+%                    point at the target" (STK-style field-of-regard
+%                    reachability around the nominal pointing), so the gate
+%                    is FieldOfRegardDeg, not the instantaneous beam. Pass
+%                    false to gate on the (narrow) field of view instead,
+%                    i.e. "does the fixed beam see it right now" - the
+%                    footprint/instantaneous-view question. Model a
+%                    non-slewable sensor by setting FieldOfRegardDeg equal
+%                    to its field of view half-angle.
 %
 % Result adds FieldOfViewMode ("FOV"|"FOR") and FovLimitDeg (the half-angle
 % gate that was applied).
@@ -46,9 +49,9 @@ lookUnits = lookVectors ./ max(rangeMeters, eps);
 offBoresightAngleDeg = acosd(max(min(sum(boresights .* lookUnits, 2), 1), -1));
 lookAngleDeg = offBoresightAngleDeg;
 
-useFieldOfRegard = isfield(options, "UseFieldOfRegard") && options.UseFieldOfRegard;
+useFieldOfRegard = ~isfield(options, "UseFieldOfRegard") || options.UseFieldOfRegard;
 if useFieldOfRegard
-    % "Can a slewable/tasked sensor reach the target" — gate on the field
+    % "Can a slewable/tasked sensor reach the target" - gate on the field
     % of regard around the nominal pointing, not the narrow fixed beam.
     fieldOfViewOK = offBoresightAngleDeg <= sensor.FieldOfRegardDeg;
     fovLimitDeg = sensor.FieldOfRegardDeg;
