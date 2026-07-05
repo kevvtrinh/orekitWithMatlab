@@ -9,6 +9,15 @@ function sensorAccessResult = computeSensorAccess(scenario, parentObjectName, se
 %                    miss every pass entirely. Satellite positions are
 %                    interpolated between ephemeris samples, so this can be
 %                    much finer than the propagation grid.
+%   UseFieldOfRegard Gate access on the sensor's field of regard around its
+%                    nominal pointing instead of the (narrow) field of view.
+%                    Answers "could a slewable/tasked sensor reach the
+%                    target" rather than "does the fixed beam see it now".
+%                    Sensor tasking uses this so opportunities cover the
+%                    whole reachable region (see taskAccessOptions).
+%
+% Result adds FieldOfViewMode ("FOV"|"FOR") and FovLimitDeg (the half-angle
+% gate that was applied).
 %
 % Geometry notes: all positions are ECEF meters; satellite positions are
 % linearly interpolated between ephemeris samples. Elevation is measured at
@@ -37,7 +46,16 @@ lookUnits = lookVectors ./ max(rangeMeters, eps);
 offBoresightAngleDeg = acosd(max(min(sum(boresights .* lookUnits, 2), 1), -1));
 lookAngleDeg = offBoresightAngleDeg;
 
-fieldOfViewOK = fieldOfViewStatus(sensor, lookUnits, boresights, offBoresightAngleDeg);
+useFieldOfRegard = isfield(options, "UseFieldOfRegard") && options.UseFieldOfRegard;
+if useFieldOfRegard
+    % "Can a slewable/tasked sensor reach the target" — gate on the field
+    % of regard around the nominal pointing, not the narrow fixed beam.
+    fieldOfViewOK = offBoresightAngleDeg <= sensor.FieldOfRegardDeg;
+    fovLimitDeg = sensor.FieldOfRegardDeg;
+else
+    fieldOfViewOK = fieldOfViewStatus(sensor, lookUnits, boresights, offBoresightAngleDeg);
+    fovLimitDeg = sensor.effectiveConeHalfAngleDeg();
+end
 rangeOK = rangeKm >= sensor.MinRangeKm & rangeKm <= sensor.MaxRangeKm;
 availabilityOK = availabilityStatus(sensor, timeVector);
 slewOK = true(n, 1);
@@ -78,6 +96,12 @@ sensorAccessResult.LookAngleDeg = lookAngleDeg;
 sensorAccessResult.IncidenceAngleDeg = incidenceAngleDeg;
 sensorAccessResult.ConstraintStatus = constraintStatus;
 sensorAccessResult.AccessType = "Sensor";
+if useFieldOfRegard
+    sensorAccessResult.FieldOfViewMode = "FOR";
+else
+    sensorAccessResult.FieldOfViewMode = "FOV";
+end
+sensorAccessResult.FovLimitDeg = fovLimitDeg;
 sensorAccessResult.Metadata = enrichMetadata(options, scenario, sensor);
 
 if any(accessLogical)
@@ -90,7 +114,7 @@ else
     sensorAccessResult.MaxElevation = NaN;
     sensorAccessResult.MinRange = NaN;
     sensorAccessResult.MaxOffBoresight = NaN;
-    warnNoAccess(scenario, sensor, timeVector, offBoresightAngleDeg, rangeKm, ...
+    warnNoAccess(scenario, fovLimitDeg, timeVector, offBoresightAngleDeg, rangeKm, ...
         lineOfSightOK, options);
 end
 end
@@ -290,7 +314,7 @@ closest = p1 + t * segment;
 distance = norm(closest);
 end
 
-function warnNoAccess(scenario, sensor, timeVector, offBoresightAngleDeg, rangeKm, ...
+function warnNoAccess(scenario, fovLimitDeg, timeVector, offBoresightAngleDeg, rangeKm, ...
         lineOfSightOK, options)
 [minOff, idx] = min(offBoresightAngleDeg);
 stepSeconds = seconds(scenario.Config.TimeStep);
@@ -298,7 +322,7 @@ usedDenseSampling = isfield(options, "TimeStepSeconds") && ...
     ~isempty(options.TimeStepSeconds) && options.TimeStepSeconds > 0;
 message = sprintf(['No access windows: closest approach to the field of view was ' ...
     '%.1f deg off boresight (limit %.1f deg) at %s, range %.0f km, line of sight %s.'], ...
-    minOff, sensor.effectiveConeHalfAngleDeg(), ...
+    minOff, fovLimitDeg, ...
     string(timeVector(idx)), rangeKm(idx), string(lineOfSightOK(idx)));
 if ~usedDenseSampling && stepSeconds > 60
     message = sprintf(['%s The scenario time step is %.0f s while a typical LEO ' ...

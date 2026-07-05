@@ -132,6 +132,26 @@ propagation grid. Fixes:
   approach + aliasing hint. Repro/diagnostic script at repo root:
   `debug_sensor_access_no_windows.m`. Test: testSensorAccessSampling.
 
+## Sensor tasking FOV->FOR fix (2026-07)
+
+Tasking/scheduling opportunity search called computeSensorAccess with no
+options, so it gated on the narrow fixed-beam FOV and the coarse scenario
+grid — inconsistent with the rest of the scheduler, which already models
+slew time separately and scores quality against FieldOfRegardDeg. A target
+inside the FOR (reachable by slewing) produced zero opportunities. Fix:
+- computeSensorAccess option UseFieldOfRegard (gate on FieldOfRegardDeg
+  around nominal pointing); result carries FieldOfViewMode + FovLimitDeg.
+- SchedulerOptions.UseFieldOfRegardForTasking (default true) and
+  AccessTimeStepSeconds (default 10) -> taskAccessOptions helper.
+- computePointTargetTrackOpportunities + computeAreaScanOpportunities pass
+  taskAccessOptions into computeSensorAccess (multi-sensor delegates to
+  these). Slew time / off-nadir quality already model the pointing cost.
+- Tests: testTaskingFieldOfRegard (FOR finds more than FOV, respects FOR
+  limit, coarse-step still finds short passes, area scan, greedy end-to-end).
+NOTE: branch rebuilt from origin/main (Kevin merged reworked ECI/mount
+commit 937ea4e with OrekitFrameTransform); pre-merge branch backup patches
+in scratchpad/mybackup.
+
 ## Known caveats / decisions
 
 - Harris-Priester drag: valid ~100–1000 km altitude; returns zero density above,

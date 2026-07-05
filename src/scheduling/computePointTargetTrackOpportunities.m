@@ -29,7 +29,8 @@ for s = 1:height(sensors)
     parent = scenario.getObject(parentName);
     sensor = parent.getSensor(sensorName);
     try
-        access = computeSensorAccess(scenario, parentName, sensorName, targetName);
+        access = computeSensorAccess(scenario, parentName, sensorName, ...
+            targetName, taskAccessOptions(scenario, options));
     catch err
         row = rejectedCandidate(taskID, taskName, taskType, sensorName, ...
             parentName, targetName, "", scenario.Config.Epoch, ...

@@ -5,6 +5,8 @@ classdef SchedulerOptions
         SchedulerType string = "Greedy"
         EnforceOneTaskPerSensor logical = true
         EnforceSlew logical = true
+        UseFieldOfRegardForTasking logical = true
+        AccessTimeStepSeconds double = 10
         AllowPartialAreaCoverage logical = true
         AllowTaskSplitting logical = false
         AllowMultiSensorTasks logical = true

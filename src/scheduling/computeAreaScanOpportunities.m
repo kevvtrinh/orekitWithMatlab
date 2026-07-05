@@ -33,7 +33,8 @@ for s = 1:height(sensors)
     parent = scenario.getObject(parentName);
     sensor = parent.getSensor(sensorName);
     try
-        access = computeSensorAccess(scenario, parentName, sensorName, areaTargetName);
+        access = computeSensorAccess(scenario, parentName, sensorName, ...
+            areaTargetName, taskAccessOptions(scenario, options));
     catch err
         values = struct("CandidateID", string(taskID) + "-C000", ...
             "TaskID", taskID, "TaskName", taskName, "TaskType", taskType, ...
