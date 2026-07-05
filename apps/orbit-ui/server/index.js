@@ -10,9 +10,11 @@ import {
   startSpecJob,
 } from "./matlabJob.js";
 import { loadSpec, resetSpec, saveSpec, writeRunSpec } from "./scenarioStore.js";
+import { localCors } from "./cors.js";
 
 const PORT = Number(process.env.ORBIT_UI_PORT || 5175);
 const app = express();
+app.use(localCors);
 app.use(express.json({ limit: "4mb" }));
 
 app.get("/api/health", (_req, res) => {

@@ -2,8 +2,9 @@ const STATE_LABEL = {
   idle: "Idle",
   running: "Running...",
   succeeded: "Succeeded",
-  failed: "Failed",
-  unreachable: "Bridge server offline",
+  failed: "MATLAB run failed",
+  // "unreachable" means the web bridge/dev server, never MATLAB itself.
+  unreachable: "Web bridge unavailable (not a MATLAB failure)",
 };
 
 export default function MatlabPanel({ job, onRunMatlab, dirty }) {
@@ -25,13 +26,15 @@ export default function MatlabPanel({ job, onRunMatlab, dirty }) {
       <button
         className="btn btn--primary"
         onClick={onRunMatlab}
-        disabled={running || state === "unreachable"}
+        disabled={running}
       >
         {running
           ? "MATLAB running..."
-          : dirty
-            ? "Run scenario in MATLAB (edits pending)"
-            : "Run scenario in MATLAB"}
+          : state === "unreachable"
+            ? "Retry MATLAB run"
+            : dirty
+              ? "Run scenario in MATLAB (edits pending)"
+              : "Run scenario in MATLAB"}
       </button>
 
       <div className="hint-text">
@@ -41,6 +44,12 @@ export default function MatlabPanel({ job, onRunMatlab, dirty }) {
         minute or two while MATLAB starts.
       </div>
 
+      {state === "unreachable" && !job?.error && (
+        <div className="error-text">
+          Web bridge offline. Restart `npm run dev` in apps/orbit-ui and
+          reload this page - MATLAB was never started, so it did not fail.
+        </div>
+      )}
       {job?.error && <div className="error-text">{job.error}</div>}
 
       {job?.log?.length > 0 && (

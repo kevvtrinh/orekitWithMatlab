@@ -8,12 +8,14 @@ const SPEEDS = [1, 10, 60, 300, 1000];
 export default function TopBar({
   scenario,
   source,
+  job,
   viewOptions,
   onToggleOption,
   onOpenDialog,
   onResetSpec,
   onExport,
   onImportSpec,
+  onRunMatlab,
 }) {
   const { tSec, playing, speed } = useSyncExternalStore(
     clock.subscribe,
@@ -69,12 +71,23 @@ export default function TopBar({
     },
     "---",
     {
+      label: "Sensor...",
+      hint: "Add or edit the imaging sensor on a satellite",
+      onClick: () => onOpenDialog({ type: "sensor" }),
+    },
+    "---",
+    {
       label: "Ground Station...",
       onClick: () => onOpenDialog({ type: "ground", kind: "groundStation" }),
     },
     {
       label: "Point Target...",
       onClick: () => onOpenDialog({ type: "ground", kind: "target" }),
+    },
+    {
+      label: "Area Target...",
+      hint: "Rectangular area sampled as a grid of point targets",
+      onClick: () => onOpenDialog({ type: "areaTarget" }),
     },
     "---",
     {
@@ -94,6 +107,14 @@ export default function TopBar({
       <div className="topbar-group">
         <Menu label="Scenario" items={scenarioItems} />
         <Menu label="Insert" items={insertItems} />
+        <button
+          className="btn"
+          onClick={onRunMatlab}
+          disabled={job?.state === "running"}
+          title="Run the authoritative MATLAB/Orekit pipeline: propagate, compute access windows, and schedule sensor tasks"
+        >
+          {job?.state === "running" ? "Calculating..." : "Calculate Access"}
+        </button>
       </div>
 
       <div className="scenario-chip" title="Active scenario">

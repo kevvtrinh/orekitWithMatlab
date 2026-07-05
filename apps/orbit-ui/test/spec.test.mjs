@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import {
   deepEqual,
   deriveSpecFromScenario,
+  expandAreaGrid,
   expandWalker,
   groundStationTemplate,
   keplerianSatelliteTemplate,
@@ -147,6 +148,82 @@ test("expandWalker matches ConstellationFactory semantics", () => {
       argPerigeeDeg: 0,
       trueAnomalyOffsetDeg: 0,
     }),
+  );
+});
+
+test("expandAreaGrid produces a valid centered grid of point targets", () => {
+  const targets = expandAreaGrid({
+    name: "Basin",
+    centerLatDeg: 39,
+    centerLonDeg: -105,
+    altitudeM: 1600,
+    widthKm: 100,
+    heightKm: 100,
+    spacingKm: 50,
+    priority: 7,
+  });
+  // 100 km / 50 km spacing -> 3 columns x 3 rows, centered on the middle.
+  assert.equal(targets.length, 9);
+  assert.equal(targets[0].name, "Basin-R01C01");
+  assert.equal(targets[8].name, "Basin-R03C03");
+  const center = targets[4];
+  assert.equal(center.latitudeDeg, 39);
+  assert.equal(center.longitudeDeg, -105);
+  assert.ok(targets.every((t) => t.kind === "target" && t.priority === 7));
+  // The whole grid drops into a spec as ordinary point targets.
+  const spec = specWith(targets);
+  assert.deepEqual(validateSpec(stripEmptyFields(spec)), []);
+  // Latitude spacing ~50 km ~ 0.449 deg.
+  assert.ok(Math.abs(targets[0].latitudeDeg - (39 - 50 / 111.32)) < 1e-9);
+
+  // Single point when the area is smaller than the spacing.
+  const single = expandAreaGrid({
+    name: "Spot",
+    centerLatDeg: 0,
+    centerLonDeg: 10,
+    widthKm: 10,
+    heightKm: 10,
+    spacingKm: 50,
+  });
+  assert.equal(single.length, 1);
+  assert.equal(single[0].latitudeDeg, 0);
+
+  // Guardrails: oversized grids, polar centers, bad numbers.
+  assert.throws(
+    () =>
+      expandAreaGrid({
+        name: "Huge",
+        centerLatDeg: 0,
+        centerLonDeg: 0,
+        widthKm: 5000,
+        heightKm: 5000,
+        spacingKm: 50,
+      }),
+    /max/i,
+  );
+  assert.throws(
+    () =>
+      expandAreaGrid({
+        name: "Polar",
+        centerLatDeg: 89.9,
+        centerLonDeg: 0,
+        widthKm: 100,
+        heightKm: 100,
+        spacingKm: 50,
+      }),
+    /pole/i,
+  );
+  assert.throws(
+    () =>
+      expandAreaGrid({
+        name: "Bad",
+        centerLatDeg: 0,
+        centerLonDeg: 0,
+        widthKm: NaN,
+        heightKm: 100,
+        spacingKm: 50,
+      }),
+    /Width/,
   );
 });
 

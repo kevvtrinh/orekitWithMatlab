@@ -41,9 +41,15 @@ export default function StatusBar({ scenario, source, job, specError }) {
       )}
       {specError && <span className="error-text">{specError}</span>}
       <span className="grow" />
-      <span>
+      <span
+        title={
+          job?.state === "unreachable"
+            ? "The web bridge/dev server is unavailable - not a MATLAB failure. Restart `npm run dev` in apps/orbit-ui."
+            : undefined
+        }
+      >
         MATLAB bridge:{" "}
-        {job?.state === "unreachable" ? "offline" : (job?.state ?? "idle")}
+        {job?.state === "unreachable" ? "web bridge offline" : (job?.state ?? "idle")}
       </span>
     </footer>
   );

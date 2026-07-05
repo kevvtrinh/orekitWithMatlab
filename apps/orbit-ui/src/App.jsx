@@ -10,6 +10,8 @@ import ConstellationDialog from "./components/dialogs/ConstellationDialog.jsx";
 import GroundDialog from "./components/dialogs/GroundDialog.jsx";
 import ScenarioSettingsDialog from "./components/dialogs/ScenarioSettingsDialog.jsx";
 import TasksDialog from "./components/dialogs/TasksDialog.jsx";
+import SensorDialog from "./components/dialogs/SensorDialog.jsx";
+import AreaTargetDialog from "./components/dialogs/AreaTargetDialog.jsx";
 import * as api from "./lib/api.js";
 import { buildRenderScenario } from "./lib/renderScenario.js";
 import { satLlaAt } from "./lib/scenarioUtils.js";
@@ -124,10 +126,13 @@ export default function App() {
         loadScenario();
       }
       return status.state;
-    } catch {
-      jobStateRef.current = "unreachable";
-      setJob({ state: "unreachable" });
-      return "unreachable";
+    } catch (err) {
+      // Distinguish "bridge offline" from "stale dev server/bridge" so the
+      // panel never blames MATLAB for a web-plumbing problem.
+      const { state, message } = await api.classifyBridgeError(err);
+      jobStateRef.current = state;
+      setJob({ state, error: message });
+      return state;
     }
   }, [loadScenario]);
 
@@ -166,7 +171,9 @@ export default function App() {
           if (err.errors) return { errors: err.errors };
           // Bridge went away mid-session: keep editing locally.
           setSpecMode("local");
-          setSpecError("Bridge server unreachable - edits are not persisted.");
+          setSpecError(
+            "Web bridge unreachable - edits are not persisted. Restart `npm run dev` in apps/orbit-ui and reload.",
+          );
         }
       }
       return { ok: true };
@@ -262,12 +269,9 @@ export default function App() {
         pollJob();
         return;
       }
-      setJob({
-        state: err.status ? "failed" : "unreachable",
-        error:
-          err.message ??
-          "Bridge server is not reachable. Start it with `npm run dev` (or `npm run dev:server`) in apps/orbit-ui.",
-      });
+      const { state, message } = await api.classifyBridgeError(err);
+      jobStateRef.current = state;
+      setJob({ state, error: message });
     }
   }, [spec, specMode, pollJob]);
 
@@ -346,12 +350,14 @@ export default function App() {
       <TopBar
         scenario={scenario}
         source={source}
+        job={job}
         viewOptions={viewOptions}
         onToggleOption={toggleOption}
         onOpenDialog={openDialog}
         onResetSpec={resetSpec}
         onExport={handleExport}
         onImportSpec={handleImportSpec}
+        onRunMatlab={runMatlab}
       />
       <div className="main">
         <ObjectBrowser
@@ -436,6 +442,25 @@ export default function App() {
       )}
       {dialog?.type === "tasks" && spec && (
         <TasksDialog spec={spec} onClose={closeDialog} onSubmit={updateTasks} />
+      )}
+      {dialog?.type === "sensor" && spec && (
+        <SensorDialog
+          spec={spec}
+          initialSatellite={dialog.satellite ?? null}
+          onClose={closeDialog}
+          onSubmit={replaceObject}
+        />
+      )}
+      {dialog?.type === "areaTarget" && spec && (
+        <AreaTargetDialog
+          spec={spec}
+          onClose={closeDialog}
+          onSubmit={async (targets) => {
+            const result = await insertObjects(targets);
+            if (result.ok && targets.length > 0) setSelection(targets[0].name);
+            return result;
+          }}
+        />
       )}
     </div>
   );

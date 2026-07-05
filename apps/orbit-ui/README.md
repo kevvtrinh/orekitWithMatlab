@@ -39,8 +39,26 @@ This starts two processes:
 - Bridge/API server at <http://127.0.0.1:5175> (Vite proxies `/api` to it)
 
 Open <http://localhost:5174>. The app loads immediately with the bundled
-sample scenario; press **Run MATLAB demo scenario** in the right panel to
-replace it with freshly computed Orekit data.
+sample scenario; press **Run scenario in MATLAB** in the right panel (or
+**Calculate Access** in the top bar) to replace it with freshly computed
+Orekit data.
+
+### Troubleshooting: HTTP 404 / "web bridge offline"
+
+These are **web-plumbing problems, not MATLAB failures** - MATLAB was never
+started. The usual cause is a dev server or bridge process left running from
+before the current code existed (its routes/proxy are stale):
+
+1. Stop any old `npm run dev` / `node server/index.js` processes.
+2. Restart with `npm run dev` in `apps/orbit-ui` and reload the page.
+3. Sanity check: <http://localhost:5174/api/health> (through the Vite proxy)
+   and <http://127.0.0.1:5175/api/health> (bridge directly) should both
+   return `{ "ok": true, ... }`.
+
+The UI diagnoses this itself: when an `/api` call fails it probes
+`/api/health` same-origin and then the bridge directly on port 5175 (the
+bridge allows localhost-only CORS for exactly this probe), and tells you
+which process is stale instead of showing a raw HTTP 404.
 
 Production-style run (single server, serves the built frontend and the API):
 
@@ -90,6 +108,13 @@ npm run bridge:demo
 
 ## UI notes
 
+- **Workflow (STK-style):** Insert menu adds satellites, Walker
+  constellations, sensors (top-level, attaches to any satellite), ground
+  stations, point targets, area targets (rectangle sampled as a grid of
+  point targets, like the MATLAB UI's Generate Grid), and sensor tasks.
+  **Calculate Access** in the top bar runs the authoritative MATLAB/Orekit
+  pipeline (propagate + access + scheduling) and refreshes the view;
+  **Run scenario in MATLAB** in the inspector is the same pipeline.
 - **3D viewport:** drag to rotate (inertial damping), wheel to zoom,
   right-drag to pan. ECI/J2000 frame; the Earth rotates with GMST and the sun
   direction matches the scenario clock. Orbit paths, satellite markers,

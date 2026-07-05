@@ -231,6 +231,100 @@ export function expandWalker(params) {
 }
 
 // ---------------------------------------------------------------------------
+// Area targets
+// ---------------------------------------------------------------------------
+
+export const MAX_AREA_GRID_POINTS = 100;
+
+export function areaTargetTemplate(name) {
+  return {
+    name,
+    centerLatDeg: 39.0,
+    centerLonDeg: -105.5,
+    altitudeM: 0,
+    widthKm: 100,
+    heightKm: 100,
+    spacingKm: 50,
+    priority: 5,
+  };
+}
+
+// Expand a rectangular area target into a grid of point targets, mirroring
+// the MATLAB UI's AreaTargetObject "Generate Grid" workflow. The MATLAB
+// backend schedules/computes access per point, so an area is represented in
+// the spec as its grid points (kind "target", grouped by name prefix).
+export function expandAreaGrid(params) {
+  const {
+    name,
+    centerLatDeg,
+    centerLonDeg,
+    altitudeM = 0,
+    widthKm,
+    heightKm,
+    spacingKm,
+    priority = 5,
+  } = params;
+
+  if (typeof name !== "string" || name.trim().length === 0) {
+    throw new Error("Area target name cannot be empty.");
+  }
+  for (const [label, v, lo, hi] of [
+    ["Center latitude", centerLatDeg, -90, 90],
+    ["Center longitude", centerLonDeg, -180, 180],
+    ["Width", widthKm, 1, 5000],
+    ["Height", heightKm, 1, 5000],
+    ["Grid spacing", spacingKm, 1, 5000],
+  ]) {
+    if (!(typeof v === "number" && Number.isFinite(v) && v >= lo && v <= hi)) {
+      throw new Error(`${label} must be a number between ${lo} and ${hi}.`);
+    }
+  }
+
+  const rows = Math.max(1, Math.floor(heightKm / spacingKm) + 1);
+  const cols = Math.max(1, Math.floor(widthKm / spacingKm) + 1);
+  if (rows * cols > MAX_AREA_GRID_POINTS) {
+    throw new Error(
+      `Grid would have ${rows * cols} points (max ${MAX_AREA_GRID_POINTS}). ` +
+        "Increase the spacing or shrink the area.",
+    );
+  }
+
+  // Small-area approximation: 1 deg latitude ~ 111.32 km; longitude scaled by
+  // cos(latitude). Adequate for imaging-area grids well away from the poles.
+  const kmPerDegLat = 111.32;
+  const dLat = spacingKm / kmPerDegLat;
+  const cosLat = Math.cos((centerLatDeg * Math.PI) / 180);
+  if (cosLat < 0.05) {
+    throw new Error("Area grids are not supported within ~87 deg of a pole.");
+  }
+  const dLon = spacingKm / (kmPerDegLat * cosLat);
+
+  const targets = [];
+  for (let r = 0; r < rows; r++) {
+    const lat = centerLatDeg + (r - (rows - 1) / 2) * dLat;
+    if (lat < -90 || lat > 90) {
+      throw new Error("Area grid extends beyond a pole - shrink the height.");
+    }
+    for (let c = 0; c < cols; c++) {
+      let lon = centerLonDeg + (c - (cols - 1) / 2) * dLon;
+      if (lon > 180) lon -= 360;
+      if (lon < -180) lon += 360;
+      targets.push({
+        kind: "target",
+        name: `${name}-R${pad2(r + 1)}C${pad2(c + 1)}`,
+        color: "",
+        group: name,
+        latitudeDeg: lat,
+        longitudeDeg: lon,
+        altitudeM,
+        priority,
+      });
+    }
+  }
+  return targets;
+}
+
+// ---------------------------------------------------------------------------
 // Validation
 // ---------------------------------------------------------------------------
 
