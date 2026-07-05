@@ -2538,13 +2538,34 @@ refreshAll();
 
     function drawSensorFootprints2D()
         for footprint = collectSensorFootprints()
-            [lon, lat] = splitDateline(footprint{1}.LongitudeDeg, footprint{1}.LatitudeDeg);
-            if footprint{1}.Type == "FOR"
+            data = footprint{1};
+            [lon, lat] = splitDateline(data.LongitudeDeg, data.LatitudeDeg);
+            if data.Type == "FOR"
                 plot(mapAxes, lon, lat, "--", "Color", [0.20 0.55 0.95], ...
                     "LineWidth", 1.2);
-            else
-                plot(mapAxes, lon, lat, "-", "Color", footprint{1}.Color, ...
-                    "LineWidth", 1.4);
+                continue;
+            end
+
+            taskActive = isfield(data, "Pointing") && data.Pointing.Mode == "Task";
+            lineWidth = 1.4;
+            if taskActive
+                lineWidth = 2.2;
+            end
+            plot(mapAxes, lon, lat, "-", "Color", data.Color, "LineWidth", lineWidth);
+
+            if taskActive
+                aim = data.Pointing.AimEcefMeters;
+                aimLat = asind(aim(3) / norm(aim));
+                aimLon = atan2d(aim(2), aim(1));
+                [beamLon, beamLat] = splitDateline( ...
+                    [data.SubLongitudeDeg; aimLon], [data.SubLatitudeDeg; aimLat]);
+                plot(mapAxes, beamLon, beamLat, "-", ...
+                    "Color", [0.95 0.25 0.15], "LineWidth", 1.6);
+                scatter(mapAxes, aimLon, aimLat, 70, "p", "filled", ...
+                    "MarkerFaceColor", [0.95 0.25 0.15], "MarkerEdgeColor", [1 1 1]);
+                text(mapAxes, aimLon, aimLat, ...
+                    char("  " + data.SensorName + " > " + data.Pointing.TargetName), ...
+                    "Color", [0.55 0.08 0.05], "FontSize", 8, "FontWeight", "bold");
             end
         end
     end
@@ -2572,6 +2593,8 @@ refreshAll();
                         footprint = computeSensorFootprint(scenario, obj.Name, ...
                             sensor.Name, time);
                         footprint.Color = sensor.Color;
+                        footprint.Pointing = resolveSensorPointing(scenario, ...
+                            obj.Name, sensor.Name, time);
                         footprints{end + 1} = footprint; %#ok<AGROW>
                     catch
                     end
@@ -2734,10 +2757,16 @@ refreshAll();
             ay3 = apexKm(2);
             az3 = apexKm(3);
 
+            taskActive = data.Type ~= "FOR" && isfield(data, "Pointing") && ...
+                data.Pointing.Mode == "Task";
             if data.Type == "FOR"
                 color = [0.20 0.55 0.95];
                 faceAlpha = 0.06;
                 lineStyle = "--";
+            elseif taskActive
+                color = data.Color;
+                faceAlpha = 0.22;
+                lineStyle = "-";
             else
                 color = data.Color;
                 faceAlpha = 0.12;
@@ -2752,6 +2781,16 @@ refreshAll();
             patch(globeAxes, "Vertices", vertices, "Faces", faces, ...
                 "FaceColor", color, "FaceAlpha", faceAlpha, ...
                 "EdgeColor", "none");
+
+            if taskActive
+                aimKm = data.Pointing.AimEcefMeters / 1000.0;
+                [bx, by, bz] = earthFixedToViewFrame(aimKm(1), aimKm(2), ...
+                    aimKm(3), frameName, earthAngleRad);
+                plot3(globeAxes, [ax3 bx], [ay3 by], [az3 bz], "-", ...
+                    "Color", [0.95 0.25 0.15], "LineWidth", 2.0);
+                scatter3(globeAxes, bx, by, bz, 60, "p", "filled", ...
+                    "MarkerFaceColor", [0.95 0.25 0.15], "MarkerEdgeColor", [1 1 1]);
+            end
         end
     end
 

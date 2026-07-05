@@ -152,6 +152,19 @@ NOTE: branch rebuilt from origin/main (Kevin merged reworked ECI/mount
 commit 937ea4e with OrekitFrameTransform); pre-merge branch backup patches
 in scratchpad/mybackup.
 
+## Scheduled-beam visualization re-applied on main (2026-07)
+
+The beam-tracking/scanning viz was lost when the branch was rebuilt from
+merged main; re-applied on top of main's reworked UI:
+- resolveSensorPointing.m + testScheduledPointing.m restored (new files).
+- computeSensorFootprint: FOV footprint follows resolveSensorPointing
+  (tracks target / sweeps area during an active scheduled task); FOR stays
+  on the nominal axis.
+- UI collectSensorFootprints attaches .Pointing to FOV footprints;
+  drawSensorFootprints2D/3D draw a red beam line + star at the aim point
+  and thicken/brighten the footprint during active tasks. Uses main's
+  satellitePositionKmAtTime apex + earthFixedToViewFrame.
+
 ## Known caveats / decisions
 
 - Harris-Priester drag: valid ~100–1000 km altitude; returns zero density above,

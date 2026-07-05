@@ -56,7 +56,16 @@ if rNorm <= earthRadiusM
         string(parentName));
 end
 
-axisUnit = sensor.getBoresightVector(time, scenario);
+% FOV follows the live pointing (including an active scheduled task, so a
+% tracked/scanned footprint sits on the target); the field of regard is
+% always drawn around the sensor's nominal axis since it describes where
+% the sensor could point, not where it is currently pointing.
+if useFor
+    axisUnit = sensor.getBoresightVector(time, scenario);
+else
+    pointing = resolveSensorPointing(scenario, parentName, sensorName, time);
+    axisUnit = pointing.BoresightEcef;
+end
 basis1 = SensorObject.anyPerpendicular(axisUnit);
 basis2 = SensorObject.unitVector(cross(axisUnit, basis1));
 
