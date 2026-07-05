@@ -93,24 +93,108 @@ function sunSpriteTexture() {
 }
 
 function makeStarfield() {
-  const count = 1600;
+  const count = 900;
   const positions = new Float32Array(count * 3);
+  const colors = new Float32Array(count * 3);
+  const v = new THREE.Vector3();
   for (let i = 0; i < count; i++) {
     // Random directions, pushed far out so panning never reaches them.
-    const v = new THREE.Vector3().randomDirection().multiplyScalar(120);
+    v.randomDirection().multiplyScalar(120);
     positions.set([v.x, v.y, v.z], i * 3);
+    // Mostly faint stars with a handful of bright standouts.
+    const mag = Math.random();
+    const brightness = mag > 0.96 ? 1.0 : 0.3 + 0.45 * mag * mag;
+    const warmth = 0.92 + Math.random() * 0.08;
+    colors.set([brightness * warmth, brightness * warmth, brightness], i * 3);
   }
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
   const material = new THREE.PointsMaterial({
-    color: 0x9aa4b5,
-    size: 0.35,
-    sizeAttenuation: true,
+    size: 2,
+    sizeAttenuation: false,
+    vertexColors: true,
     transparent: true,
-    opacity: 0.7,
+    opacity: 0.9,
+    depthWrite: false,
   });
   return new THREE.Points(geometry, material);
 }
+
+// STK-style Earth shading: sun-driven soft terminator, dimmed-but-readable
+// night side, ocean-only specular, and a thin blue fresnel rim at the limb.
+const EARTH_VERTEX_SHADER = /* glsl */ `
+  varying vec2 vUv;
+  varying vec3 vWorldNormal;
+  varying vec3 vWorldPos;
+  void main() {
+    vUv = uv;
+    vWorldNormal = normalize(mat3(modelMatrix) * normal);
+    vec4 worldPos = modelMatrix * vec4(position, 1.0);
+    vWorldPos = worldPos.xyz;
+    gl_Position = projectionMatrix * viewMatrix * worldPos;
+  }
+`;
+
+const EARTH_FRAGMENT_SHADER = /* glsl */ `
+  uniform sampler2D dayMap;
+  uniform vec3 sunDir;
+  varying vec2 vUv;
+  varying vec3 vWorldNormal;
+  varying vec3 vWorldPos;
+  void main() {
+    vec3 normal = normalize(vWorldNormal);
+    vec3 viewDir = normalize(cameraPosition - vWorldPos);
+    vec3 texel = texture2D(dayMap, vUv).rgb;
+
+    float ndl = dot(normal, sunDir);
+    float dayFactor = smoothstep(-0.14, 0.22, ndl);
+    vec3 dayColor = texel * (0.3 + 1.0 * max(ndl, 0.0));
+    // Night hemisphere: cooled and dimmed so surface detail stays readable.
+    vec3 nightColor = texel * vec3(0.10, 0.13, 0.20);
+    vec3 color = mix(nightColor, dayColor, dayFactor);
+
+    // Specular restricted to blue-dominant texels so land stays matte.
+    float ocean = smoothstep(0.02, 0.12, texel.b - max(texel.r, texel.g));
+    vec3 halfDir = normalize(sunDir + viewDir);
+    float spec = pow(max(dot(normal, halfDir), 0.0), 40.0);
+    color += vec3(0.5, 0.58, 0.62) * spec * ocean * dayFactor * 0.5;
+
+    // Thin blue rim where the surface curves away toward the limb.
+    float fresnel = pow(1.0 - max(dot(normal, viewDir), 0.0), 3.5);
+    color += vec3(0.24, 0.45, 0.8) * fresnel * (0.2 + 0.8 * dayFactor);
+
+    gl_FragColor = vec4(color, 1.0);
+    #include <tonemapping_fragment>
+    #include <colorspace_fragment>
+  }
+`;
+
+// Additive fresnel shell just outside the surface for the atmospheric glow.
+const ATMOSPHERE_VERTEX_SHADER = /* glsl */ `
+  varying vec3 vViewNormal;
+  varying vec3 vWorldNormal;
+  void main() {
+    vViewNormal = normalize(normalMatrix * normal);
+    vWorldNormal = normalize(mat3(modelMatrix) * normal);
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }
+`;
+
+const ATMOSPHERE_FRAGMENT_SHADER = /* glsl */ `
+  uniform vec3 sunDir;
+  varying vec3 vViewNormal;
+  varying vec3 vWorldNormal;
+  void main() {
+    // Back-side shell: glow peaks at the occluded limb and fades outward.
+    float rim = pow(0.55 - dot(normalize(vViewNormal), vec3(0.0, 0.0, 1.0)), 3.0);
+    float lit = clamp(dot(normalize(vWorldNormal), sunDir) * 2.0 + 0.6, 0.12, 1.0);
+    vec3 color = vec3(0.3, 0.55, 1.0) * rim * lit;
+    gl_FragColor = vec4(color, 1.0);
+    #include <tonemapping_fragment>
+    #include <colorspace_fragment>
+  }
+`;
 
 export function createViewer(container, { onSelect } = {}) {
   const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -122,7 +206,7 @@ export function createViewer(container, { onSelect } = {}) {
   container.appendChild(labelRenderer.domElement);
 
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x07090d);
+  scene.background = new THREE.Color(0x000000);
   scene.add(makeStarfield());
 
   const camera = new THREE.PerspectiveCamera(45, 1, 0.01, 500);
@@ -137,9 +221,9 @@ export function createViewer(container, { onSelect } = {}) {
   controls.zoomSpeed = 0.9;
   controls.enablePan = true;
 
-  scene.add(new THREE.AmbientLight(0x30343c, 1.6));
-  const sunLight = new THREE.DirectionalLight(0xfff4e0, 2.4);
-  scene.add(sunLight);
+  // Sun direction (world space, unit) drives the Earth/atmosphere shaders;
+  // the shared Vector3 instance keeps both materials in sync.
+  const sunDirWorld = new THREE.Vector3(1, 0, 0);
 
   // Visible Sun marker along the light direction (far out, past the stars).
   const sunSprite = new THREE.Sprite(
@@ -156,27 +240,31 @@ export function createViewer(container, { onSelect } = {}) {
   const earthGroup = new THREE.Group();
   scene.add(earthGroup);
 
-  const earthMaterial = new THREE.MeshPhongMaterial({
-    map: proceduralEarthTexture(),
-    specular: new THREE.Color(0x202830),
-    shininess: 12,
+  const earthMaterial = new THREE.ShaderMaterial({
+    uniforms: {
+      dayMap: { value: proceduralEarthTexture() },
+      sunDir: { value: sunDirWorld },
+    },
+    vertexShader: EARTH_VERTEX_SHADER,
+    fragmentShader: EARTH_FRAGMENT_SHADER,
   });
   new THREE.TextureLoader().load("/textures/earth_atmos_2048.jpg", (tex) => {
     tex.colorSpace = THREE.SRGBColorSpace;
     tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
-    earthMaterial.map = tex;
-    earthMaterial.needsUpdate = true;
+    earthMaterial.uniforms.dayMap.value = tex;
   });
   const earth = new THREE.Mesh(new THREE.SphereGeometry(1, 96, 64), earthMaterial);
   earthGroup.add(earth);
 
   const atmosphere = new THREE.Mesh(
-    new THREE.SphereGeometry(1.018, 64, 48),
-    new THREE.MeshBasicMaterial({
-      color: 0x5580a8,
-      transparent: true,
-      opacity: 0.1,
+    new THREE.SphereGeometry(1.03, 64, 48),
+    new THREE.ShaderMaterial({
+      uniforms: { sunDir: { value: sunDirWorld } },
+      vertexShader: ATMOSPHERE_VERTEX_SHADER,
+      fragmentShader: ATMOSPHERE_FRAGMENT_SHADER,
       side: THREE.BackSide,
+      transparent: true,
+      blending: THREE.AdditiveBlending,
       depthWrite: false,
     }),
   );
@@ -238,7 +326,7 @@ export function createViewer(container, { onSelect } = {}) {
         positions.set([v.x, v.y, v.z], i * 3);
       }
       // Browser-preview orbits render dimmer than authoritative MATLAB ones.
-      const baseOpacity = sat.source === "preview" ? 0.38 : 0.55;
+      const baseOpacity = sat.source === "preview" ? 0.55 : 0.85;
       const pathGeometry = new THREE.BufferGeometry();
       pathGeometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
       const path = new THREE.Line(
@@ -262,7 +350,7 @@ export function createViewer(container, { onSelect } = {}) {
       gtGeometry.setAttribute("position", new THREE.BufferAttribute(gtPositions, 3));
       const groundTrack = new THREE.Line(
         gtGeometry,
-        new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.28 }),
+        new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.45 }),
       );
       groundGroup.add(groundTrack);
 
@@ -611,7 +699,7 @@ export function createViewer(container, { onSelect } = {}) {
     // otherwise the low-precision analytic formula.
     const sunData = scenarioContent?.data?.sun ?? null;
     const sun = sunDirectionAt(sunData, tSec, sunOut) ?? sunDirectionEci(date);
-    sunLight.position.set(sun[0] * 50, sun[2] * 50, -sun[1] * 50);
+    sunDirWorld.set(sun[0], sun[2], -sun[1]).normalize();
     sunSprite.position.set(sun[0] * 100, sun[2] * 100, -sun[1] * 100);
     sunSprite.visible = options.sun;
 

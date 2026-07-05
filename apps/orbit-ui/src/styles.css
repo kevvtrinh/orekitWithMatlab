@@ -313,7 +313,7 @@ select.control:focus-visible {
   position: relative;
   flex: 1;
   min-height: 0;
-  background: #07090d;
+  background: #000;
 }
 
 .viewport canvas {
