@@ -1,4 +1,6 @@
 %% Example 14: downlink RF link budget over an access
+suiteRoot = fileparts(fileparts(mfilename("fullpath")));
+addpath(suiteRoot);
 startupOrekitSuite();
 
 cfg = ScenarioConfig("Name", "Link Demo", "Duration", hours(6), "TimeStep", seconds(30));

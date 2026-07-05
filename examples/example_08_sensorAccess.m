@@ -1,4 +1,6 @@
 %% Example 08: satellite sensor to place target access
+suiteRoot = fileparts(fileparts(mfilename("fullpath")));
+addpath(suiteRoot);
 startupOrekitSuite();
 
 cfg = ScenarioConfig();

@@ -1,4 +1,6 @@
 %% Example 10: eclipse, beta angle, and ground lighting
+suiteRoot = fileparts(fileparts(mfilename("fullpath")));
+addpath(suiteRoot);
 startupOrekitSuite();
 
 cfg = ScenarioConfig("Name", "Lighting Demo", "Duration", hours(6), "TimeStep", seconds(60));

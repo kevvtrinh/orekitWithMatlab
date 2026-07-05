@@ -1,4 +1,6 @@
 %% Example 15: CCSDS OEM export/import and deck access
+suiteRoot = fileparts(fileparts(mfilename("fullpath")));
+addpath(suiteRoot);
 startupOrekitSuite();
 
 cfg = ScenarioConfig("Name", "Interop Demo", "Duration", hours(3), "TimeStep", seconds(60));
@@ -12,11 +14,13 @@ scenario = scenario.addObject(GroundStationObject( ...
 scenario = scenario.propagate();
 
 % Export Sat-1's trajectory as a CCSDS OEM file (readable by STK/GMAT).
-exportOEM(scenario, "Sat-1", "sat1.oem");
+oemFile = fullfile(tempdir, "sat1.oem");
+exportOEM(scenario, "Sat-1", oemFile);
+fprintf("Wrote %s\n", oemFile);
 
 % Re-import it as an ephemeris-driven satellite; propagation resamples
 % the file states instead of running a propagator.
-imported = loadOEMFile("sat1.oem", "Sat-1-FromFile");
+imported = loadOEMFile(oemFile, "Sat-1-FromFile");
 scenario = scenario.addObject(imported);
 scenario = scenario.propagate();
 

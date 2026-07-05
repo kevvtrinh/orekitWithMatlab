@@ -1,10 +1,13 @@
 %% Example 09: high-precision (HPOP-style) numerical propagation
+suiteRoot = fileparts(fileparts(mfilename("fullpath")));
+addpath(suiteRoot);
 startupOrekitSuite();
 
 cfg = ScenarioConfig("Name", "HPOP Demo", "Duration", hours(6), "TimeStep", seconds(60));
 scenario = MissionScenario(cfg);
 
-% Numerical propagation with 8x8 gravity, sun/moon, drag, and SRP.
+% Numerical propagation with sun/moon third-body, drag, and SRP (all on
+% by default); the gravity field is raised from the default 8x8 to 16x16.
 sat = SatelliteObject.fromKeplerian("Sat-HPOP", 6878e3, 0.001, 97.5, 0, 0, 0);
 sat.PropagatorType = "Numerical";
 sat.MassKg = 250;

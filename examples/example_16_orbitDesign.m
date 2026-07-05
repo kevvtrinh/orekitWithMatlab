@@ -1,4 +1,6 @@
 %% Example 16: orbit design wizard - SSO, GEO, Molniya, sensor-cone coverage
+suiteRoot = fileparts(fileparts(mfilename("fullpath")));
+addpath(suiteRoot);
 startupOrekitSuite();
 
 epoch = datetime(2026, 6, 1, 0, 0, 0, "TimeZone", "UTC");

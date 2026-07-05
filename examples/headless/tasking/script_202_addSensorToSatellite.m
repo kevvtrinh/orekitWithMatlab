@@ -1,4 +1,6 @@
 %% Script 202: add a sensor to a satellite
+suiteRoot = fileparts(fileparts(fileparts(fileparts(mfilename("fullpath")))));
+addpath(suiteRoot);
 startupOrekitSuite("InitializeOrekit", false);
 scenario = MissionScenario(ScenarioConfig("Name", "Add Sensor To Satellite"));
 sat = SatelliteObject.fromKeplerian("TaskSat", 7000e3, 0.001, 51.6, 0, 0, 0);

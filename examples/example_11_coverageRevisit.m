@@ -1,4 +1,6 @@
 %% Example 11: constellation coverage and revisit analysis
+suiteRoot = fileparts(fileparts(mfilename("fullpath")));
+addpath(suiteRoot);
 startupOrekitSuite();
 
 cfg = ScenarioConfig("Name", "Coverage Demo", "Duration", hours(12), "TimeStep", seconds(120));
@@ -16,4 +18,6 @@ fprintf("Worst revisit gap: %.1f minutes\n", coverage.Summary.WorstMaxGapMinutes
 
 plotCoverageMap(coverage, "CoveragePercent");
 plotCoverageMap(coverage, "MaxGapMinutes");
-exportCoverageReport(coverage, "coverage_report.csv");
+reportFile = fullfile(tempdir, "coverage_report.csv");
+exportCoverageReport(coverage, reportFile);
+fprintf("Wrote %s\n", reportFile);

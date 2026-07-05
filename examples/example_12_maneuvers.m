@@ -1,4 +1,6 @@
 %% Example 12: impulsive maneuvers - Hohmann orbit raise
+suiteRoot = fileparts(fileparts(mfilename("fullpath")));
+addpath(suiteRoot);
 startupOrekitSuite();
 
 cfg = ScenarioConfig("Name", "Maneuver Demo", "Duration", hours(6), "TimeStep", seconds(60));
@@ -7,8 +9,10 @@ scenario = MissionScenario(cfg);
 sat = SatelliteObject.fromKeplerian("Sat-1", 7000e3, 0.0, 51.6, 0, 0, 0);
 
 % Size the transfer, then attach the two along-track burns.
+% ManeuverPlanner.hohmann takes orbit RADII (not altitudes), matching the
+% 7000 km semi-major axis of the satellite above.
 plan = ManeuverPlanner.hohmann(7000e3, 7500e3);
-fprintf("Hohmann 7000 -> 7500 km: dv1=%.1f m/s, dv2=%.1f m/s, transfer=%.1f min\n", ...
+fprintf("Hohmann radius 7000 -> 7500 km: dv1=%.1f m/s, dv2=%.1f m/s, transfer=%.1f min\n", ...
     plan.DV1mps, plan.DV2mps, plan.TransferTimeSeconds / 60);
 
 burnStart = cfg.Epoch + hours(1);

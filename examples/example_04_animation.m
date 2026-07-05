@@ -1,4 +1,6 @@
 %% Example 04: animate a propagated scenario
+suiteRoot = fileparts(fileparts(mfilename("fullpath")));
+addpath(suiteRoot);
 startupOrekitSuite();
 
 cfg = ScenarioConfig("Name", "Animation Demo", ...

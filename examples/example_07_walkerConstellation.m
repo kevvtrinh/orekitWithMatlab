@@ -1,4 +1,6 @@
 %% Example 07: build and propagate a Walker constellation
+suiteRoot = fileparts(fileparts(mfilename("fullpath")));
+addpath(suiteRoot);
 startupOrekitSuite();
 
 cfg = ScenarioConfig("Name", "Walker Delta Demo", ...

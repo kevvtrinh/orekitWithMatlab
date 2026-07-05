@@ -1,4 +1,6 @@
 %% Script 221: mount one sensor on a satellite cube
+suiteRoot = fileparts(fileparts(fileparts(fileparts(mfilename("fullpath")))));
+addpath(suiteRoot);
 startupOrekitSuite("InitializeOrekit", false);
 scenario = MissionScenario(ScenarioConfig("Name", "One Mounted Sensor"));
 sat = SatelliteObject.fromKeplerian("MountSat", 7000e3, 0.001, 51.6, 0, 0, 0);

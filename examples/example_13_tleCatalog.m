@@ -1,4 +1,6 @@
 %% Example 13: load a TLE catalog (deck access style)
+suiteRoot = fileparts(fileparts(mfilename("fullpath")));
+addpath(suiteRoot);
 startupOrekitSuite();
 
 % Write a small demo catalog; in practice point loadTLEFile at a
