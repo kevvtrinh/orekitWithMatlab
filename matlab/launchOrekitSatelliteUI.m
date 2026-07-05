@@ -172,13 +172,16 @@ refreshAll();
         grid.RowSpacing = 6;
         grid.ColumnSpacing = 8;
 
-        btn = uibutton(grid, "Text", "Save", "ButtonPushedFcn", @saveScenarioCallback);
+        btn = uibutton(grid, "Text", "Save", "ButtonPushedFcn", @saveScenarioCallback, ...
+            "Tooltip", "Save the current scenario to a .mat file");
         btn.Layout.Row = 1;
         btn.Layout.Column = 1;
-        btn = uibutton(grid, "Text", "Load", "ButtonPushedFcn", @loadScenarioCallback);
+        btn = uibutton(grid, "Text", "Load", "ButtonPushedFcn", @loadScenarioCallback, ...
+            "Tooltip", "Load a scenario from a .mat file (replaces the current one)");
         btn.Layout.Row = 1;
         btn.Layout.Column = 2;
-        btn = uibutton(grid, "Text", "Close", "ButtonPushedFcn", @closeScenarioCallback);
+        btn = uibutton(grid, "Text", "Close", "ButtonPushedFcn", @closeScenarioCallback, ...
+            "Tooltip", "Clear all objects and reset to an empty scenario");
         btn.Layout.Row = 1;
         btn.Layout.Column = 3;
 
@@ -186,75 +189,90 @@ refreshAll();
         lbl.Layout.Row = 1;
         lbl.Layout.Column = 5;
         scenarioNameEdit = uieditfield(grid, "text", ...
-            "ValueChangedFcn", @applyScenarioConfigCallback);
+            "ValueChangedFcn", @applyScenarioConfigCallback, ...
+            "Placeholder", "Scenario name", ...
+            "Tooltip", "Display name for this scenario");
         scenarioNameEdit.Layout.Row = 1;
         scenarioNameEdit.Layout.Column = 6;
 
-        lbl = uilabel(grid, "Text", "Epoch UTC");
+        lbl = uilabel(grid, "Text", "Epoch (UTC)");
         lbl.Layout.Row = 1;
         lbl.Layout.Column = 7;
         epochEdit = uieditfield(grid, "text", ...
-            "ValueChangedFcn", @applyScenarioConfigCallback);
+            "ValueChangedFcn", @applyScenarioConfigCallback, ...
+            "Placeholder", "2026-01-01T00:00:00", ...
+            "Tooltip", "Scenario start time in UTC, e.g. 2026-01-01T00:00:00");
         epochEdit.Layout.Row = 1;
         epochEdit.Layout.Column = 8;
 
-        lbl = uilabel(grid, "Text", "Duration h");
+        lbl = uilabel(grid, "Text", "Duration (h)");
         lbl.Layout.Row = 1;
         lbl.Layout.Column = 9;
         durationHoursEdit = uieditfield(grid, "numeric", ...
-            "Limits", [0.001 Inf], "ValueChangedFcn", @applyScenarioConfigCallback);
+            "Limits", [0.001 Inf], "ValueChangedFcn", @applyScenarioConfigCallback, ...
+            "Tooltip", "Propagation span in hours, measured from the epoch");
         durationHoursEdit.Layout.Row = 1;
         durationHoursEdit.Layout.Column = 10;
 
         propagateButton = uibutton(grid, "Text", "Apply / Propagate", ...
-            "ButtonPushedFcn", @applyScenarioConfigCallback);
+            "ButtonPushedFcn", @applyScenarioConfigCallback, ...
+            "Tooltip", "Apply these settings and re-propagate all satellites");
         propagateButton.Layout.Row = [1 2];
         propagateButton.Layout.Column = 12;
 
-        lbl = uilabel(grid, "Text", "Step s");
+        lbl = uilabel(grid, "Text", "Step (s)");
         lbl.Layout.Row = 2;
         lbl.Layout.Column = 5;
         timeStepEdit = uieditfield(grid, "numeric", ...
-            "Limits", [0.001 Inf], "ValueChangedFcn", @applyScenarioConfigCallback);
+            "Limits", [0.001 Inf], "ValueChangedFcn", @applyScenarioConfigCallback, ...
+            "Tooltip", "Ephemeris output step in seconds (smaller = smoother, slower)");
         timeStepEdit.Layout.Row = 2;
         timeStepEdit.Layout.Column = 6;
 
-        lbl = uilabel(grid, "Text", "Stop UTC");
+        lbl = uilabel(grid, "Text", "Stop (UTC)");
         lbl.Layout.Row = 2;
         lbl.Layout.Column = 7;
-        stopTimeValue = uilabel(grid, "Text", "");
+        stopTimeValue = uilabel(grid, "Text", "", ...
+            "Tooltip", "Scenario end time (epoch + duration); computed automatically");
         stopTimeValue.Layout.Row = 2;
         stopTimeValue.Layout.Column = 8;
 
-        lbl = uilabel(grid, "Text", "Scenario UTC");
+        lbl = uilabel(grid, "Text", "Scenario (UTC)");
         lbl.Layout.Row = 2;
         lbl.Layout.Column = 9;
         scenarioTimeEdit = uieditfield(grid, "text", ...
-            "ValueChangedFcn", @scenarioTimeChanged);
+            "ValueChangedFcn", @scenarioTimeChanged, ...
+            "Placeholder", "2026-01-01T00:00:00", ...
+            "Tooltip", "Current display time (UTC). Type a time or drag the timeline slider");
         scenarioTimeEdit.Layout.Row = 2;
         scenarioTimeEdit.Layout.Column = [10 11];
 
         lbl = uilabel(grid, "Text", "JAR folder");
         lbl.Layout.Row = 3;
         lbl.Layout.Column = 1;
-        jarEdit = uieditfield(grid, "text", "Value", defaultJarRoot);
+        jarEdit = uieditfield(grid, "text", "Value", defaultJarRoot, ...
+            "Tooltip", "Folder containing the Orekit/Hipparchus .jar files");
         jarEdit.Layout.Row = 3;
         jarEdit.Layout.Column = [2 6];
-        btn = uibutton(grid, "Text", "Browse", "ButtonPushedFcn", @browseJarRoot);
+        btn = uibutton(grid, "Text", "Browse", "ButtonPushedFcn", @browseJarRoot, ...
+            "Tooltip", "Choose the folder containing the Orekit .jar files");
         btn.Layout.Row = 3;
         btn.Layout.Column = 7;
 
         lbl = uilabel(grid, "Text", "Data");
         lbl.Layout.Row = 3;
         lbl.Layout.Column = 8;
-        dataEdit = uieditfield(grid, "text", "Value", defaultDataRoot);
+        dataEdit = uieditfield(grid, "text", "Value", defaultDataRoot, ...
+            "Tooltip", "Orekit data folder (Earth orientation, leap seconds, ephemerides)");
         dataEdit.Layout.Row = 3;
         dataEdit.Layout.Column = [9 10];
-        btn = uibutton(grid, "Text", "Browse", "ButtonPushedFcn", @browseDataRoot);
+        btn = uibutton(grid, "Text", "Browse", "ButtonPushedFcn", @browseDataRoot, ...
+            "Tooltip", "Choose the orekit-data folder");
         btn.Layout.Row = 3;
         btn.Layout.Column = 11;
         btn = uibutton(grid, "Text", "Configure", ...
-            "ButtonPushedFcn", @configureOrekitCallback);
+            "ButtonPushedFcn", @configureOrekitCallback, ...
+            "Tooltip", "Start the Java/Orekit runtime using the folders above");
         btn.Layout.Row = 3;
         btn.Layout.Column = 12;
     end
@@ -267,7 +285,8 @@ refreshAll();
         grid.ColumnSpacing = 8;
 
         btn = uibutton(grid, "Text", "Satellite", ...
-            "ButtonPushedFcn", @openSatelliteDialog);
+            "ButtonPushedFcn", @openSatelliteDialog, ...
+            "Tooltip", "Add a satellite from Keplerian elements or a TLE");
         btn.Layout.Row = 1;
         btn.Layout.Column = 1;
         lbl = uilabel(grid, "Text", "Orbit object", ...
@@ -276,7 +295,8 @@ refreshAll();
         lbl.Layout.Column = 1;
 
         btn = uibutton(grid, "Text", "Place", ...
-            "ButtonPushedFcn", @openPlaceDialog);
+            "ButtonPushedFcn", @openPlaceDialog, ...
+            "Tooltip", "Add a fixed ground location (latitude/longitude/altitude)");
         btn.Layout.Row = 1;
         btn.Layout.Column = 2;
         lbl = uilabel(grid, "Text", "Earth object", ...
@@ -285,7 +305,8 @@ refreshAll();
         lbl.Layout.Column = 2;
 
         btn = uibutton(grid, "Text", "Constellation", ...
-            "ButtonPushedFcn", @openConstellationDialog);
+            "ButtonPushedFcn", @openConstellationDialog, ...
+            "Tooltip", "Add a group of satellites in a Walker-style pattern");
         btn.Layout.Row = 1;
         btn.Layout.Column = 3;
         lbl = uilabel(grid, "Text", "Orbit group", ...
@@ -294,27 +315,32 @@ refreshAll();
         lbl.Layout.Column = 3;
 
         btn = uibutton(grid, "Text", "Propagate", ...
-            "ButtonPushedFcn", @propagateScenarioCallback);
+            "ButtonPushedFcn", @propagateScenarioCallback, ...
+            "Tooltip", "Propagate all satellites over the scenario span");
         btn.Layout.Row = 1;
         btn.Layout.Column = 5;
 
         btn = uibutton(grid, "Text", "Access", ...
-            "ButtonPushedFcn", @computeAccessCallback);
+            "ButtonPushedFcn", @computeAccessCallback, ...
+            "Tooltip", "Compute access intervals for the Source/Target in the Properties panel");
         btn.Layout.Row = 1;
         btn.Layout.Column = 6;
 
         btn = uibutton(grid, "Text", "Focus", ...
-            "ButtonPushedFcn", @focusSelectedObject);
+            "ButtonPushedFcn", @focusSelectedObject, ...
+            "Tooltip", "Center the 3D view on the selected object");
         btn.Layout.Row = 1;
         btn.Layout.Column = 7;
 
         btn = uibutton(grid, "Text", "Export", ...
-            "ButtonPushedFcn", @exportToWorkspace);
+            "ButtonPushedFcn", @exportToWorkspace, ...
+            "Tooltip", "Export the scenario to a variable in the MATLAB workspace");
         btn.Layout.Row = 1;
         btn.Layout.Column = 9;
 
         btn = uibutton(grid, "Text", "Configure", ...
-            "ButtonPushedFcn", @configureOrekitCallback);
+            "ButtonPushedFcn", @configureOrekitCallback, ...
+            "Tooltip", "Start the Java/Orekit runtime (required before propagating)");
         btn.Layout.Row = 1;
         btn.Layout.Column = 11;
     end
@@ -322,52 +348,61 @@ refreshAll();
     function buildViewRibbon(parent)
         grid = uigridlayout(parent, [2 15]);
         grid.RowHeight = {56, 22};
-        grid.ColumnWidth = {102, 102, 90, 14, 112, 92, 76, 96, 82, 82, 82, 96, 104, 74, "1x"};
+        grid.ColumnWidth = {102, 102, 90, 14, 112, 92, 76, 96, 82, 82, 82, 96, 104, 92, "1x"};
         grid.Padding = [10 8 10 6];
         grid.ColumnSpacing = 8;
 
         btn = uibutton(grid, "Text", "2D Window", ...
-            "ButtonPushedFcn", @(~, ~) selectView(mapTab));
+            "ButtonPushedFcn", @(~, ~) selectView(mapTab), ...
+            "Tooltip", "Show the 2D ground-track map");
         btn.Layout.Row = 1;
         btn.Layout.Column = 1;
 
         btn = uibutton(grid, "Text", "3D Window", ...
-            "ButtonPushedFcn", @(~, ~) selectView(globeTab));
+            "ButtonPushedFcn", @(~, ~) selectView(globeTab), ...
+            "Tooltip", "Show the 3D Earth view");
         btn.Layout.Row = 1;
         btn.Layout.Column = 2;
 
         btn = uibutton(grid, "Text", "Refresh", ...
-            "ButtonPushedFcn", @refreshViewsCallback);
+            "ButtonPushedFcn", @refreshViewsCallback, ...
+            "Tooltip", "Redraw the 2D and 3D views from the current ephemeris");
         btn.Layout.Row = 1;
         btn.Layout.Column = 3;
 
         showTrackCheck = uicheckbox(grid, "Text", "Ground tracks", ...
-            "Value", true, "ValueChangedFcn", @refreshViewsCallback);
+            "Value", true, "ValueChangedFcn", @refreshViewsCallback, ...
+            "Tooltip", "Draw sub-satellite ground tracks on the 2D map");
         showTrackCheck.Layout.Row = 1;
         showTrackCheck.Layout.Column = 5;
 
         showOrbitCheck = uicheckbox(grid, "Text", "3D paths", ...
-            "Value", true, "ValueChangedFcn", @refreshViewsCallback);
+            "Value", true, "ValueChangedFcn", @refreshViewsCallback, ...
+            "Tooltip", "Draw orbit trajectories in the 3D view");
         showOrbitCheck.Layout.Row = 1;
         showOrbitCheck.Layout.Column = 6;
 
         showPlacesCheck = uicheckbox(grid, "Text", "Places", ...
-            "Value", true, "ValueChangedFcn", @refreshViewsCallback);
+            "Value", true, "ValueChangedFcn", @refreshViewsCallback, ...
+            "Tooltip", "Draw places, targets, and ground stations");
         showPlacesCheck.Layout.Row = 1;
         showPlacesCheck.Layout.Column = 7;
 
         showSensorFovCheck = uicheckbox(grid, "Text", "Sensor FOV", ...
-            "Value", false, "ValueChangedFcn", @refreshViewsCallback);
+            "Value", false, "ValueChangedFcn", @refreshViewsCallback, ...
+            "Tooltip", "Project the instantaneous sensor field-of-view footprint at the current scenario time");
         showSensorFovCheck.Layout.Row = 2;
         showSensorFovCheck.Layout.Column = 5;
 
         showSensorForCheck = uicheckbox(grid, "Text", "Sensor FOR", ...
-            "Value", false, "ValueChangedFcn", @refreshViewsCallback);
+            "Value", false, "ValueChangedFcn", @refreshViewsCallback, ...
+            "Tooltip", "Project the sensor field-of-regard footprint (full envelope reachable by slewing)");
         showSensorForCheck.Layout.Row = 2;
         showSensorForCheck.Layout.Column = 6;
 
         frame3DDrop = uidropdown(grid, "Items", {'ECEF', 'ECI'}, ...
-            "Value", "ECEF", "ValueChangedFcn", @refreshViewsCallback);
+            "Value", "ECEF", "ValueChangedFcn", @refreshViewsCallback, ...
+            "Tooltip", "3D display frame: ECEF (Earth-fixed) or ECI (inertial)");
         frame3DDrop.Layout.Row = 1;
         frame3DDrop.Layout.Column = 8;
         frameLabel = uilabel(grid, "Text", "3D frame", ...
@@ -376,37 +411,43 @@ refreshAll();
         frameLabel.Layout.Column = 8;
 
         btn = uibutton(grid, "Text", "Start", ...
-            "ButtonPushedFcn", @startAnimation);
+            "ButtonPushedFcn", @startAnimation, ...
+            "Tooltip", "Play the scenario clock forward at the animation step");
         btn.Layout.Row = 1;
         btn.Layout.Column = 9;
 
         btn = uibutton(grid, "Text", "Stop", ...
-            "ButtonPushedFcn", @stopAnimation);
+            "ButtonPushedFcn", @stopAnimation, ...
+            "Tooltip", "Pause the animation at the current scenario time");
         btn.Layout.Row = 1;
         btn.Layout.Column = 10;
 
         btn = uibutton(grid, "Text", "Reset", ...
-            "ButtonPushedFcn", @resetAnimation);
+            "ButtonPushedFcn", @resetAnimation, ...
+            "Tooltip", "Stop the animation and reset scenario time to the epoch");
         btn.Layout.Row = 1;
         btn.Layout.Column = 11;
 
         btn = uibutton(grid, "Text", "Step Back", ...
-            "ButtonPushedFcn", @(~, ~) stepScenarioTime(-1));
+            "ButtonPushedFcn", @(~, ~) stepScenarioTime(-1), ...
+            "Tooltip", "Step scenario time backward by one animation step");
         btn.Layout.Row = 1;
         btn.Layout.Column = 12;
 
         btn = uibutton(grid, "Text", "Step Forward", ...
-            "ButtonPushedFcn", @(~, ~) stepScenarioTime(1));
+            "ButtonPushedFcn", @(~, ~) stepScenarioTime(1), ...
+            "Tooltip", "Step scenario time forward by one animation step");
         btn.Layout.Row = 1;
         btn.Layout.Column = 13;
 
         animationStepEdit = uieditfield(grid, "numeric", ...
             "Value", seconds(scenario.Config.AnimationStep), ...
             "Limits", [0.001 Inf], ...
-            "ValueChangedFcn", @animationStepChanged);
+            "ValueChangedFcn", @animationStepChanged, ...
+            "Tooltip", "Scenario seconds advanced per animation frame");
         animationStepEdit.Layout.Row = 1;
         animationStepEdit.Layout.Column = 14;
-        lbl = uilabel(grid, "Text", "Anim s", ...
+        lbl = uilabel(grid, "Text", "Anim step (s)", ...
             "HorizontalAlignment", "center");
         lbl.Layout.Row = 2;
         lbl.Layout.Column = 14;
@@ -420,7 +461,8 @@ refreshAll();
         grid.ColumnSpacing = 8;
 
         sensorParentDrop = uidropdown(grid, "Items", {'<none>'}, ...
-            "ValueChangedFcn", @sensorParentChanged);
+            "ValueChangedFcn", @sensorParentChanged, ...
+            "Tooltip", "Satellite or ground object the sensor is mounted on");
         sensorParentDrop.Layout.Row = 1;
         sensorParentDrop.Layout.Column = 1;
         lbl = uilabel(grid, "Text", "Parent object", ...
@@ -428,7 +470,8 @@ refreshAll();
         lbl.Layout.Row = 2;
         lbl.Layout.Column = 1;
 
-        sensorDrop = uidropdown(grid, "Items", {'<none>'});
+        sensorDrop = uidropdown(grid, "Items", {'<none>'}, ...
+            "Tooltip", "Sensor on the parent object to analyze or delete");
         sensorDrop.Layout.Row = 1;
         sensorDrop.Layout.Column = 2;
         lbl = uilabel(grid, "Text", "Sensor", ...
@@ -436,7 +479,8 @@ refreshAll();
         lbl.Layout.Row = 2;
         lbl.Layout.Column = 2;
 
-        sensorTargetDrop = uidropdown(grid, "Items", {'<none>'});
+        sensorTargetDrop = uidropdown(grid, "Items", {'<none>'}, ...
+            "Tooltip", "Object the sensor observes for access computation");
         sensorTargetDrop.Layout.Row = 1;
         sensorTargetDrop.Layout.Column = 3;
         lbl = uilabel(grid, "Text", "Target object", ...
@@ -445,37 +489,44 @@ refreshAll();
         lbl.Layout.Column = 3;
 
         btn = uibutton(grid, "Text", "Add Sensor", ...
-            "ButtonPushedFcn", @openSensorDialog);
+            "ButtonPushedFcn", @openSensorDialog, ...
+            "Tooltip", "Define a new sensor (shape, half-angles, mount, range) on a parent object");
         btn.Layout.Row = 1;
         btn.Layout.Column = 5;
 
         btn = uibutton(grid, "Text", "Delete", ...
-            "ButtonPushedFcn", @deleteSensorCallback);
+            "ButtonPushedFcn", @deleteSensorCallback, ...
+            "Tooltip", "Remove the selected sensor from its parent object");
         btn.Layout.Row = 1;
         btn.Layout.Column = 6;
 
         btn = uibutton(grid, "Text", "Compute Access", ...
-            "ButtonPushedFcn", @computeSensorAccessCallback);
+            "ButtonPushedFcn", @computeSensorAccessCallback, ...
+            "Tooltip", "Compute windows where the target is inside the sensor's pointing and range limits");
         btn.Layout.Row = 1;
         btn.Layout.Column = 7;
 
         btn = uibutton(grid, "Text", "Timeline", ...
-            "ButtonPushedFcn", @plotSensorTimelineCallback);
+            "ButtonPushedFcn", @plotSensorTimelineCallback, ...
+            "Tooltip", "Plot access windows from the last sensor access computation");
         btn.Layout.Row = 1;
         btn.Layout.Column = 8;
 
         btn = uibutton(grid, "Text", "Off-Boresight", ...
-            "ButtonPushedFcn", @plotOffBoresightCallback);
+            "ButtonPushedFcn", @plotOffBoresightCallback, ...
+            "Tooltip", "Plot target angle from the sensor boresight vs. time (last computed access)");
         btn.Layout.Row = 1;
         btn.Layout.Column = 9;
 
         btn = uibutton(grid, "Text", "Range", ...
-            "ButtonPushedFcn", @plotSensorRangeCallback);
+            "ButtonPushedFcn", @plotSensorRangeCallback, ...
+            "Tooltip", "Plot sensor-to-target range vs. time (last computed access)");
         btn.Layout.Row = 1;
         btn.Layout.Column = 10;
 
         btn = uibutton(grid, "Text", "Export Report", ...
-            "ButtonPushedFcn", @exportSensorAccessCallback);
+            "ButtonPushedFcn", @exportSensorAccessCallback, ...
+            "Tooltip", "Write the last sensor access result to a CSV report");
         btn.Layout.Row = 1;
         btn.Layout.Column = 12;
     end
@@ -488,7 +539,8 @@ refreshAll();
         grid.ColumnSpacing = 8;
 
         btn = uibutton(grid, "Text", "Point Target", ...
-            "ButtonPushedFcn", @openTargetDialog);
+            "ButtonPushedFcn", @openTargetDialog, ...
+            "Tooltip", "Add a fixed ground target (latitude/longitude/altitude)");
         btn.Layout.Row = 1;
         btn.Layout.Column = 1;
         lbl = uilabel(grid, "Text", "Fixed point", "HorizontalAlignment", "center");
@@ -496,17 +548,20 @@ refreshAll();
         lbl.Layout.Column = 1;
 
         btn = uibutton(grid, "Text", "Delete", ...
-            "ButtonPushedFcn", @deleteSelectedObject);
+            "ButtonPushedFcn", @deleteSelectedObject, ...
+            "Tooltip", "Remove the object selected in the Object Browser");
         btn.Layout.Row = 1;
         btn.Layout.Column = 2;
 
         btn = uibutton(grid, "Text", "Focus", ...
-            "ButtonPushedFcn", @focusSelectedObject);
+            "ButtonPushedFcn", @focusSelectedObject, ...
+            "Tooltip", "Center the 3D view on the selected object");
         btn.Layout.Row = 1;
         btn.Layout.Column = 3;
 
         btn = uibutton(grid, "Text", "Compute Access", ...
-            "ButtonPushedFcn", @computeAccessCallback);
+            "ButtonPushedFcn", @computeAccessCallback, ...
+            "Tooltip", "Compute access for the Source/Target pair set in the Properties panel");
         btn.Layout.Row = 1;
         btn.Layout.Column = 5;
     end
@@ -519,7 +574,8 @@ refreshAll();
         grid.ColumnSpacing = 8;
 
         btn = uibutton(grid, "Text", "Polygon Area", ...
-            "ButtonPushedFcn", @openAreaTargetDialog);
+            "ButtonPushedFcn", @openAreaTargetDialog, ...
+            "Tooltip", "Add a polygon area target defined by latitude/longitude vertices");
         btn.Layout.Row = 1;
         btn.Layout.Column = 1;
         lbl = uilabel(grid, "Text", "Grid target", "HorizontalAlignment", "center");
@@ -527,17 +583,20 @@ refreshAll();
         lbl.Layout.Column = 1;
 
         btn = uibutton(grid, "Text", "Plot Area", ...
-            "ButtonPushedFcn", @plotSelectedAreaTargetCallback);
+            "ButtonPushedFcn", @plotSelectedAreaTargetCallback, ...
+            "Tooltip", "Draw the selected area target and its grid points in the 2D window");
         btn.Layout.Row = 1;
         btn.Layout.Column = 2;
 
         btn = uibutton(grid, "Text", "Focus", ...
-            "ButtonPushedFcn", @focusSelectedObject);
+            "ButtonPushedFcn", @focusSelectedObject, ...
+            "Tooltip", "Center the 3D view on the selected object");
         btn.Layout.Row = 1;
         btn.Layout.Column = 3;
 
         btn = uibutton(grid, "Text", "Generate Grid", ...
-            "ButtonPushedFcn", @generateSelectedAreaGridCallback);
+            "ButtonPushedFcn", @generateSelectedAreaGridCallback, ...
+            "Tooltip", "Sample the selected polygon into coverage grid points at its grid resolution");
         btn.Layout.Row = 1;
         btn.Layout.Column = 5;
     end
@@ -551,42 +610,48 @@ refreshAll();
 
         taskTypeDrop = uidropdown(grid, "Items", ...
             {'TrackPointTarget', 'ScanAreaTarget', 'MultiSensorTrackPointTarget', 'MultiSensorScanAreaTarget'}, ...
-            "Value", "TrackPointTarget");
+            "Value", "TrackPointTarget", ...
+            "Tooltip", "Observation type; MultiSensor variants require two sensors");
         taskTypeDrop.Layout.Row = 1;
         taskTypeDrop.Layout.Column = 1;
         lbl = uilabel(grid, "Text", "Task type", "HorizontalAlignment", "center");
         lbl.Layout.Row = 2;
         lbl.Layout.Column = 1;
 
-        taskTargetDrop = uidropdown(grid, "Items", {'<none>'});
+        taskTargetDrop = uidropdown(grid, "Items", {'<none>'}, ...
+            "Tooltip", "Point or area target this task must observe");
         taskTargetDrop.Layout.Row = 1;
         taskTargetDrop.Layout.Column = 2;
         lbl = uilabel(grid, "Text", "Target", "HorizontalAlignment", "center");
         lbl.Layout.Row = 2;
         lbl.Layout.Column = 2;
 
-        taskSensorDrop = uidropdown(grid, "Items", {'<any>'});
+        taskSensorDrop = uidropdown(grid, "Items", {'<any>'}, ...
+            "Tooltip", "Restrict the task to one sensor, or <any> to let the scheduler choose");
         taskSensorDrop.Layout.Row = 1;
         taskSensorDrop.Layout.Column = 3;
         lbl = uilabel(grid, "Text", "Allowed sensor", "HorizontalAlignment", "center");
         lbl.Layout.Row = 2;
         lbl.Layout.Column = 3;
 
-        taskPriorityEdit = uieditfield(grid, "numeric", "Value", 5, "Limits", [0 Inf]);
+        taskPriorityEdit = uieditfield(grid, "numeric", "Value", 5, "Limits", [0 Inf], ...
+            "Tooltip", "Task priority; higher values are scheduled first");
         taskPriorityEdit.Layout.Row = 1;
         taskPriorityEdit.Layout.Column = 4;
         lbl = uilabel(grid, "Text", "Priority", "HorizontalAlignment", "center");
         lbl.Layout.Row = 2;
         lbl.Layout.Column = 4;
 
-        taskDwellEdit = uieditfield(grid, "numeric", "Value", 120, "Limits", [0 Inf]);
+        taskDwellEdit = uieditfield(grid, "numeric", "Value", 120, "Limits", [0 Inf], ...
+            "Tooltip", "Minimum continuous observation time required, in seconds");
         taskDwellEdit.Layout.Row = 1;
         taskDwellEdit.Layout.Column = 5;
-        lbl = uilabel(grid, "Text", "Dwell s", "HorizontalAlignment", "center");
+        lbl = uilabel(grid, "Text", "Dwell (s)", "HorizontalAlignment", "center");
         lbl.Layout.Row = 2;
         lbl.Layout.Column = 5;
 
-        taskCoverageEdit = uieditfield(grid, "numeric", "Value", 25, "Limits", [0 100]);
+        taskCoverageEdit = uieditfield(grid, "numeric", "Value", 25, "Limits", [0 100], ...
+            "Tooltip", "Minimum percent of the area target that must be covered (area-scan tasks)");
         taskCoverageEdit.Layout.Row = 1;
         taskCoverageEdit.Layout.Column = 6;
         lbl = uilabel(grid, "Text", "Coverage %", "HorizontalAlignment", "center");
@@ -594,22 +659,26 @@ refreshAll();
         lbl.Layout.Column = 6;
 
         btn = uibutton(grid, "Text", "Add Task", ...
-            "ButtonPushedFcn", @addSensorTaskCallback);
+            "ButtonPushedFcn", @addSensorTaskCallback, ...
+            "Tooltip", "Add this tasking request to the task list");
         btn.Layout.Row = 1;
         btn.Layout.Column = 8;
 
         btn = uibutton(grid, "Text", "Clear Tasks", ...
-            "ButtonPushedFcn", @clearSensorTasksCallback);
+            "ButtonPushedFcn", @clearSensorTasksCallback, ...
+            "Tooltip", "Remove all tasks, candidates, conflicts, and the schedule");
         btn.Layout.Row = 1;
         btn.Layout.Column = 9;
 
         btn = uibutton(grid, "Text", "Generate", ...
-            "ButtonPushedFcn", @generateTaskCandidatesCallback);
+            "ButtonPushedFcn", @generateTaskCandidatesCallback, ...
+            "Tooltip", "Compute candidate observation windows for every task (field-of-regard gated)");
         btn.Layout.Row = 1;
         btn.Layout.Column = 10;
 
         btn = uibutton(grid, "Text", "Schedule", ...
-            "ButtonPushedFcn", @runGreedySchedulerCallback);
+            "ButtonPushedFcn", @runGreedySchedulerCallback, ...
+            "Tooltip", "Run the greedy scheduler (priority, then quality) over the candidates");
         btn.Layout.Row = 1;
         btn.Layout.Column = 12;
     end
@@ -622,27 +691,32 @@ refreshAll();
         grid.ColumnSpacing = 8;
 
         btn = uibutton(grid, "Text", "Generate Candidates", ...
-            "ButtonPushedFcn", @generateTaskCandidatesCallback);
+            "ButtonPushedFcn", @generateTaskCandidatesCallback, ...
+            "Tooltip", "Compute candidate observation windows for every sensor task");
         btn.Layout.Row = 1;
         btn.Layout.Column = 1;
 
         btn = uibutton(grid, "Text", "Detect Conflicts", ...
-            "ButtonPushedFcn", @detectTaskConflictsCallback);
+            "ButtonPushedFcn", @detectTaskConflictsCallback, ...
+            "Tooltip", "Find candidate pairs that overlap or violate slew/transition gaps");
         btn.Layout.Row = 1;
         btn.Layout.Column = 2;
 
         btn = uibutton(grid, "Text", "Greedy Schedule", ...
-            "ButtonPushedFcn", @runGreedySchedulerCallback);
+            "ButtonPushedFcn", @runGreedySchedulerCallback, ...
+            "Tooltip", "Build a conflict-free schedule, taking higher-priority candidates first");
         btn.Layout.Row = 1;
         btn.Layout.Column = 3;
 
         btn = uibutton(grid, "Text", "Timeline", ...
-            "ButtonPushedFcn", @plotTaskTimelineCallback);
+            "ButtonPushedFcn", @plotTaskTimelineCallback, ...
+            "Tooltip", "Plot the scheduled tasks per sensor over time");
         btn.Layout.Row = 1;
         btn.Layout.Column = 4;
 
         btn = uibutton(grid, "Text", "Export MILP", ...
-            "ButtonPushedFcn", @exportMilpInputsCallback);
+            "ButtonPushedFcn", @exportMilpInputsCallback, ...
+            "Tooltip", "Write candidates, conflicts, and tasks as CSV inputs for an external MILP solver");
         btn.Layout.Row = 1;
         btn.Layout.Column = 5;
     end
@@ -654,7 +728,8 @@ refreshAll();
         grid.Padding = [10 8 10 6];
         grid.ColumnSpacing = 8;
 
-        coverageTargetDrop = uidropdown(grid, "Items", {'<none>'});
+        coverageTargetDrop = uidropdown(grid, "Items", {'<none>'}, ...
+            "Tooltip", "Area target whose polygon and grid to display");
         coverageTargetDrop.Layout.Row = 1;
         coverageTargetDrop.Layout.Column = 1;
         lbl = uilabel(grid, "Text", "Area target", "HorizontalAlignment", "center");
@@ -662,12 +737,14 @@ refreshAll();
         lbl.Layout.Column = 1;
 
         btn = uibutton(grid, "Text", "Plot Area", ...
-            "ButtonPushedFcn", @plotCoverageCallback);
+            "ButtonPushedFcn", @plotCoverageCallback, ...
+            "Tooltip", "Draw the area target and its grid points in the 2D window");
         btn.Layout.Row = 1;
         btn.Layout.Column = 2;
 
         btn = uibutton(grid, "Text", "Timeline", ...
-            "ButtonPushedFcn", @plotTaskTimelineCallback);
+            "ButtonPushedFcn", @plotTaskTimelineCallback, ...
+            "Tooltip", "Plot the scheduled tasks per sensor over time");
         btn.Layout.Row = 1;
         btn.Layout.Column = 3;
     end
@@ -683,36 +760,43 @@ refreshAll();
         lbl = uilabel(grid, "Text", "Satellite");
         lbl.Layout.Row = 1;
         lbl.Layout.Column = 1;
-        analysisSatelliteDrop = uidropdown(grid, "Items", {'<none>'});
+        analysisSatelliteDrop = uidropdown(grid, "Items", {'<none>'}, ...
+            "Tooltip", "Satellite used by Eclipse Timeline, Orbital Elements, and Export OEM");
         analysisSatelliteDrop.Layout.Row = 1;
         analysisSatelliteDrop.Layout.Column = 2;
 
         btn = uibutton(grid, "Text", "Eclipse Timeline", ...
-            "ButtonPushedFcn", @eclipseTimelineCallback);
+            "ButtonPushedFcn", @eclipseTimelineCallback, ...
+            "Tooltip", "Plot umbra/penumbra/sunlight intervals for the selected satellite");
         btn.Layout.Row = 1;
         btn.Layout.Column = 4;
         btn = uibutton(grid, "Text", "Orbital Elements", ...
-            "ButtonPushedFcn", @orbitalElementsCallback);
+            "ButtonPushedFcn", @orbitalElementsCallback, ...
+            "Tooltip", "Plot osculating element history over the scenario span");
         btn.Layout.Row = 1;
         btn.Layout.Column = 5;
         btn = uibutton(grid, "Text", "Export OEM...", ...
-            "ButtonPushedFcn", @exportOemCallback);
+            "ButtonPushedFcn", @exportOemCallback, ...
+            "Tooltip", "Write the selected satellite's ephemeris to a CCSDS OEM file");
         btn.Layout.Row = 1;
         btn.Layout.Column = 6;
 
         lbl = uilabel(grid, "Text", "Station");
         lbl.Layout.Row = 2;
         lbl.Layout.Column = 1;
-        analysisStationDrop = uidropdown(grid, "Items", {'<none>'});
+        analysisStationDrop = uidropdown(grid, "Items", {'<none>'}, ...
+            "Tooltip", "Ground station used by Deck Access");
         analysisStationDrop.Layout.Row = 2;
         analysisStationDrop.Layout.Column = 2;
 
         btn = uibutton(grid, "Text", "Deck Access", ...
-            "ButtonPushedFcn", @deckAccessCallback);
+            "ButtonPushedFcn", @deckAccessCallback, ...
+            "Tooltip", "Tabulate access windows from the selected station to every satellite");
         btn.Layout.Row = 2;
         btn.Layout.Column = 4;
         btn = uibutton(grid, "Text", "Global Coverage", ...
-            "ButtonPushedFcn", @globalCoverageCallback);
+            "ButtonPushedFcn", @globalCoverageCallback, ...
+            "Tooltip", "Map constellation coverage on a global 6-deg grid (5-deg min elevation)");
         btn.Layout.Row = 2;
         btn.Layout.Column = 5;
     end
@@ -842,14 +926,16 @@ refreshAll();
         grid.ColumnSpacing = 8;
 
         viewerSatelliteDrop = uidropdown(grid, "Items", {'<none>'}, ...
-            "ValueChangedFcn", @viewerSatelliteChanged);
+            "ValueChangedFcn", @viewerSatelliteChanged, ...
+            "Tooltip", "Satellite whose body and sensors to draw");
         viewerSatelliteDrop.Layout.Row = 1;
         viewerSatelliteDrop.Layout.Column = 1;
         lbl = uilabel(grid, "Text", "Satellite", "HorizontalAlignment", "center");
         lbl.Layout.Row = 2;
         lbl.Layout.Column = 1;
 
-        viewerSensorDrop = uidropdown(grid, "Items", {'<all>'});
+        viewerSensorDrop = uidropdown(grid, "Items", {'<all>'}, ...
+            "Tooltip", "Draw one sensor, or <all> for every sensor on the satellite");
         viewerSensorDrop.Layout.Row = 1;
         viewerSensorDrop.Layout.Column = 2;
         lbl = uilabel(grid, "Text", "Sensor", "HorizontalAlignment", "center");
@@ -871,20 +957,24 @@ refreshAll();
         viewerShowBoresightCheck = uicheckbox(grid, "Text", "Boresight", "Value", true);
         viewerShowBoresightCheck.Layout.Row = 1;
         viewerShowBoresightCheck.Layout.Column = 7;
-        viewerShowFOVCheck = uicheckbox(grid, "Text", "FOV", "Value", true);
+        viewerShowFOVCheck = uicheckbox(grid, "Text", "FOV", "Value", true, ...
+            "Tooltip", "Draw the instantaneous field-of-view cone");
         viewerShowFOVCheck.Layout.Row = 1;
         viewerShowFOVCheck.Layout.Column = 8;
 
-        viewerShowFORCheck = uicheckbox(grid, "Text", "FOR", "Value", false);
+        viewerShowFORCheck = uicheckbox(grid, "Text", "FOR", "Value", false, ...
+            "Tooltip", "Draw the field-of-regard envelope (full range reachable by slewing)");
         viewerShowFORCheck.Layout.Row = 1;
         viewerShowFORCheck.Layout.Column = 9;
-        viewerFOVScaleEdit = uieditfield(grid, "numeric", "Value", 1.5, "Limits", [0.1 Inf]);
+        viewerFOVScaleEdit = uieditfield(grid, "numeric", "Value", 1.5, "Limits", [0.1 Inf], ...
+            "Tooltip", "Drawn FOV cone length relative to the body size (display only)");
         viewerFOVScaleEdit.Layout.Row = 1;
         viewerFOVScaleEdit.Layout.Column = 10;
         lbl = uilabel(grid, "Text", "FOV scale", "HorizontalAlignment", "center");
         lbl.Layout.Row = 2;
         lbl.Layout.Column = 10;
-        viewerFORScaleEdit = uieditfield(grid, "numeric", "Value", 2.5, "Limits", [0.1 Inf]);
+        viewerFORScaleEdit = uieditfield(grid, "numeric", "Value", 2.5, "Limits", [0.1 Inf], ...
+            "Tooltip", "Drawn FOR envelope length relative to the body size (display only)");
         viewerFORScaleEdit.Layout.Row = 1;
         viewerFORScaleEdit.Layout.Column = 12;
         lbl = uilabel(grid, "Text", "FOR scale", "HorizontalAlignment", "center");
@@ -892,7 +982,8 @@ refreshAll();
         lbl.Layout.Column = 12;
 
         btn = uibutton(grid, "Text", "Refresh Viewer", ...
-            "ButtonPushedFcn", @refreshSensorViewerCallback);
+            "ButtonPushedFcn", @refreshSensorViewerCallback, ...
+            "Tooltip", "Redraw the satellite/sensor view with the options above");
         btn.Layout.Row = 1;
         btn.Layout.Column = 13;
     end
@@ -909,7 +1000,8 @@ refreshAll();
         objectTree.SelectionChangedFcn = @onObjectSelected;
 
         btn = uibutton(grid, "Text", "Delete Selected", ...
-            "ButtonPushedFcn", @deleteSelectedObject);
+            "ButtonPushedFcn", @deleteSelectedObject, ...
+            "Tooltip", "Remove the object selected in the tree from the scenario");
         btn.Layout.Row = 2;
     end
 
@@ -926,7 +1018,8 @@ refreshAll();
         grid.Padding = [4 4 4 4];
         mapAxes = uiaxes(grid);
         mapAxes.Layout.Row = 1;
-        timeSlider = uislider(grid, "ValueChangedFcn", @timeSliderChanged);
+        timeSlider = uislider(grid, "ValueChangedFcn", @timeSliderChanged, ...
+            "Tooltip", "Scenario time: seconds past the epoch (drag to scrub)");
         timeSlider.Layout.Row = 2;
 
         grid = uigridlayout(globeTab, [1 1]);
@@ -951,7 +1044,8 @@ refreshAll();
         selectedLabel.Layout.Row = 1;
         selectedLabel.Layout.Column = [1 2];
 
-        objectInfoText = uitextarea(grid, "Editable", "off");
+        objectInfoText = uitextarea(grid, "Editable", "off", ...
+            "Value", {'Select an object in the browser to view its properties.'});
         objectInfoText.Layout.Row = 2;
         objectInfoText.Layout.Column = [1 2];
 
@@ -962,19 +1056,22 @@ refreshAll();
         lbl = uilabel(grid, "Text", "Source");
         lbl.Layout.Row = 4;
         lbl.Layout.Column = 1;
-        accessSourceDrop = uidropdown(grid, "Items", {'<none>'});
+        accessSourceDrop = uidropdown(grid, "Items", {'<none>'}, ...
+            "Tooltip", "Observing object (usually a satellite or sensor)");
         accessSourceDrop.Layout.Row = 4;
         accessSourceDrop.Layout.Column = 2;
 
         lbl = uilabel(grid, "Text", "Target");
         lbl.Layout.Row = 5;
         lbl.Layout.Column = 1;
-        accessTargetDrop = uidropdown(grid, "Items", {'<none>'});
+        accessTargetDrop = uidropdown(grid, "Items", {'<none>'}, ...
+            "Tooltip", "Object being observed (place, target, or satellite)");
         accessTargetDrop.Layout.Row = 5;
         accessTargetDrop.Layout.Column = 2;
 
         btn = uibutton(grid, "Text", "Compute Access", ...
-            "ButtonPushedFcn", @computeAccessCallback);
+            "ButtonPushedFcn", @computeAccessCallback, ...
+            "Tooltip", "Find line-of-sight windows between Source and Target");
         btn.Layout.Row = 6;
         btn.Layout.Column = [1 2];
 
@@ -982,22 +1079,26 @@ refreshAll();
         lbl.Layout.Row = 7;
         lbl.Layout.Column = [1 2];
 
-        accessSummaryText = uitextarea(grid, "Editable", "off");
+        accessSummaryText = uitextarea(grid, "Editable", "off", ...
+            "Value", {'Choose a Source and Target, then Compute Access.'});
         accessSummaryText.Layout.Row = 8;
         accessSummaryText.Layout.Column = [1 2];
 
         btn = uibutton(grid, "Text", "Export Scenario To Workspace", ...
-            "ButtonPushedFcn", @exportToWorkspace);
+            "ButtonPushedFcn", @exportToWorkspace, ...
+            "Tooltip", "Export the scenario to a variable in the MATLAB workspace");
         btn.Layout.Row = 9;
         btn.Layout.Column = [1 2];
 
         btn = uibutton(grid, "Text", "Export Ephemeris CSVs", ...
-            "ButtonPushedFcn", @exportEphemerisCallback);
+            "ButtonPushedFcn", @exportEphemerisCallback, ...
+            "Tooltip", "Write per-satellite ephemeris (time, position, velocity) to CSV files");
         btn.Layout.Row = 10;
         btn.Layout.Column = [1 2];
 
-        statusLabel = uilabel(grid, "Text", "Orekit not configured", ...
-            "FontColor", [0.55 0.18 0.08]);
+        statusLabel = uilabel(grid, "Text", "Orekit not configured - click Configure", ...
+            "FontColor", [0.55 0.18 0.08], ...
+            "Tooltip", "Runtime and last-action status");
         statusLabel.Layout.Row = 11;
         statusLabel.Layout.Column = [1 2];
     end
@@ -1037,6 +1138,7 @@ refreshAll();
         try
             configureOrekit();
         catch err
+            setStatus("Orekit configuration failed", [0.55 0.18 0.08]);
             uialert(fig, getReport(err, "extended", "hyperlinks", "off"), ...
                 "Orekit configuration failed");
         end
@@ -1067,6 +1169,7 @@ refreshAll();
                 refreshAll();
             end
         catch err
+            setStatus("Scenario update failed", [0.55 0.18 0.08]);
             uialert(fig, getReport(err, "extended", "hyperlinks", "off"), ...
                 "Scenario update failed");
             updateScenarioControls();
@@ -1079,6 +1182,7 @@ refreshAll();
             applyScenarioConfig();
             propagateScenarioInternal();
         catch err
+            setStatus("Propagation failed", [0.55 0.18 0.08]);
             uialert(fig, getReport(err, "extended", "hyperlinks", "off"), ...
                 "Propagation failed");
         end
@@ -1329,8 +1433,9 @@ refreshAll();
         kepName.Layout.Row = 1;
         kepName.Layout.Column = 2;
 
-        uilabel(kepGrid, "Text", "Semi-major axis km");
-        kepSma = uieditfield(kepGrid, "numeric", "Value", 7000, "Limits", [0 Inf]);
+        uilabel(kepGrid, "Text", "Semi-major axis (km)");
+        kepSma = uieditfield(kepGrid, "numeric", "Value", 7000, "Limits", [0 Inf], ...
+            "Tooltip", "From Earth's center, not altitude (Earth radius is about 6378 km)");
         kepSma.Layout.Row = 2;
         kepSma.Layout.Column = 2;
 
@@ -1340,27 +1445,29 @@ refreshAll();
         kepEcc.Layout.Row = 3;
         kepEcc.Layout.Column = 2;
 
-        uilabel(kepGrid, "Text", "Inclination deg");
+        uilabel(kepGrid, "Text", "Inclination (deg)");
         kepInc = uieditfield(kepGrid, "numeric", "Value", 51.6);
         kepInc.Layout.Row = 4;
         kepInc.Layout.Column = 2;
 
-        uilabel(kepGrid, "Text", "RAAN deg");
-        kepRaan = uieditfield(kepGrid, "numeric", "Value", 0);
+        uilabel(kepGrid, "Text", "RAAN (deg)");
+        kepRaan = uieditfield(kepGrid, "numeric", "Value", 0, ...
+            "Tooltip", "Right ascension of the ascending node");
         kepRaan.Layout.Row = 5;
         kepRaan.Layout.Column = 2;
 
-        uilabel(kepGrid, "Text", "Arg. perigee deg");
+        uilabel(kepGrid, "Text", "Arg. of perigee (deg)");
         kepArgPerigee = uieditfield(kepGrid, "numeric", "Value", 0);
         kepArgPerigee.Layout.Row = 6;
         kepArgPerigee.Layout.Column = 2;
 
-        uilabel(kepGrid, "Text", "True anomaly deg");
-        kepTrueAnomaly = uieditfield(kepGrid, "numeric", "Value", 0);
+        uilabel(kepGrid, "Text", "True anomaly (deg)");
+        kepTrueAnomaly = uieditfield(kepGrid, "numeric", "Value", 0, ...
+            "Tooltip", "Position in the orbit at the scenario epoch");
         kepTrueAnomaly.Layout.Row = 7;
         kepTrueAnomaly.Layout.Column = 2;
 
-        uilabel(kepGrid, "Text", "Mass kg");
+        uilabel(kepGrid, "Text", "Mass (kg)");
         kepMass = uieditfield(kepGrid, "numeric", "Value", 1000, "Limits", [0 Inf]);
         kepMass.Layout.Row = 8;
         kepMass.Layout.Column = 2;
@@ -1369,7 +1476,8 @@ refreshAll();
         kepPropagator = uidropdown(kepGrid, ...
             "Items", {'Keplerian (two-body)', 'Eckstein-Hechler (J2-J6)', 'Numerical (HPOP)'}, ...
             "ItemsData", {'Keplerian', 'EcksteinHechler', 'Numerical'}, ...
-            "Value", 'Keplerian');
+            "Value", 'Keplerian', ...
+            "Tooltip", "Force-model fidelity: two-body analytic, zonal-harmonic analytic, or numerical integration");
         kepPropagator.Layout.Row = 9;
         kepPropagator.Layout.Column = 2;
 
@@ -1411,7 +1519,8 @@ refreshAll();
         tlePropagator = uidropdown(tleGrid, ...
             "Items", {'SGP4 (TLE)', 'Numerical (HPOP, seeded from TLE)'}, ...
             "ItemsData", {'TLE', 'Numerical'}, ...
-            "Value", 'TLE');
+            "Value", 'TLE', ...
+            "Tooltip", "The TLE carries its own epoch; the state is evaluated over the scenario span");
         tlePropagator.Layout.Row = 6;
         tlePropagator.Layout.Column = 2;
 
@@ -1520,7 +1629,7 @@ refreshAll();
         phasingEdit.Layout.Row = 5;
         phasingEdit.Layout.Column = 2;
 
-        uilabel(grid, "Text", "Semi-major axis km");
+        uilabel(grid, "Text", "Semi-major axis (km)");
         smaEdit = uieditfield(grid, "numeric", "Value", 7000, "Limits", [0 Inf]);
         smaEdit.Layout.Row = 6;
         smaEdit.Layout.Column = 2;
@@ -1531,22 +1640,22 @@ refreshAll();
         eccEdit.Layout.Row = 7;
         eccEdit.Layout.Column = 2;
 
-        uilabel(grid, "Text", "Inclination deg");
+        uilabel(grid, "Text", "Inclination (deg)");
         incEdit = uieditfield(grid, "numeric", "Value", 53);
         incEdit.Layout.Row = 8;
         incEdit.Layout.Column = 2;
 
-        uilabel(grid, "Text", "RAAN offset deg");
+        uilabel(grid, "Text", "RAAN offset (deg)");
         raanOffsetEdit = uieditfield(grid, "numeric", "Value", 0);
         raanOffsetEdit.Layout.Row = 9;
         raanOffsetEdit.Layout.Column = 2;
 
-        uilabel(grid, "Text", "Arg. perigee deg");
+        uilabel(grid, "Text", "Arg. of perigee (deg)");
         argPerigeeEdit = uieditfield(grid, "numeric", "Value", 0);
         argPerigeeEdit.Layout.Row = 10;
         argPerigeeEdit.Layout.Column = 2;
 
-        uilabel(grid, "Text", "Anomaly offset deg");
+        uilabel(grid, "Text", "Anomaly offset (deg)");
         anomalyOffsetEdit = uieditfield(grid, "numeric", "Value", 0);
         anomalyOffsetEdit.Layout.Row = 11;
         anomalyOffsetEdit.Layout.Column = 2;
@@ -1620,22 +1729,22 @@ refreshAll();
         nameEdit.Layout.Row = 1;
         nameEdit.Layout.Column = 2;
 
-        uilabel(grid, "Text", "Latitude deg");
+        uilabel(grid, "Text", "Latitude (deg)");
         latEdit = uieditfield(grid, "numeric", "Value", 38.8339, "Limits", [-90 90]);
         latEdit.Layout.Row = 2;
         latEdit.Layout.Column = 2;
 
-        uilabel(grid, "Text", "Longitude deg");
+        uilabel(grid, "Text", "Longitude (deg)");
         lonEdit = uieditfield(grid, "numeric", "Value", -104.8214, "Limits", [-180 180]);
         lonEdit.Layout.Row = 3;
         lonEdit.Layout.Column = 2;
 
-        uilabel(grid, "Text", "Altitude km");
+        uilabel(grid, "Text", "Altitude (km)");
         altEdit = uieditfield(grid, "numeric", "Value", 1.84);
         altEdit.Layout.Row = 4;
         altEdit.Layout.Column = 2;
 
-        uilabel(grid, "Text", "Min elevation deg");
+        uilabel(grid, "Text", "Min elevation (deg)");
         minElEdit = uieditfield(grid, "numeric", "Value", 5, "Limits", [-90 90]);
         minElEdit.Layout.Row = 5;
         minElEdit.Layout.Column = 2;
@@ -1685,17 +1794,17 @@ refreshAll();
         nameEdit.Layout.Row = 1;
         nameEdit.Layout.Column = 2;
 
-        uilabel(grid, "Text", "Latitude deg");
+        uilabel(grid, "Text", "Latitude (deg)");
         latEdit = uieditfield(grid, "numeric", "Value", 39.7392, "Limits", [-90 90]);
         latEdit.Layout.Row = 2;
         latEdit.Layout.Column = 2;
 
-        uilabel(grid, "Text", "Longitude deg");
+        uilabel(grid, "Text", "Longitude (deg)");
         lonEdit = uieditfield(grid, "numeric", "Value", -104.9903, "Limits", [-180 180]);
         lonEdit.Layout.Row = 3;
         lonEdit.Layout.Column = 2;
 
-        uilabel(grid, "Text", "Altitude km");
+        uilabel(grid, "Text", "Altitude (km)");
         altEdit = uieditfield(grid, "numeric", "Value", 1.609);
         altEdit.Layout.Row = 4;
         altEdit.Layout.Column = 2;
@@ -1749,17 +1858,17 @@ refreshAll();
         nameEdit.Layout.Row = 1;
         nameEdit.Layout.Column = 2;
 
-        uilabel(grid, "Text", "Boundary lat deg");
+        uilabel(grid, "Text", "Boundary lat (deg)");
         latText = uitextarea(grid, "Value", {'39.25,39.25,40.10,40.10'});
         latText.Layout.Row = 2;
         latText.Layout.Column = 2;
 
-        uilabel(grid, "Text", "Boundary lon deg");
+        uilabel(grid, "Text", "Boundary lon (deg)");
         lonText = uitextarea(grid, "Value", {'-105.45,-104.45,-104.45,-105.45'});
         lonText.Layout.Row = 3;
         lonText.Layout.Column = 2;
 
-        uilabel(grid, "Text", "Grid resolution km");
+        uilabel(grid, "Text", "Grid resolution (km)");
         gridResolutionEdit = uieditfield(grid, "numeric", "Value", 35, "Limits", [0.1 Inf]);
         gridResolutionEdit.Layout.Row = 5;
         gridResolutionEdit.Layout.Column = 2;
@@ -1769,7 +1878,7 @@ refreshAll();
         coverageEdit.Layout.Row = 6;
         coverageEdit.Layout.Column = 2;
 
-        uilabel(grid, "Text", "Altitude km");
+        uilabel(grid, "Text", "Altitude (km)");
         altEdit = uieditfield(grid, "numeric", "Value", 0);
         altEdit.Layout.Row = 7;
         altEdit.Layout.Column = 2;
@@ -1842,64 +1951,73 @@ refreshAll();
         uilabel(grid, "Text", "Sensor type");
         typeDrop = uidropdown(grid, "Items", ...
             {'SimpleConic', 'Rectangular', 'FixedVector', 'Targeted'}, ...
-            "Value", "SimpleConic");
+            "Value", "SimpleConic", ...
+            "Tooltip", "Field-of-view shape: circular cone, rectangular pyramid, body-fixed cone, or target-tracking cone");
         typeDrop.Layout.Row = 3;
         typeDrop.Layout.Column = 2;
 
         uilabel(grid, "Text", "Pointing mode");
         pointingDrop = uidropdown(grid, "Items", ...
             {'Nadir', 'Mounted', 'FixedVector', 'Targeted', 'VelocityVector'}, ...
-            "Value", "Nadir");
+            "Value", "Nadir", ...
+            "Tooltip", "Boresight direction: nadir, gimbal mount (az/el below), fixed body vector, tracking a target, or along-velocity");
         pointingDrop.Layout.Row = 4;
         pointingDrop.Layout.Column = 2;
 
         uilabel(grid, "Text", "Targeted at");
-        targetDrop = uidropdown(grid, "Items", objectItemsOrNone());
+        targetDrop = uidropdown(grid, "Items", objectItemsOrNone(), ...
+            "Tooltip", "Object the boresight tracks (Targeted type/pointing only)");
         targetDrop.Layout.Row = 5;
         targetDrop.Layout.Column = 2;
 
-        uilabel(grid, "Text", "Cone half-angle deg");
+        uilabel(grid, "Text", "Cone half-angle (deg)");
         coneEdit = uieditfield(grid, "numeric", "Value", 20, "Limits", [0 180]);
         coneEdit.Layout.Row = 6;
         coneEdit.Layout.Column = 2;
 
-        uilabel(grid, "Text", "Rect half-angle X deg");
+        uilabel(grid, "Text", "Rect half-angle X (deg)");
         rectXEdit = uieditfield(grid, "numeric", "Value", 10, "Limits", [0 180]);
         rectXEdit.Layout.Row = 7;
         rectXEdit.Layout.Column = 2;
 
-        uilabel(grid, "Text", "Rect half-angle Y deg");
+        uilabel(grid, "Text", "Rect half-angle Y (deg)");
         rectYEdit = uieditfield(grid, "numeric", "Value", 10, "Limits", [0 180]);
         rectYEdit.Layout.Row = 8;
         rectYEdit.Layout.Column = 2;
 
         uilabel(grid, "Text", "Boresight ENU/XYZ");
-        boresightEdit = uieditfield(grid, "text", "Value", "0,0,1");
+        boresightEdit = uieditfield(grid, "text", "Value", "0,0,1", ...
+            "Tooltip", "Boresight unit vector: body XYZ on satellites, ENU on ground objects (FixedVector only)");
         boresightEdit.Layout.Row = 9;
         boresightEdit.Layout.Column = 2;
 
-        uilabel(grid, "Text", "Range km min/max");
-        rangeEdit = uieditfield(grid, "text", "Value", "0,Inf");
+        uilabel(grid, "Text", "Range min/max (km)");
+        rangeEdit = uieditfield(grid, "text", "Value", "0,Inf", ...
+            "Tooltip", "Sensor-to-target range limits in km, e.g. 0,2500 (Inf = unlimited)");
         rangeEdit.Layout.Row = 10;
         rangeEdit.Layout.Column = 2;
 
-        uilabel(grid, "Text", "Min elevation deg");
-        minElEdit = uieditfield(grid, "numeric", "Value", 0, "Limits", [-90 90]);
+        uilabel(grid, "Text", "Min elevation (deg)");
+        minElEdit = uieditfield(grid, "numeric", "Value", 0, "Limits", [-90 90], ...
+            "Tooltip", "Minimum elevation of the target above the sensor's local horizon");
         minElEdit.Layout.Row = 11;
         minElEdit.Layout.Column = 2;
 
-        uilabel(grid, "Text", "Mount az/el deg");
-        mountAzElEdit = uieditfield(grid, "text", "Value", "0,-90");
+        uilabel(grid, "Text", "Mount az/el (deg)");
+        mountAzElEdit = uieditfield(grid, "text", "Value", "0,-90", ...
+            "Tooltip", "Mount azimuth,elevation in the parent frame; 0,-90 points nadir from a satellite");
         mountAzElEdit.Layout.Row = 12;
         mountAzElEdit.Layout.Column = 2;
 
-        uilabel(grid, "Text", "Az/el rate deg/s");
-        azElRateEdit = uieditfield(grid, "text", "Value", "Inf,Inf");
+        uilabel(grid, "Text", "Az/el rate (deg/s)");
+        azElRateEdit = uieditfield(grid, "text", "Value", "Inf,Inf", ...
+            "Tooltip", "Maximum gimbal slew rates; Inf,Inf = no slew constraint");
         azElRateEdit.Layout.Row = 13;
         azElRateEdit.Layout.Column = 2;
 
-        uilabel(grid, "Text", "Az/el accel deg/s^2");
-        azElAccelEdit = uieditfield(grid, "text", "Value", "Inf,Inf");
+        uilabel(grid, "Text", "Az/el accel (deg/s^2)");
+        azElAccelEdit = uieditfield(grid, "text", "Value", "Inf,Inf", ...
+            "Tooltip", "Maximum gimbal accelerations; Inf,Inf = no acceleration constraint");
         azElAccelEdit.Layout.Row = 14;
         azElAccelEdit.Layout.Column = 2;
 
@@ -2010,6 +2128,15 @@ refreshAll();
     end
 
     function clearSensorTasksCallback(~, ~)
+        if ~isempty(taskList)
+            choice = uiconfirm(fig, sprintf( ...
+                "Remove all %d task(s) plus any candidates, conflicts, and schedule?", ...
+                numel(taskList)), "Clear Sensor Tasks", ...
+                "Options", ["Clear", "Cancel"], "CancelOption", "Cancel");
+            if choice ~= "Clear"
+                return;
+            end
+        end
         taskList = {};
         lastTaskCandidates = [];
         lastTaskConflicts = [];
@@ -2895,6 +3022,7 @@ refreshAll();
             finishProgress(progress, "Access computation complete.");
         catch err
             closeProgress(progress);
+            setStatus("Access computation failed", [0.55 0.18 0.08]);
             uialert(fig, getReport(err, "extended", "hyperlinks", "off"), ...
                 "Access computation failed");
         end
@@ -2959,6 +3087,7 @@ refreshAll();
             finishProgress(progress, "Sensor access computation complete.");
         catch err
             closeProgress(progress);
+            setStatus("Sensor access computation failed", [0.55 0.18 0.08]);
             uialert(fig, getReport(err, "extended", "hyperlinks", "off"), ...
                 "Sensor access computation failed");
         end
@@ -3023,55 +3152,64 @@ refreshAll();
     end
 
     function lines = sensorAccessResultLines(result)
+        header = string(result.ParentName) + "/" + string(result.SensorName) + ...
+            " -> " + string(result.TargetName);
+        if height(result.AccessWindows) == 0
+            lines = [
+                header
+                "Windows: 0"
+                "No access found within the scenario interval."
+                ];
+            return;
+        end
+        firstWindow = result.AccessWindows(1, :);
         lines = [
-            string(result.ParentName) + "/" + string(result.SensorName) + ...
-            " -> " + string(result.TargetName)
+            header
             sprintf("Windows: %d", height(result.AccessWindows))
             sprintf("Total duration: %.1f min", result.Duration / 60.0)
             sprintf("Max elevation: %.3f deg", result.MaxElevation)
             sprintf("Min range: %.3f km", result.MinRange)
             sprintf("Max off-boresight: %.3f deg", result.MaxOffBoresight)
+            "First start: " + formatUtc(firstWindow.StartTime)
+            "First stop: " + formatUtc(firstWindow.StopTime)
             ];
-        if height(result.AccessWindows) > 0
-            firstWindow = result.AccessWindows(1, :);
-            lines = [
-                lines
-                "First start: " + formatUtc(firstWindow.StartTime)
-                "First stop: " + formatUtc(firstWindow.StopTime)
-                ];
-        end
     end
 
     function lines = accessResultLines(result)
+        header = string(result.SourceName) + " -> " + string(result.TargetName);
+        if height(result.AccessWindows) == 0
+            lines = [
+                header
+                "Windows: 0"
+                "No access found within the scenario interval."
+                ];
+            return;
+        end
+        firstWindow = result.AccessWindows(1, :);
         lines = [
-            string(result.SourceName) + " -> " + string(result.TargetName)
+            header
             sprintf("Windows: %d", height(result.AccessWindows))
             sprintf("Total duration: %.1f min", result.Duration / 60.0)
             sprintf("Max elevation: %.3f deg", result.MaxElevation)
             sprintf("Min range: %.3f km", result.MinRange)
+            "First start: " + formatUtc(firstWindow.StartTime)
+            "First stop: " + formatUtc(firstWindow.StopTime)
             ];
-        if height(result.AccessWindows) > 0
-            firstWindow = result.AccessWindows(1, :);
-            lines = [
-                lines
-                "First start: " + formatUtc(firstWindow.StartTime)
-                "First stop: " + formatUtc(firstWindow.StopTime)
-                ];
-        end
     end
 
     function exportToWorkspace(~, ~)
         assignin("base", "orekitScenario", scenario);
+        lines = "Exported to base workspace: orekitScenario";
         if ~isempty(lastAccessResult)
             assignin("base", "orekitAccessResult", lastAccessResult);
+            lines(end + 1, 1) = "Exported: orekitAccessResult (last access result)";
         end
         if ~isempty(lastSensorAccessResult)
             assignin("base", "orekitSensorAccessResult", lastSensorAccessResult);
+            lines(end + 1, 1) = "Exported: orekitSensorAccessResult (last sensor access result)";
         end
-        setTextArea(objectInfoText, [
-            "Exported orekitScenario to the base workspace."
-            "Latest access results are exported when available."
-            ]);
+        setTextArea(objectInfoText, lines);
+        setStatus("Scenario exported to workspace", [0.10 0.42 0.14]);
     end
 
     function exportEphemerisCallback(~, ~)
@@ -3601,6 +3739,8 @@ refreshAll();
             label = sprintf("%.3f day(s)", totalSeconds / 86400.0);
         elseif totalSeconds >= 3600
             label = sprintf("%.3f hour(s)", totalSeconds / 3600.0);
+        elseif totalSeconds >= 60
+            label = sprintf("%.3f minute(s)", totalSeconds / 60.0);
         else
             label = sprintf("%.3f second(s)", totalSeconds);
         end
