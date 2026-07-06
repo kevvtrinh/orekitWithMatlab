@@ -546,6 +546,57 @@ test("sensor and task validation", () => {
   assert.ok(validateSpec(dupIds).some((e) => e.includes("duplicate task id")));
 });
 
+test("ScanAreaTarget tasks validate against the area group, not a point", () => {
+  const sat = { ...keplerianSatelliteTemplate("Imager"), sensor: sensorTemplate() };
+  const gridPoints = expandAreaGrid({
+    name: "Zone1",
+    centerLatDeg: 10,
+    centerLonDeg: 20,
+    widthKm: 100,
+    heightKm: 100,
+    spacingKm: 50,
+  });
+  const spec = specWith([sat, ...gridPoints]);
+
+  spec.tasks = [
+    {
+      id: "task-1",
+      taskType: "ScanAreaTarget",
+      satelliteName: "Imager",
+      targetName: "Zone1",
+      priority: 5,
+      dwellSeconds: 60,
+      requiredCoveragePercent: 70,
+    },
+  ];
+  assert.deepEqual(validateSpec(stripEmptyFields(spec)), []);
+
+  // A ScanAreaTarget task cannot target an individual grid point.
+  const pointTarget = structuredClone(spec);
+  pointTarget.tasks[0].targetName = gridPoints[0].name;
+  assert.ok(
+    validateSpec(pointTarget).some((e) => e.includes("must reference an area target")),
+  );
+
+  // A plain TrackPointTarget task can still target one grid point directly.
+  const trackPoint = structuredClone(spec);
+  trackPoint.tasks[0].taskType = "TrackPointTarget";
+  trackPoint.tasks[0].targetName = gridPoints[0].name;
+  assert.deepEqual(validateSpec(stripEmptyFields(trackPoint)), []);
+
+  // Coverage percent out of range is rejected.
+  const badCoverage = structuredClone(spec);
+  badCoverage.tasks[0].requiredCoveragePercent = 150;
+  assert.ok(
+    validateSpec(badCoverage).some((e) => e.includes("requiredCoveragePercent")),
+  );
+
+  // Unknown task types are rejected.
+  const badType = structuredClone(spec);
+  badType.tasks[0].taskType = "Bogus";
+  assert.ok(validateSpec(badType).some((e) => e.includes("unknown taskType")));
+});
+
 test("access requests validate and enumerate only supported pairs", () => {
   const sat = { ...keplerianSatelliteTemplate("Imager"), sensor: sensorTemplate() };
   const relay = keplerianSatelliteTemplate("Relay");

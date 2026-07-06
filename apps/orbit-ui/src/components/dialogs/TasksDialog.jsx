@@ -22,6 +22,15 @@ export default function TasksDialog({ spec, onSubmit, onClose }) {
       prev.map((t, i) => (i === index ? { ...t, ...patch } : t)),
     );
 
+  // Selecting an area's "(scan whole area)" option switches the task to
+  // ScanAreaTarget against the group name; selecting a point (standalone or
+  // an individual grid point) switches back to a plain TrackPointTarget.
+  const setTaskTarget = (index, value) =>
+    setTask(index, {
+      targetName: value,
+      taskType: areaGroups.has(value) ? "ScanAreaTarget" : "TrackPointTarget",
+    });
+
   const addTask = () =>
     setTasks((prev) => [...prev, taskTemplate({ ...spec, tasks: prev })]);
 
@@ -89,7 +98,7 @@ export default function TasksDialog({ spec, onSubmit, onClose }) {
             <select
               className="input"
               value={task.targetName}
-              onChange={(e) => setTask(i, { targetName: e.target.value })}
+              onChange={(e) => setTaskTarget(i, e.target.value)}
             >
               {pointTargets.map((t) => (
                 <option key={t.name} value={t.name}>
@@ -98,6 +107,7 @@ export default function TasksDialog({ spec, onSubmit, onClose }) {
               ))}
               {[...areaGroups.entries()].map(([group, points]) => (
                 <optgroup key={group} label={`${group} (area)`}>
+                  <option value={group}>{`Scan whole area (${points.length} pts)`}</option>
                   {points.map((t) => (
                     <option key={t.name} value={t.name}>
                       {t.name}
@@ -124,13 +134,33 @@ export default function TasksDialog({ spec, onSubmit, onClose }) {
               ))}
             </select>
           </FormRow>
-          <FormRow label="Dwell (s)" hint="Required time on target">
+          <FormRow
+            label="Dwell (s)"
+            hint={
+              task.taskType === "ScanAreaTarget"
+                ? "Minimum time per covered grid point"
+                : "Required time on target"
+            }
+          >
             <NumberInput
               value={task.dwellSeconds}
               onChange={(v) => setTask(i, { dwellSeconds: v })}
               min={10}
             />
           </FormRow>
+          {task.taskType === "ScanAreaTarget" && (
+            <FormRow
+              label="Coverage (%)"
+              hint="Minimum area grid-point coverage to accept a scan window"
+            >
+              <NumberInput
+                value={task.requiredCoveragePercent ?? 70}
+                onChange={(v) => setTask(i, { requiredCoveragePercent: v })}
+                min={0}
+                max={100}
+              />
+            </FormRow>
+          )}
           <FormRow label="Priority" hint="Higher wins scheduling conflicts">
             <NumberInput
               value={task.priority}

@@ -58,6 +58,81 @@ for k = 1:numel(objects)
                 string(entry.kind), k);
     end
 end
+
+scenario = addAreaTargets(scenario, objects);
+end
+
+function scenario = addAreaTargets(scenario, objects)
+% Web-UI area targets are sent as their grid points (kind "target", tagged
+% with a shared `group` name and `area` rectangle metadata; see
+% expandAreaGrid in apps/orbit-ui/src/lib/spec.js). Grid points were already
+% added above as ordinary point targets for per-point access/tracking; this
+% additionally registers one AreaTargetObject per group, keyed by the area's
+% name, so ScanAreaTarget tasks (computeAreaScanOpportunities) can resolve
+% scenario.getObject(areaName) against a real area object whose GridPoints
+% match the same points the frontend drew.
+groups = containers.Map("KeyType", "char", "ValueType", "any");
+order = strings(0, 1);
+for k = 1:numel(objects)
+    entry = objects{k};
+    if ~strcmp(string(entry.kind), "target") || ~isfield(entry, "group")
+        continue
+    end
+    groupName = strtrim(string(entry.group));
+    if strlength(groupName) == 0
+        continue
+    end
+    key = char(groupName);
+    if ~isKey(groups, key)
+        groups(key) = {entry};
+        order(end + 1) = groupName; %#ok<AGROW>
+    else
+        groups(key) = [groups(key), {entry}];
+    end
+end
+
+for g = 1:numel(order)
+    members = groups(char(order(g)));
+    scenario = scenario.addObject(buildAreaTargetObject(order(g), members));
+end
+end
+
+function areaTarget = buildAreaTargetObject(groupName, members)
+areaMeta = members{1}.area;
+centerLatDeg = double(areaMeta.centerLatDeg);
+centerLonDeg = double(areaMeta.centerLonDeg);
+widthKm = double(areaMeta.widthKm);
+heightKm = double(areaMeta.heightKm);
+
+kmPerDegLat = 111.32;
+cosLat = max(cosd(centerLatDeg), 0.05);
+halfLatDeg = (heightKm / 2) / kmPerDegLat;
+halfLonDeg = (widthKm / 2) / (kmPerDegLat * cosLat);
+boundaryLatDeg = [centerLatDeg - halfLatDeg; centerLatDeg - halfLatDeg; ...
+    centerLatDeg + halfLatDeg; centerLatDeg + halfLatDeg];
+boundaryLonDeg = [centerLonDeg - halfLonDeg; centerLonDeg + halfLonDeg; ...
+    centerLonDeg + halfLonDeg; centerLonDeg - halfLonDeg];
+
+altitudeM = double(fieldOr(members{1}, "altitudeM", 0));
+areaTarget = AreaTargetObject(groupName, boundaryLatDeg, boundaryLonDeg, altitudeM);
+
+gridPointID = strings(numel(members), 1);
+latDeg = zeros(numel(members), 1);
+lonDeg = zeros(numel(members), 1);
+for m = 1:numel(members)
+    gridPointID(m) = string(members{m}.name);
+    latDeg(m) = double(members{m}.latitudeDeg);
+    lonDeg(m) = double(members{m}.longitudeDeg);
+end
+areaTarget.GridPoints = table(gridPointID, latDeg, lonDeg, false(numel(members), 1), ...
+    'VariableNames', {'GridPointID', 'LatitudeDeg', 'LongitudeDeg', 'Covered'});
+
+spacingKm = double(fieldOr(areaMeta, "spacingKm", NaN));
+if ~isfinite(spacingKm) || spacingKm <= 0
+    spacingKm = max(widthKm, heightKm) / max(sqrt(numel(members)), 1);
+end
+areaTarget.GridResolutionKm = spacingKm;
+areaTarget.Priority = double(fieldOr(members{1}, "priority", 1));
 end
 
 function sat = buildSatellite(entry, epoch)

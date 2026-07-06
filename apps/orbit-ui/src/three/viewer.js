@@ -532,6 +532,12 @@ export function createViewer(container, { onSelect } = {}) {
     group.add(accessLines);
 
     const stationByName = new Map(stations.map((st) => [st.data.name, st]));
+    // A ScanAreaTarget task's targetName is the area's group name, which has
+    // no per-point marker; point the boresight at the area's centroid anchor
+    // instead of falling back to idle/nadir while a scan task is active.
+    for (const ao of areaOutlines) {
+      stationByName.set(ao.area.name, { marker: ao.anchor });
+    }
     const sensorAccessByKey = new Map(
       (data.sensorAccesses ?? []).map((a) => [`${a.platform}|${a.target}`, a]),
     );

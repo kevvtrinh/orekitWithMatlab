@@ -565,7 +565,9 @@ export default function App() {
           onClose={closeDialog}
           onSubmit={async (targets) => {
             const result = await insertObjects(targets);
-            if (result.ok && targets.length > 0) setSelection(targets[0].name);
+            // Don't select a grid point: ObjectBrowser auto-expands the area
+            // containing the current selection, which would blow the new
+            // area open to all its points instead of showing it collapsed.
             return result;
           }}
         />

@@ -28,6 +28,12 @@ export const SENSOR_POINTING_MODES = [
   "FixedVector",
 ];
 
+// Sensor task kinds the MATLAB scheduler understands for the web spec.
+// TrackPointTarget images one point target; ScanAreaTarget images an area
+// target as a whole (targetName is the area's group name, not a grid point)
+// and is scored by grid-point coverage percent instead of point dwell.
+export const TASK_TYPES = ["TrackPointTarget", "ScanAreaTarget"];
+
 // Impulsive maneuvers (mirrors src/objects/ImpulsiveManeuver.m). TNW delta-V
 // components are [along-track, in-plane normal, cross-track] m/s; Inertial
 // components are GCRF m/s.
@@ -134,6 +140,7 @@ export function taskTemplate(spec) {
     id: nextTaskId(spec),
     name: "",
     satelliteName: "",
+    taskType: "TrackPointTarget",
     targetName: target?.name ?? "",
     priority: 5,
     dwellSeconds: 60,
@@ -437,7 +444,7 @@ export function expandAreaGrid(params) {
     throw new Error("Area grid extends beyond a pole - shrink the height.");
   }
 
-  const area = { name, centerLatDeg, centerLonDeg, widthKm, heightKm };
+  const area = { name, centerLatDeg, centerLonDeg, widthKm, heightKm, spacingKm };
   const targets = [];
   for (let r = 0; r < rows; r++) {
     const lat = centerLatDeg + ((r + 0.5) / rows - 0.5) * heightDeg;
@@ -671,6 +678,7 @@ function validateTasks(spec, errors) {
     errors.push(`At most ${MAX_TASKS} sensor tasks are supported.`);
   }
   const byName = new Map((spec.objects ?? []).map((o) => [o.name, o]));
+  const areaGroupNames = groupTargets(spec.objects ?? []).areas;
   const seenIds = new Set();
   tasks.forEach((task, i) => {
     const where = `tasks[${i}] (${task?.id ?? "?"})`;
@@ -685,11 +693,29 @@ function validateTasks(spec, errors) {
     } else {
       seenIds.add(task.id);
     }
-    const target = byName.get(task.targetName);
-    if (!target || target.kind !== "target") {
-      errors.push(
-        `${where}: targetName must reference a point target in the scenario.`,
-      );
+    const taskType = task.taskType ?? "TrackPointTarget";
+    if (!TASK_TYPES.includes(taskType)) {
+      errors.push(`${where}: unknown taskType '${taskType}'.`);
+    }
+    if (taskType === "ScanAreaTarget") {
+      if (!areaGroupNames.has(task.targetName)) {
+        errors.push(`${where}: targetName must reference an area target.`);
+      }
+      if (
+        task.requiredCoveragePercent !== undefined &&
+        !inRange(task.requiredCoveragePercent, 0, 100)
+      ) {
+        errors.push(
+          `${where}: requiredCoveragePercent must be between 0 and 100.`,
+        );
+      }
+    } else {
+      const target = byName.get(task.targetName);
+      if (!target || target.kind !== "target") {
+        errors.push(
+          `${where}: targetName must reference a point target in the scenario.`,
+        );
+      }
     }
     if (task.satelliteName) {
       const sat = byName.get(task.satelliteName);
