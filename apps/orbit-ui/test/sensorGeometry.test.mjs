@@ -2,10 +2,12 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as THREE from "three";
 import {
+  fovLengthToEarth,
   makeForFootprintGeometry,
   makeForSectorGeometry,
   makeFovConeGeometry,
   orientBoresight,
+  raySphereDistanceFromPoint,
 } from "../src/three/sensorGeometry.js";
 
 const EPS = 1e-6;
@@ -35,6 +37,22 @@ test("FOV cone opens along +Y with its apex at the origin", () => {
     const radial = Math.hypot(v.x, v.z);
     assert.ok(Math.abs(radial - v.y) < 1e-4, "unit cone wall (radius == y)");
   }
+});
+
+test("FOV beam length reaches the Earth instead of lifted target markers", () => {
+  const satellite = new THREE.Vector3(1.08, 0, 0);
+  const liftedTargetMarker = new THREE.Vector3(1.006, 0, 0);
+  const dir = liftedTargetMarker.clone().sub(satellite).normalize();
+  const markerDistance = satellite.distanceTo(liftedTargetMarker);
+  const surfaceDistance = raySphereDistanceFromPoint(satellite, dir, 1);
+  const beamLength = fovLengthToEarth(satellite, dir, 1, 0.03);
+
+  assert.ok(surfaceDistance > markerDistance);
+  assert.ok(beamLength > surfaceDistance);
+  assert.ok(
+    beamLength > markerDistance,
+    "FOV should pass through the lifted marker and cross the globe",
+  );
 });
 
 test("FOR sector is a unit-radius volume within the half-angle of +Y", () => {

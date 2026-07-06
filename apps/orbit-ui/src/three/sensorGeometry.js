@@ -20,6 +20,25 @@ export function makeFovConeGeometry(radialSegments = 48) {
   return geometry;
 }
 
+export function raySphereDistanceFromPoint(origin, direction, radius = 1) {
+  const a = direction.lengthSq();
+  if (a <= 0) return NaN;
+  const b = origin.dot(direction);
+  const c = origin.lengthSq() - radius * radius;
+  const disc = b * b - a * c;
+  if (disc < 0) return NaN;
+  const root = Math.sqrt(disc);
+  const near = (-b - root) / a;
+  if (near > 0) return near;
+  const far = (-b + root) / a;
+  return far > 0 ? far : NaN;
+}
+
+export function fovLengthToEarth(origin, direction, radius = 1, overshoot = 0) {
+  const distance = raySphereDistanceFromPoint(origin, direction, radius);
+  return Number.isFinite(distance) ? distance + Math.max(overshoot, 0) : NaN;
+}
+
 // Field of regard: spherical sector of unit radius around +Y - straight cone
 // wall from the apex out to the rim, closed by the spherical cap the sensor
 // sweeps by slewing up to halfAngleDeg off boresight. Solid and anchored at

@@ -10,6 +10,7 @@ import { pointingStateAt, scheduleForPlatform } from "../lib/schedule.js";
 import { lightingStateAt, sunDirectionAt } from "../lib/sun.js";
 import { clock } from "../lib/clock.js";
 import {
+  fovLengthToEarth,
   makeForFootprintGeometry,
   makeFovConeGeometry,
   orientBoresight,
@@ -21,6 +22,7 @@ const KM = 1 / EARTH_RADIUS_KM;
 const DEG = Math.PI / 180;
 const FOR_SURFACE_RADIUS = 1.006;
 const FOR_RADIUS_UPDATE_EPS = 0.001;
+const FOV_EARTH_OVERSHOOT = 0.03;
 
 // ECI (right-handed, Z up) -> three.js (right-handed, Y up).
 // A rotation by GMST about ECI +Z becomes rotation.y = gmst in three.js.
@@ -624,15 +626,6 @@ export function createViewer(container, { onSelect } = {}) {
   const SENSOR_FOR_ONLY = 0xe8a33d; // reachable (FOR-valid), not in the beam
   const SENSOR_FOV_IN_VIEW = 0x5fc98f; // target inside the instantaneous FOV
 
-  // Distance along unit direction `dir` from `origin` to the unit-sphere
-  // Earth; NaN when the ray misses (beam pointing past the limb).
-  function rayEarthDistance(origin, dir) {
-    const b = origin.dot(dir);
-    const disc = b * b - (origin.lengthSq() - 1);
-    if (disc <= 0 || b >= 0) return NaN;
-    return -b - Math.sqrt(disc);
-  }
-
   function isFovActive(platformName, targetName, tSec) {
     const pair = scenarioContent.sensorAccessByKey.get(
       `${platformName}|${targetName}`,
@@ -695,10 +688,7 @@ export function createViewer(container, { onSelect } = {}) {
 
     viz.fovCone.visible = options.sensorFov;
     if (options.sensorFov) {
-      let length =
-        pointing.phase === "track" && targetPos
-          ? p.distanceTo(targetPos)
-          : rayEarthDistance(p, dir);
+      let length = fovLengthToEarth(p, dir, 1, FOV_EARTH_OVERSHOOT);
       if (!Number.isFinite(length) || length <= 0) length = r;
       const radius = length * Math.tan(viz.halfAngleRad);
       viz.fovCone.position.copy(p);
