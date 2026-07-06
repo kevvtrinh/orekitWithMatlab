@@ -15,8 +15,10 @@ import {
   expandAreaGrid,
   expandWalker,
   groundStationTemplate,
+  groupTargets,
   keplerianSatelliteTemplate,
   nextObjectName,
+  removeTargetGroup,
   sensorTemplate,
   stripEmptyFields,
   targetTemplate,
@@ -304,6 +306,55 @@ test("area outlines derive from grid-point metadata", () => {
   assert.equal(scenario.areaOutlines.length, 1);
   assert.equal(scenario.areaOutlines[0].name, "A");
   assert.ok(scenario.groundPoints.every((gp) => gp.area?.name === "A"));
+});
+
+test("area grid points fold into groups and delete as one object", () => {
+  const grid = expandAreaGrid({
+    name: "Zone",
+    centerLatDeg: 10,
+    centerLonDeg: 20,
+    widthKm: 100,
+    heightKm: 50,
+    spacingKm: 50,
+  });
+  const solo = targetTemplate("Solo");
+  const sat = keplerianSatelliteTemplate("Sat-1");
+
+  // groupTargets: standalone points and per-area groups, non-targets ignored.
+  const { points, areas } = groupTargets([sat, solo, ...grid]);
+  assert.deepEqual(
+    points.map((t) => t.name),
+    ["Solo"],
+  );
+  assert.deepEqual([...areas.keys()], ["Zone"]);
+  assert.equal(areas.get("Zone").length, grid.length);
+  assert.ok(grid.length > 1);
+
+  // removeTargetGroup: drops every grid point plus tasks aimed at them,
+  // keeps everything else, and does not mutate the input spec.
+  const spec = {
+    ...specWith([sat, solo, ...grid]),
+    tasks: [
+      { id: "task-1", targetName: grid[0].name, dwellSeconds: 30, priority: 5 },
+      { id: "task-2", targetName: "Solo", dwellSeconds: 30, priority: 5 },
+    ],
+  };
+  const next = removeTargetGroup(spec, "Zone");
+  assert.deepEqual(
+    next.objects.map((o) => o.name),
+    ["Sat-1", "Solo"],
+  );
+  assert.deepEqual(
+    next.tasks.map((t) => t.id),
+    ["task-2"],
+  );
+  assert.equal(spec.objects.length, 2 + grid.length);
+  assert.equal(spec.tasks.length, 2);
+
+  // Removing a group that doesn't exist is a no-op.
+  const untouched = removeTargetGroup(spec, "Nope");
+  assert.equal(untouched.objects.length, spec.objects.length);
+  assert.equal(untouched.tasks.length, 2);
 });
 
 test("deriveSpecFromScenario round-trips the bundled sample", () => {

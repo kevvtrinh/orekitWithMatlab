@@ -473,6 +473,40 @@ export function collectAreaOutlines(objects) {
   return [...areas.values()];
 }
 
+// Split point targets into standalone points and per-area grid groups
+// (insertion order preserved). Shared by the object tree and the task dialog
+// so both fold an area's grid points the same way instead of flattening them.
+export function groupTargets(objects) {
+  const points = [];
+  const areas = new Map();
+  for (const obj of objects ?? []) {
+    if (obj?.kind !== "target") continue;
+    if (obj.group) {
+      if (!areas.has(obj.group)) areas.set(obj.group, []);
+      areas.get(obj.group).push(obj);
+    } else {
+      points.push(obj);
+    }
+  }
+  return { points, areas };
+}
+
+// Remove an entire area target: every grid point in the group plus any
+// sensor tasks that referenced those points. Non-member objects and tasks
+// are untouched; the input spec is not mutated.
+export function removeTargetGroup(spec, group) {
+  const names = new Set(
+    spec.objects
+      .filter((o) => o.kind === "target" && o.group === group)
+      .map((o) => o.name),
+  );
+  return {
+    ...spec,
+    objects: spec.objects.filter((o) => !names.has(o.name)),
+    tasks: (spec.tasks ?? []).filter((t) => !names.has(t.targetName)),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Validation
 // ---------------------------------------------------------------------------

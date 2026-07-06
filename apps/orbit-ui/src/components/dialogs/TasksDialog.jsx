@@ -1,6 +1,6 @@
 import { useState } from "react";
 import Modal, { FormRow, NumberInput, TextInput } from "../Modal.jsx";
-import { taskTemplate } from "../../lib/spec.js";
+import { groupTargets, taskTemplate } from "../../lib/spec.js";
 
 // Manage the spec's sensor tasks: point-target imaging requests the MATLAB
 // scheduler (scheduleSensorTasksGreedy) assigns to satellite sensors on the
@@ -10,6 +10,9 @@ export default function TasksDialog({ spec, onSubmit, onClose }) {
   const [error, setError] = useState(null);
 
   const targets = spec.objects.filter((o) => o.kind === "target");
+  // Fold area grid points into per-area optgroups so one area's 100 points
+  // don't flatten the dropdown.
+  const { points: pointTargets, areas: areaGroups } = groupTargets(spec.objects);
   const sensorSats = spec.objects.filter(
     (o) => o.kind === "satellite" && o.sensor,
   );
@@ -88,10 +91,19 @@ export default function TasksDialog({ spec, onSubmit, onClose }) {
               value={task.targetName}
               onChange={(e) => setTask(i, { targetName: e.target.value })}
             >
-              {targets.map((t) => (
+              {pointTargets.map((t) => (
                 <option key={t.name} value={t.name}>
                   {t.name}
                 </option>
+              ))}
+              {[...areaGroups.entries()].map(([group, points]) => (
+                <optgroup key={group} label={`${group} (area)`}>
+                  {points.map((t) => (
+                    <option key={t.name} value={t.name}>
+                      {t.name}
+                    </option>
+                  ))}
+                </optgroup>
               ))}
             </select>
           </FormRow>
