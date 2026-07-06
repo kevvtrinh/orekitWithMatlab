@@ -1,3 +1,13 @@
 vendor/orekit/
 *.asv
 *.mat
+
+# Local Claude Code tooling: worktrees, codex queue scripts, and personal
+# settings are per-machine state, not project config. .claude/settings.json
+# (the shared allow-list/defaults) is intentionally NOT ignored.
+.claude/worktrees/
+.claude/codex-queue/
+.claude/settings.local.json
+
+# Vite dev-server cache
+apps/orbit-ui/.vite/
