@@ -10,7 +10,7 @@ import { pointingStateAt, scheduleForPlatform } from "../lib/schedule.js";
 import { lightingStateAt, sunDirectionAt } from "../lib/sun.js";
 import { clock } from "../lib/clock.js";
 import {
-  makeForSectorGeometry,
+  makeForFootprintGeometry,
   makeFovConeGeometry,
   orientBoresight,
 } from "./sensorGeometry.js";
@@ -19,6 +19,8 @@ import {
 const EARTH_RADIUS_KM = 6371;
 const KM = 1 / EARTH_RADIUS_KM;
 const DEG = Math.PI / 180;
+const FOR_SURFACE_RADIUS = 1.006;
+const FOR_RADIUS_UPDATE_EPS = 0.001;
 
 // ECI (right-handed, Z up) -> three.js (right-handed, Y up).
 // A rotation by GMST about ECI +Z becomes rotation.y = gmst in three.js.
@@ -370,11 +372,11 @@ export function createViewer(container, { onSelect } = {}) {
       const label = makeLabel(sat.name, "obj-label obj-label--sat");
       marker.add(label);
 
-      // Sensor visuals: instantaneous FOV cone, field-of-regard volume around
-      // nadir, and a boresight line to the tracked target while a scheduled
-      // task (or the slew into it) is in progress. Both volumes are authored
-      // apex-at-origin along +Y (see sensorGeometry.js) so they always sit on
-      // the same boresight side of the satellite.
+      // Sensor visuals: instantaneous FOV cone, field-of-regard footprint
+      // down to Earth, and a boresight line to the tracked target while a
+      // scheduled task (or the slew into it) is in progress. Both volumes are
+      // authored apex-at-origin along +Y (see sensorGeometry.js) so they
+      // always sit on the same boresight side of the satellite.
       let sensor = null;
       if (sat.sensor) {
         const fovCone = new THREE.Mesh(
@@ -390,8 +392,9 @@ export function createViewer(container, { onSelect } = {}) {
         fovCone.frustumCulled = false;
         group.add(fovCone);
 
+        const forHalfAngleDeg = sat.sensor.fieldOfRegardDeg ?? 60;
         const forDome = new THREE.Mesh(
-          makeForSectorGeometry(sat.sensor.fieldOfRegardDeg ?? 60),
+          makeForFootprintGeometry(forHalfAngleDeg, 1.1, FOR_SURFACE_RADIUS),
           new THREE.MeshBasicMaterial({
             color: 0xd8a75a,
             transparent: true,
@@ -424,6 +427,8 @@ export function createViewer(container, { onSelect } = {}) {
           forDome,
           trackLine,
           halfAngleRad: (sat.sensor.coneHalfAngleDeg ?? 20) * DEG,
+          forHalfAngleDeg,
+          forRadius: null,
           entries: scheduleForPlatform(data.schedule, sat.name),
         };
       }
@@ -659,12 +664,24 @@ export function createViewer(container, { onSelect } = {}) {
 
     viz.forDome.visible = options.sensorFor;
     if (options.sensorFor) {
-      // Apex at the sensor, boresight along nadir, rim touching the surface
-      // at the subpoint - same reach as the idle FOV cone, so the cone slews
-      // inside the field-of-regard volume instead of beside it.
+      if (
+        viz.forRadius === null ||
+        Math.abs(viz.forRadius - r) > FOR_RADIUS_UPDATE_EPS
+      ) {
+        viz.forDome.geometry.dispose();
+        viz.forDome.geometry = makeForFootprintGeometry(
+          viz.forHalfAngleDeg,
+          r,
+          FOR_SURFACE_RADIUS,
+        );
+        viz.forRadius = r;
+      }
+      // Apex at the sensor, with each off-nadir ray cast to the Earth
+      // surface. The footprint is generated in scene units, so it does not
+      // use the old uniform "altitude only" scale that made the FOR float.
       viz.forDome.position.copy(p);
       orientBoresight(viz.forDome.quaternion, tmpNadir);
-      viz.forDome.scale.setScalar(Math.max(r - 1, 0.02));
+      viz.forDome.scale.set(1, 1, 1);
     }
 
     viz.trackLine.visible = Boolean(tracking);

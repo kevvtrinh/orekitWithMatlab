@@ -40,3 +40,42 @@ export function makeForSectorGeometry(
   }
   return new THREE.LatheGeometry(profile, radialSegments);
 }
+
+function raySphereDistance(satelliteRadius, earthRadius, offBoresightRad) {
+  const cos = Math.cos(offBoresightRad);
+  const sin = Math.sin(offBoresightRad);
+  const disc =
+    earthRadius * earthRadius - satelliteRadius * satelliteRadius * sin * sin;
+  if (disc < 0) return NaN;
+  return satelliteRadius * cos - Math.sqrt(disc);
+}
+
+// Field of regard footprint: like makeForSectorGeometry, but the swept cap is
+// not a unit sphere around the sensor. Each profile vertex is placed where
+// that off-nadir ray intersects the Earth sphere, so the FOR visibly reaches
+// the ground all the way out to the reachable limb.
+export function makeForFootprintGeometry(
+  halfAngleDeg,
+  satelliteRadius,
+  earthRadius = 1,
+  radialSegments = 48,
+  capSegments = 18,
+) {
+  const r = Math.max(satelliteRadius, earthRadius + 1e-4);
+  const half = THREE.MathUtils.degToRad(
+    Math.min(Math.max(halfAngleDeg, 0.1), 179),
+  );
+  const horizon = Math.asin(Math.min(earthRadius / r, 0.999999));
+  const maxPhi = Math.min(half, horizon - 1e-4);
+  const profile = [new THREE.Vector2(0, 0)]; // apex at the sensor
+
+  for (let i = 0; i <= capSegments; i++) {
+    const phi = maxPhi * (1 - i / capSegments); // limb/rim -> boresight
+    const distance = raySphereDistance(r, earthRadius, phi);
+    profile.push(
+      new THREE.Vector2(distance * Math.sin(phi), distance * Math.cos(phi)),
+    );
+  }
+
+  return new THREE.LatheGeometry(profile, radialSegments);
+}

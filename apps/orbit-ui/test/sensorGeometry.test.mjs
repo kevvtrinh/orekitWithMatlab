@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as THREE from "three";
 import {
+  makeForFootprintGeometry,
   makeForSectorGeometry,
   makeFovConeGeometry,
   orientBoresight,
@@ -50,6 +51,37 @@ test("FOR sector is a unit-radius volume within the half-angle of +Y", () => {
     if (Math.abs(v.length() - 1) < 1e-3) capVerts++;
   }
   assert.ok(capVerts > 0, "spherical cap closes the sector at unit radius");
+});
+
+test("FOR footprint casts each reachable ray down to Earth", () => {
+  const satRadius = 1.12;
+  const earthRadius = 1;
+  const half = 60;
+  const verts = vertices(makeForFootprintGeometry(half, satRadius, earthRadius));
+  const earthCenter = new THREE.Vector3(0, satRadius, 0);
+  assert.ok(verts.some((v) => v.length() < EPS), "apex vertex at the sensor");
+
+  let surfaceVerts = 0;
+  let maxReach = 0;
+  for (const v of verts) {
+    if (v.length() < EPS) continue;
+    surfaceVerts++;
+    maxReach = Math.max(maxReach, v.length());
+    assert.ok(
+      Math.abs(v.distanceTo(earthCenter) - earthRadius) < 1e-4,
+      "FOR footprint vertex lies on the Earth surface",
+    );
+    assert.ok(
+      offBoresightDeg(v) < half + 1e-3,
+      `vertex within ${half} deg of boresight`,
+    );
+  }
+
+  assert.ok(surfaceVerts > 0, "footprint has surface vertices");
+  assert.ok(
+    maxReach > satRadius - earthRadius,
+    "off-nadir footprint reaches farther than the nadir subpoint distance",
+  );
 });
 
 // Regression for the mirrored field-of-regard report: with the satellite at
