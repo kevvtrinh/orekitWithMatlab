@@ -75,6 +75,12 @@ export default function TopBar({
       hint: "Add or edit the imaging sensor on a satellite",
       onClick: () => onOpenDialog({ type: "sensor" }),
     },
+    {
+      label: "Maneuvers...",
+      meta: "Impulsive dV",
+      hint: "Add or edit a satellite's impulsive maneuvers",
+      onClick: () => onOpenDialog({ type: "maneuvers" }),
+    },
     "---",
     {
       label: "Ground Station...",

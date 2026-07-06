@@ -19,6 +19,22 @@ export const MAX_DURATION_SECONDS = 30 * 86400;
 export const MAX_TASKS = 24;
 export const MAX_ACCESS_REQUESTS = 80;
 
+// Sensor boresight pointing (mirrors SensorObject.PointingMode). FixedVector
+// holds the boresight along a constant Earth-fixed (ECEF) direction.
+export const SENSOR_POINTING_MODES = [
+  "Nadir",
+  "VelocityVector",
+  "SunPointing",
+  "FixedVector",
+];
+
+// Impulsive maneuvers (mirrors src/objects/ImpulsiveManeuver.m). TNW delta-V
+// components are [along-track, in-plane normal, cross-track] m/s; Inertial
+// components are GCRF m/s.
+export const MANEUVER_FRAMES = ["TNW", "Inertial"];
+export const MAX_MANEUVERS_PER_SATELLITE = 8;
+export const MAX_MANEUVER_DELTA_V_MPS = 10000;
+
 const EARTH_RADIUS_KM = 6378.137;
 
 // ---------------------------------------------------------------------------
@@ -85,14 +101,28 @@ export function targetTemplate(name) {
   };
 }
 
-// Nadir-pointing conic imaging sensor attached to a satellite. The cone
-// half-angle is the instantaneous beam (FOV); the field of regard is how far
-// the sensor can slew off nadir when tasked.
+// Conic imaging sensor attached to a satellite. The cone half-angle is the
+// instantaneous beam (FOV); the field of regard is how far the sensor can
+// slew off its nominal boresight when tasked. `pointing` selects the nominal
+// boresight (SENSOR_POINTING_MODES); FixedVector also needs `boresight`, a
+// constant ECEF direction [x, y, z].
 export function sensorTemplate() {
   return {
     coneHalfAngleDeg: 20,
     fieldOfRegardDeg: 60,
     slewRateDegPerSec: 2,
+    pointing: "Nadir",
+  };
+}
+
+// Impulsive delta-V applied to a satellite during propagation. timeOffsetSec
+// is seconds after the scenario epoch; deltaVmps is a 3-vector in `frame`.
+export function maneuverTemplate() {
+  return {
+    name: "",
+    timeOffsetSec: 1800,
+    frame: "TNW",
+    deltaVmps: [10, 0, 0],
   };
 }
 
@@ -515,6 +545,74 @@ function validateSensor(sensor, errors, where) {
   ) {
     errors.push(`${where}: slew rate must be in (0, 60] deg/s.`);
   }
+  const pointing = sensor.pointing ?? "Nadir";
+  if (!SENSOR_POINTING_MODES.includes(pointing)) {
+    errors.push(
+      `${where}: sensor pointing must be one of ${SENSOR_POINTING_MODES.join(", ")}.`,
+    );
+  } else if (pointing === "FixedVector") {
+    if (!isVector3(sensor.boresight)) {
+      errors.push(
+        `${where}: FixedVector pointing needs a finite boresight [x, y, z].`,
+      );
+    } else if (vectorNorm(sensor.boresight) < 1e-9) {
+      errors.push(`${where}: boresight vector cannot be zero.`);
+    }
+  }
+}
+
+const isVector3 = (v) =>
+  Array.isArray(v) && v.length === 3 && v.every(isFiniteNumber);
+
+const vectorNorm = (v) => Math.hypot(v[0], v[1], v[2]);
+
+function validateManeuvers(obj, errors, where, meta) {
+  const maneuvers = obj.maneuvers;
+  if (maneuvers === undefined) return;
+  if (!Array.isArray(maneuvers)) {
+    errors.push(`${where}: maneuvers must be an array.`);
+    return;
+  }
+  if (maneuvers.length > MAX_MANEUVERS_PER_SATELLITE) {
+    errors.push(
+      `${where}: at most ${MAX_MANEUVERS_PER_SATELLITE} maneuvers per satellite.`,
+    );
+  }
+  if (maneuvers.length > 0 && obj.propagator === "TLE") {
+    errors.push(
+      `${where}: SGP4 satellites cannot maneuver - switch the propagator to Numerical.`,
+    );
+  }
+  const maxOffset = isFiniteNumber(meta?.durationSeconds)
+    ? meta.durationSeconds
+    : MAX_DURATION_SECONDS;
+  maneuvers.forEach((m, i) => {
+    const at = `${where} maneuvers[${i}]`;
+    if (!m || typeof m !== "object") {
+      errors.push(`${at}: must be an object.`);
+      return;
+    }
+    if (!inRange(m.timeOffsetSec, 0, maxOffset)) {
+      errors.push(
+        `${at}: time offset must be within the scenario span [0, ${maxOffset}] s.`,
+      );
+    }
+    if (m.frame !== undefined && !MANEUVER_FRAMES.includes(m.frame)) {
+      errors.push(
+        `${at}: frame must be one of ${MANEUVER_FRAMES.join(", ")}.`,
+      );
+    }
+    if (!isVector3(m.deltaVmps)) {
+      errors.push(`${at}: delta-V must be a finite [x, y, z] in m/s.`);
+    } else {
+      const magnitude = vectorNorm(m.deltaVmps);
+      if (magnitude <= 0 || magnitude > MAX_MANEUVER_DELTA_V_MPS) {
+        errors.push(
+          `${at}: delta-V magnitude must be in (0, ${MAX_MANEUVER_DELTA_V_MPS}] m/s.`,
+        );
+      }
+    }
+  });
 }
 
 function validateTasks(spec, errors) {
@@ -631,13 +729,14 @@ function validateAccessRequests(spec, errors) {
   });
 }
 
-function validateSatellite(obj, errors, where) {
+function validateSatellite(obj, errors, where, meta) {
   if (!PROPAGATORS.includes(obj.propagator)) {
     errors.push(`${where}: unknown propagator '${obj.propagator}'.`);
   }
   if (obj.sensor !== undefined) {
     validateSensor(obj.sensor, errors, where);
   }
+  validateManeuvers(obj, errors, where, meta);
   if (obj.massKg !== undefined && !inRange(obj.massKg, 0.1, 1e7)) {
     errors.push(`${where}: mass must be a positive number of kg.`);
   }
@@ -774,7 +873,7 @@ export function validateSpec(spec) {
 
     if (obj.kind === "satellite") {
       satCount += 1;
-      validateSatellite(obj, errors, where);
+      validateSatellite(obj, errors, where, spec.meta);
     } else if (obj.kind === "groundStation") {
       validateGroundGeodetics(obj, errors, where);
       if (
