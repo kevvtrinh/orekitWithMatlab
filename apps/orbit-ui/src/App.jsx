@@ -11,6 +11,7 @@ import GroundDialog from "./components/dialogs/GroundDialog.jsx";
 import ScenarioSettingsDialog from "./components/dialogs/ScenarioSettingsDialog.jsx";
 import TasksDialog from "./components/dialogs/TasksDialog.jsx";
 import SensorDialog from "./components/dialogs/SensorDialog.jsx";
+import ManeuverDialog from "./components/dialogs/ManeuverDialog.jsx";
 import AreaTargetDialog from "./components/dialogs/AreaTargetDialog.jsx";
 import AccessDialog from "./components/dialogs/AccessDialog.jsx";
 import * as api from "./lib/api.js";
@@ -384,7 +385,10 @@ export default function App() {
   // scope; selection from either panel or the 3D picker is by name.
   const openDialog = useCallback(
     (request) => {
-      if (request?.type === "sensor" && !request.satellite) {
+      if (
+        (request?.type === "sensor" || request?.type === "maneuvers") &&
+        !request.satellite
+      ) {
         const selectedSatellite = spec?.objects.find(
           (o) => o.kind === "satellite" && o.name === selection,
         );
@@ -511,6 +515,18 @@ export default function App() {
       )}
       {dialog?.type === "sensor" && spec && (
         <SensorDialog
+          spec={spec}
+          initialSatellite={dialog.satellite ?? null}
+          onClose={closeDialog}
+          onSubmit={async (originalName, obj) => {
+            const result = await replaceObject(originalName, obj);
+            if (result.ok) setSelection(obj.name);
+            return result;
+          }}
+        />
+      )}
+      {dialog?.type === "maneuvers" && spec && (
+        <ManeuverDialog
           spec={spec}
           initialSatellite={dialog.satellite ?? null}
           onClose={closeDialog}

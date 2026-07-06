@@ -40,7 +40,7 @@ for k = 1:numel(objects)
     entry = objects{k};
     switch string(entry.kind)
         case "satellite"
-            scenario = scenario.addObject(buildSatellite(entry));
+            scenario = scenario.addObject(buildSatellite(entry, cfg.Epoch));
         case "groundStation"
             gs = GroundStationObject(string(entry.name), ...
                 double(entry.latitudeDeg), double(entry.longitudeDeg), ...
@@ -60,7 +60,7 @@ for k = 1:numel(objects)
 end
 end
 
-function sat = buildSatellite(entry)
+function sat = buildSatellite(entry, epoch)
 orbit = entry.orbit;
 switch string(orbit.type)
     case "keplerian"
@@ -83,19 +83,74 @@ sat = applyColor(sat, entry);
 if isfield(entry, "sensor") && isstruct(entry.sensor)
     sat = sat.addSensor(buildSensor(entry.sensor, string(entry.name)));
 end
+sat = addManeuvers(sat, entry, epoch);
+end
+
+function sat = addManeuvers(sat, entry, epoch)
+% Spec maneuvers are impulsive burns at an offset from the scenario epoch;
+% propagation applies them piecewise (propagateWithManeuvers). SGP4 has no
+% maneuver support - the frontend validator steers users to Numerical.
+if ~isfield(entry, "maneuvers") || isempty(entry.maneuvers)
+    return
+end
+if upper(string(sat.PropagatorType)) == "TLE"
+    error("buildScenarioFromSpec:ManeuversUnsupported", ...
+        "Satellite '%s' uses the SGP4 propagator, which cannot maneuver. " + ...
+        "Switch the propagator to Numerical.", sat.Name);
+end
+entries = entry.maneuvers;
+if isstruct(entries)
+    entries = num2cell(entries);
+elseif ~iscell(entries)
+    return
+end
+for k = 1:numel(entries)
+    m = entries{k};
+    name = string(fieldOr(m, "name", sprintf("%s Maneuver %d", sat.Name, k)));
+    burnTime = epoch + seconds(double(m.timeOffsetSec));
+    frame = string(fieldOr(m, "frame", "TNW"));
+    deltaV = double(reshape(m.deltaVmps, 1, 3));
+    sat = sat.addManeuver(ImpulsiveManeuver(name, burnTime, frame, deltaV));
+end
 end
 
 function sensor = buildSensor(spec, satName)
-% Web-UI sensors are nadir-pointing conic imagers: the field of view is the
-% instantaneous beam, the field of regard is how far the sensor can slew off
-% nadir. Scheduling tasks slew the boresight; access is FOR-gated
-% (computeSensorAccess default) with FOV windows as the in-view subset.
+% Web-UI sensors are conic imagers: the field of view is the instantaneous
+% beam, the field of regard is how far the sensor can slew off the nominal
+% boresight (spec.pointing; nadir by default). Scheduling tasks slew the
+% boresight; access is FOR-gated (computeSensorAccess default) with FOV
+% windows as the in-view subset.
 name = string(fieldOr(spec, "name", satName + " Sensor"));
 sensor = SensorObject.simpleConic(name, satName, ...
     double(fieldOr(spec, "coneHalfAngleDeg", 20)));
 sensor.FieldOfRegardDeg = double(fieldOr(spec, "fieldOfRegardDeg", 60));
-sensor.PointingMode = "Nadir";
 sensor.MaxSlewRateDegPerSec = double(fieldOr(spec, "slewRateDegPerSec", 2));
+
+pointing = string(fieldOr(spec, "pointing", "Nadir"));
+switch lower(pointing)
+    case "nadir"
+        sensor.PointingMode = "Nadir";
+    case "velocityvector"
+        sensor.PointingMode = "VelocityVector";
+    case {"sunpointing", "sun"}
+        sensor.PointingMode = "SunPointing";
+    case "fixedvector"
+        boresight = fieldOr(spec, "boresight", []);
+        if numel(boresight) ~= 3 || any(~isfinite(boresight)) ...
+                || norm(double(boresight)) == 0
+            error("buildScenarioFromSpec:InvalidBoresight", ...
+                "Sensor '%s' FixedVector pointing needs a finite nonzero " + ...
+                "boresight [x, y, z].", name);
+        end
+        sensor.PointingMode = "FixedVector";
+        % Constant Earth-fixed direction (any non-Body BoresightFrame is
+        % used verbatim by SensorObject.getBoresightVector).
+        sensor.BoresightFrame = "ECEF";
+        sensor.BoresightVector = double(reshape(boresight, 1, 3));
+    otherwise
+        error("buildScenarioFromSpec:UnknownPointingMode", ...
+            "Sensor '%s' has unknown pointing mode '%s'.", name, pointing);
+end
 end
 
 function obj = applyColor(obj, entry)

@@ -16,6 +16,7 @@ import {
   expandWalker,
   groundStationTemplate,
   keplerianSatelliteTemplate,
+  maneuverTemplate,
   nextObjectName,
   sensorTemplate,
   stripEmptyFields,
@@ -619,4 +620,94 @@ test("deepEqual ignores key order but not values", () => {
   assert.ok(deepEqual({ a: 1, b: [1, 2] }, { b: [1, 2], a: 1 }));
   assert.ok(!deepEqual({ a: 1 }, { a: 2 }));
   assert.ok(!deepEqual({ a: 1 }, { a: 1, c: 3 }));
+});
+
+test("sensor pointing modes validate", () => {
+  const withSensor = (sensor) =>
+    specWith([{ ...keplerianSatelliteTemplate("Sat-1"), sensor }]);
+
+  assert.deepEqual(validateSpec(withSensor(sensorTemplate())), []);
+  assert.deepEqual(
+    validateSpec(withSensor({ ...sensorTemplate(), pointing: "SunPointing" })),
+    [],
+  );
+  assert.deepEqual(
+    validateSpec(
+      withSensor({
+        ...sensorTemplate(),
+        pointing: "FixedVector",
+        boresight: [1, 0, 0],
+      }),
+    ),
+    [],
+  );
+
+  assert.ok(
+    validateSpec(withSensor({ ...sensorTemplate(), pointing: "Sideways" }))
+      .some((e) => e.includes("pointing")),
+  );
+  assert.ok(
+    validateSpec(withSensor({ ...sensorTemplate(), pointing: "FixedVector" }))
+      .some((e) => e.includes("boresight")),
+  );
+  assert.ok(
+    validateSpec(
+      withSensor({
+        ...sensorTemplate(),
+        pointing: "FixedVector",
+        boresight: [0, 0, 0],
+      }),
+    ).some((e) => e.includes("zero")),
+  );
+});
+
+test("maneuvers validate", () => {
+  const withManeuvers = (
+    maneuvers,
+    base = keplerianSatelliteTemplate("Sat-1"),
+  ) => specWith([{ ...base, maneuvers }]);
+
+  assert.deepEqual(
+    validateSpec(stripEmptyFields(withManeuvers([maneuverTemplate()]))),
+    [],
+  );
+  assert.deepEqual(
+    validateSpec(
+      withManeuvers([
+        { timeOffsetSec: 0, frame: "Inertial", deltaVmps: [0, 0, 3] },
+      ]),
+    ),
+    [],
+  );
+
+  // SGP4 satellites cannot maneuver.
+  assert.ok(
+    validateSpec(
+      withManeuvers([maneuverTemplate()], tleSatelliteTemplate("ISS")),
+    ).some((e) => e.includes("SGP4")),
+  );
+  // Burn must fall inside the scenario span.
+  assert.ok(
+    validateSpec(
+      withManeuvers([{ ...maneuverTemplate(), timeOffsetSec: 999999 }]),
+    ).some((e) => e.includes("time offset")),
+  );
+  assert.ok(
+    validateSpec(withManeuvers([{ ...maneuverTemplate(), frame: "RSW" }]))
+      .some((e) => e.includes("frame")),
+  );
+  assert.ok(
+    validateSpec(
+      withManeuvers([{ ...maneuverTemplate(), deltaVmps: [0, 0, 0] }]),
+    ).some((e) => e.includes("magnitude")),
+  );
+  assert.ok(
+    validateSpec(withManeuvers([{ ...maneuverTemplate(), deltaVmps: [1, 2] }]))
+      .some((e) => e.includes("delta-V")),
+  );
+  assert.ok(
+    validateSpec(
+      withManeuvers(Array.from({ length: 9 }, () => maneuverTemplate())),
+    ).some((e) => e.includes("at most")),
+  );
 });

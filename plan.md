@@ -165,6 +165,28 @@ merged main; re-applied on top of main's reworked UI:
   and thicken/brighten the footprint during active tasks. Uses main's
   satellitePositionKmAtTime apex + earthFixedToViewFrame.
 
+## Web UI: sensor pointing + impulsive maneuvers in the spec (2026-07)
+
+The web spec's sensors were hard-coded nadir-pointing and satellites had no
+maneuver support, though the backend already had both. Closed the gap:
+- spec.js: sensor `pointing` (Nadir | VelocityVector | SunPointing |
+  FixedVector + `boresight` ECEF [x,y,z]) and satellite `maneuvers`
+  (name, timeOffsetSec from epoch, frame TNW | Inertial, deltaVmps [3]);
+  validation incl. burn-within-span, delta-V magnitude cap, and
+  SGP4-cannot-maneuver. Templates: sensorTemplate pointing, maneuverTemplate.
+- Dialogs: SensorDialog pointing select + boresight XYZ; new ManeuverDialog
+  (Insert > Maneuvers..., SensorDialog pattern: pick satellite, edit list).
+- buildScenarioFromSpec.m: maps pointing -> SensorObject.PointingMode
+  (BoresightFrame "ECEF" for FixedVector), builds ImpulsiveManeuver objects at
+  epoch + offset, errors on TLE-propagator maneuvers. Run path unchanged —
+  SatelliteObject.propagate already routes through propagateWithManeuvers.
+- Tests: spec.test.mjs (pointing + maneuver validation), testOrbitUiSpec.m
+  (maneuver rehydration, FixedVector pointing, unknown-pointing + SGP4
+  rejection). All 40 JS + 12 MATLAB tests pass locally; e2e run verified a
+  25 m/s prograde burn raises apogee ~89 km in the exported payload.
+- NOT yet in the web UI: maneuver markers on the timeline/3D view, force-model
+  editor, whole-body attitude.
+
 ## Known caveats / decisions
 
 - Harris-Priester drag: valid ~100–1000 km altitude; returns zero density above,

@@ -1,6 +1,13 @@
 import { useMemo, useState } from "react";
 import Modal, { FormRow, NumberInput } from "../Modal.jsx";
-import { sensorTemplate } from "../../lib/spec.js";
+import { SENSOR_POINTING_MODES, sensorTemplate } from "../../lib/spec.js";
+
+const POINTING_LABELS = {
+  Nadir: "Nadir (straight down)",
+  VelocityVector: "Velocity vector (along-track)",
+  SunPointing: "Sun pointing",
+  FixedVector: "Fixed vector (ECEF)",
+};
 
 // Top-level add/edit flow for a satellite's imaging sensor, so sensors are
 // not buried inside the satellite dialog. Picks a satellite, edits (or
@@ -33,6 +40,20 @@ export default function SensorDialog({ spec, initialSatellite, onSubmit, onClose
 
   const setField = (field, value) =>
     setSensor((s) => ({ ...s, [field]: value }));
+
+  const setPointing = (mode) =>
+    setSensor((s) => {
+      const { boresight, ...rest } = s;
+      if (mode !== "FixedVector") return { ...rest, pointing: mode };
+      return { ...rest, pointing: mode, boresight: boresight ?? [1, 0, 0] };
+    });
+
+  const setBoresightAxis = (axis, value) =>
+    setSensor((s) => {
+      const boresight = [...(s.boresight ?? [0, 0, 0])];
+      boresight[axis] = value;
+      return { ...s, boresight };
+    });
 
   const submit = async () => {
     if (!selected) return;
@@ -128,6 +149,38 @@ export default function SensorDialog({ spec, initialSatellite, onSubmit, onClose
                   max={60}
                 />
               </FormRow>
+              <FormRow
+                label="Pointing"
+                hint="Nominal boresight; the field of regard slews around it"
+              >
+                <select
+                  className="input"
+                  value={sensor.pointing ?? "Nadir"}
+                  onChange={(e) => setPointing(e.target.value)}
+                >
+                  {SENSOR_POINTING_MODES.map((mode) => (
+                    <option key={mode} value={mode}>
+                      {POINTING_LABELS[mode]}
+                    </option>
+                  ))}
+                </select>
+              </FormRow>
+              {(sensor.pointing ?? "Nadir") === "FixedVector" && (
+                <FormRow
+                  label="Boresight XYZ"
+                  hint="Constant Earth-fixed (ECEF) direction; magnitude is ignored"
+                >
+                  <div style={{ display: "flex", gap: 6 }}>
+                    {[0, 1, 2].map((axis) => (
+                      <NumberInput
+                        key={axis}
+                        value={(sensor.boresight ?? [0, 0, 0])[axis]}
+                        onChange={(v) => setBoresightAxis(axis, v)}
+                      />
+                    ))}
+                  </div>
+                </FormRow>
+              )}
             </>
           )}
           <div className="hint-text" style={{ paddingTop: 6 }}>
