@@ -39,7 +39,9 @@ function SatelliteRow({
   sensorAccessRows,
 }) {
   const badge = SOURCE_BADGE[sat.source];
-  const sensorName = sat.sensor?.name || "Sensor";
+  // Match the backend's default sensor name so the tree, schedule rows, and
+  // access requests all refer to the sensor by the same label.
+  const sensorName = sat.sensor?.name || `${sat.name} Sensor`;
   const hasChildren =
     Boolean(sat.sensor) ||
     accessRows.length > 0 ||

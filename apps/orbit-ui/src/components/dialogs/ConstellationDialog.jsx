@@ -4,7 +4,14 @@ import {
   constellationTemplate,
   expandWalker,
   nextObjectName,
+  sensorTemplate,
 } from "../../lib/spec.js";
+
+const PROPAGATOR_CHOICES = [
+  ["Keplerian", "Keplerian (two-body)"],
+  ["EcksteinHechler", "Eckstein-Hechler (J2-J6)"],
+  ["Numerical", "Numerical (HPOP)"],
+];
 
 // Insert a Walker Delta/Star constellation. The pattern expands into
 // individual Keplerian satellites at insert time (same behaviour and naming
@@ -16,6 +23,8 @@ export default function ConstellationDialog({ spec, onSubmit, onClose }) {
   );
   const [error, setError] = useState(null);
   const set = (field, value) => setParams((p) => ({ ...p, [field]: value }));
+  const setSensor = (field, value) =>
+    setParams((p) => ({ ...p, sensor: { ...p.sensor, [field]: value } }));
 
   const previewCount = useMemo(() => {
     try {
@@ -118,6 +127,68 @@ export default function ConstellationDialog({ spec, onSubmit, onClose }) {
           onChange={(v) => set("trueAnomalyOffsetDeg", v)}
         />
       </FormRow>
+      <FormRow
+        label="Propagator"
+        hint="Applied to every member; each remains individually editable after insert"
+      >
+        <select
+          className="input"
+          value={params.propagator}
+          onChange={(e) => set("propagator", e.target.value)}
+        >
+          {PROPAGATOR_CHOICES.map(([value, label]) => (
+            <option key={value} value={value}>
+              {label}
+            </option>
+          ))}
+        </select>
+      </FormRow>
+      <FormRow
+        label="Imaging sensor"
+        hint="Equip every member with an identical nadir-pointing conic sensor"
+      >
+        <input
+          type="checkbox"
+          checked={Boolean(params.sensor)}
+          onChange={(e) =>
+            set("sensor", e.target.checked ? sensorTemplate() : undefined)
+          }
+        />
+      </FormRow>
+      {params.sensor && (
+        <>
+          <FormRow
+            label="FOV half-angle (deg)"
+            hint="Instantaneous beam: half-angle of the sensor cone"
+          >
+            <NumberInput
+              value={params.sensor.coneHalfAngleDeg}
+              onChange={(v) => setSensor("coneHalfAngleDeg", v)}
+              min={0.1}
+              max={90}
+            />
+          </FormRow>
+          <FormRow
+            label="FOR half-angle (deg)"
+            hint="Field of regard: how far the sensor can slew off nadir"
+          >
+            <NumberInput
+              value={params.sensor.fieldOfRegardDeg}
+              onChange={(v) => setSensor("fieldOfRegardDeg", v)}
+              min={0.1}
+              max={180}
+            />
+          </FormRow>
+          <FormRow label="Slew rate (deg/s)">
+            <NumberInput
+              value={params.sensor.slewRateDegPerSec}
+              onChange={(v) => setSensor("slewRateDegPerSec", v)}
+              min={0.01}
+              max={60}
+            />
+          </FormRow>
+        </>
+      )}
     </Modal>
   );
 }

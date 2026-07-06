@@ -46,7 +46,15 @@ export default function SatelliteDialog({ spec, initial, onSubmit, onClose }) {
     setActive((s) => ({ ...s, sensor: { ...s.sensor, [field]: value } }));
 
   const submit = async () => {
-    const result = await onSubmit(active, initial?.name);
+    // A blank sensor name falls back to the backend default "<sat> Sensor".
+    const trimmedSensorName = (active.sensor?.name ?? "").trim();
+    const candidate = active.sensor
+      ? {
+          ...active,
+          sensor: { ...active.sensor, name: trimmedSensorName || undefined },
+        }
+      : active;
+    const result = await onSubmit(candidate, initial?.name);
     if (result?.errors) setError(result.errors.join(" "));
     else onClose();
   };
@@ -223,6 +231,16 @@ export default function SatelliteDialog({ spec, initial, onSubmit, onClose }) {
       </FormRow>
       {active.sensor && (
         <>
+          <FormRow
+            label="Sensor name"
+            hint={`Shown in the scenario tree; blank uses '${active.name} Sensor'`}
+          >
+            <TextInput
+              value={active.sensor.name ?? ""}
+              onChange={(v) => setSensor("name", v)}
+              placeholder={`${active.name} Sensor`}
+            />
+          </FormRow>
           <FormRow
             label="FOV half-angle (deg)"
             hint="Instantaneous beam: half-angle of the sensor cone"

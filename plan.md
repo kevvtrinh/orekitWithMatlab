@@ -207,6 +207,18 @@ maneuver support, though the backend already had both. Closed the gap:
 - NOT yet in the web UI: maneuver markers on the timeline/3D view, force-model
   editor, whole-body attitude.
 
+## Web UI satellite/sensor create flow (2026-07)
+
+- ConstellationDialog: propagator picker (Keplerian/EH/Numerical) and an
+  "Imaging sensor" section that equips every Walker member via a new
+  `sensor` param on `expandWalker` (per-member copy, no aliasing).
+- Sensor names: optional `sensor.name` now editable in SensorDialog and
+  SatelliteDialog (blank -> backend default "<sat> Sensor", already
+  supported by buildScenarioFromSpec.m); validateSpec rejects empty/
+  non-string names; ObjectBrowser tree fallback label now matches the
+  backend default instead of the bare "Sensor".
+- Tests: spec.test.mjs covers walker sensor expansion + name validation.
+
 ## Known caveats / decisions
 
 - Harris-Priester drag: valid ~100–1000 km altitude; returns zero density above,

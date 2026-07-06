@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import Modal, { FormRow, NumberInput } from "../Modal.jsx";
+import Modal, { FormRow, NumberInput, TextInput } from "../Modal.jsx";
 import { SENSOR_POINTING_MODES, sensorTemplate } from "../../lib/spec.js";
 
 const POINTING_LABELS = {
@@ -57,7 +57,12 @@ export default function SensorDialog({ spec, initialSatellite, onSubmit, onClose
 
   const submit = async () => {
     if (!selected) return;
-    const updated = { ...selected, sensor: enabled ? sensor : undefined };
+    // A blank name falls back to the backend default "<satellite> Sensor".
+    const trimmedName = (sensor.name ?? "").trim();
+    const cleaned = trimmedName
+      ? { ...sensor, name: trimmedName }
+      : { ...sensor, name: undefined };
+    const updated = { ...selected, sensor: enabled ? cleaned : undefined };
     const result = await onSubmit(selected.name, updated);
     if (result?.errors) setError(result.errors.join(" "));
     else onClose();
@@ -119,6 +124,16 @@ export default function SensorDialog({ spec, initialSatellite, onSubmit, onClose
           </FormRow>
           {enabled && (
             <>
+              <FormRow
+                label="Sensor name"
+                hint={`Shown in the scenario tree; blank uses '${satName} Sensor'`}
+              >
+                <TextInput
+                  value={sensor.name ?? ""}
+                  onChange={(v) => setField("name", v)}
+                  placeholder={`${satName} Sensor`}
+                />
+              </FormRow>
               <FormRow
                 label="FOV half-angle (deg)"
                 hint="Instantaneous beam: half-angle of the sensor cone"
