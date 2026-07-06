@@ -382,7 +382,21 @@ export default function App() {
 
   // Fly the camera-side selection to a satellite's current subpoint is out of
   // scope; selection from either panel or the 3D picker is by name.
-  const openDialog = useCallback((d) => setDialog(d), []);
+  const openDialog = useCallback(
+    (request) => {
+      if (request?.type === "sensor" && !request.satellite) {
+        const selectedSatellite = spec?.objects.find(
+          (o) => o.kind === "satellite" && o.name === selection,
+        );
+        if (selectedSatellite) {
+          setDialog({ ...request, satellite: selectedSatellite.name });
+          return;
+        }
+      }
+      setDialog(request);
+    },
+    [selection, spec],
+  );
   const closeDialog = useCallback(() => setDialog(null), []);
 
   return (
@@ -500,7 +514,11 @@ export default function App() {
           spec={spec}
           initialSatellite={dialog.satellite ?? null}
           onClose={closeDialog}
-          onSubmit={replaceObject}
+          onSubmit={async (originalName, obj) => {
+            const result = await replaceObject(originalName, obj);
+            if (result.ok) setSelection(obj.name);
+            return result;
+          }}
         />
       )}
       {dialog?.type === "areaTarget" && spec && (

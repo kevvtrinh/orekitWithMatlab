@@ -11,7 +11,10 @@ export default function SensorDialog({ spec, initialSatellite, onSubmit, onClose
     [spec],
   );
   const [satName, setSatName] = useState(
-    initialSatellite ?? satellites[0]?.name ?? "",
+    initialSatellite ??
+      satellites.find((s) => !s.sensor)?.name ??
+      satellites[0]?.name ??
+      "",
   );
   const selected = satellites.find((s) => s.name === satName);
   const [sensor, setSensor] = useState(() =>
@@ -34,7 +37,7 @@ export default function SensorDialog({ spec, initialSatellite, onSubmit, onClose
   const submit = async () => {
     if (!selected) return;
     const updated = { ...selected, sensor: enabled ? sensor : undefined };
-    const result = await onSubmit(updated, selected.name);
+    const result = await onSubmit(selected.name, updated);
     if (result?.errors) setError(result.errors.join(" "));
     else onClose();
   };
