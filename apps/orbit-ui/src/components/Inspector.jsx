@@ -139,7 +139,21 @@ function GroundDetails({ gp, tSec, sun }) {
   return (
     <dl className="kv">
       <dt>Type</dt>
-      <dd>{gp.kind === "target" ? "Point Target" : "Ground Station"}</dd>
+      <dd>
+        {gp.kind !== "target"
+          ? "Ground Station"
+          : gp.area
+            ? "Area Grid Point"
+            : "Point Target"}
+      </dd>
+      {gp.area && (
+        <>
+          <dt>Area</dt>
+          <dd>
+            {gp.area.name} ({gp.area.widthKm} x {gp.area.heightKm} km)
+          </dd>
+        </>
+      )}
       {daylight !== null && (
         <>
           <dt>Local sun</dt>

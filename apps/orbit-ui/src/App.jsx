@@ -19,6 +19,7 @@ import { buildRenderScenario } from "./lib/renderScenario.js";
 import { satLlaAt } from "./lib/scenarioUtils.js";
 import {
   deriveSpecFromScenario,
+  removeTargetGroup,
   stripEmptyFields,
   validateSpec,
 } from "./lib/spec.js";
@@ -230,6 +231,26 @@ export default function App() {
     [applySpec, spec],
   );
 
+  const deleteArea = useCallback(
+    (group) => {
+      const count = spec.objects.filter(
+        (o) => o.kind === "target" && o.group === group,
+      ).length;
+      if (count === 0) return;
+      if (
+        !window.confirm(
+          `Delete area '${group}' and its ${count} grid points from the scenario?`,
+        )
+      ) {
+        return;
+      }
+      applySpec(removeTargetGroup(spec, group)).then((result) => {
+        if (result.errors) setSpecError(result.errors.join(" "));
+      });
+    },
+    [applySpec, spec],
+  );
+
   const removeSensor = useCallback(
     (name) => {
       const obj = spec?.objects.find((o) => o.name === name);
@@ -427,6 +448,7 @@ export default function App() {
             openDialog({ type: "sensor", satellite: name });
           }}
           onRemoveSensor={removeSensor}
+          onDeleteArea={deleteArea}
         />
         <div className="viewport-wrap">
           <Viewport3D

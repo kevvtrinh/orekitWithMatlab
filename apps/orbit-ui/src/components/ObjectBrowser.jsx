@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { groupTargets } from "../lib/spec.js";
 
 // Scenario tree: spec-driven, so objects appear the moment they are added,
 // before any MATLAB run. Badges mark satellites whose displayed ephemeris is
@@ -198,13 +199,31 @@ export default function ObjectBrowser({
   onSelect,
   onEditSensor,
   onRemoveSensor,
+  onDeleteArea,
 }) {
   const [expandedSatellites, setExpandedSatellites] = useState(() => new Set());
+  const [expandedAreas, setExpandedAreas] = useState(() => new Set());
   const satelliteNames = useMemo(
     () => new Set((scenario?.satellites ?? []).map((sat) => sat.name)),
     [scenario?.satellites],
   );
   const selectedSatellite = satelliteNames.has(selection) ? selection : null;
+
+  // Area grid points share a group tag; fold each area into one collapsible
+  // node instead of listing up to 100 point rows.
+  const targetTree = useMemo(
+    () => groupTargets(scenario?.groundPoints ?? []),
+    [scenario?.groundPoints],
+  );
+  const areaNames = useMemo(
+    () => new Set(targetTree.areas.keys()),
+    [targetTree],
+  );
+  // Selecting a grid point (e.g. by clicking its marker in the 3D view)
+  // auto-expands the area that contains it.
+  const selectedArea =
+    (scenario?.groundPoints ?? []).find((g) => g.name === selection)?.group ??
+    null;
 
   useEffect(() => {
     setExpandedSatellites((current) => {
@@ -225,6 +244,25 @@ export default function ObjectBrowser({
     });
   }, [satelliteNames, selectedSatellite]);
 
+  useEffect(() => {
+    setExpandedAreas((current) => {
+      let changed = false;
+      const next = new Set();
+      for (const name of current) {
+        if (areaNames.has(name)) {
+          next.add(name);
+        } else {
+          changed = true;
+        }
+      }
+      if (selectedArea && !next.has(selectedArea)) {
+        next.add(selectedArea);
+        changed = true;
+      }
+      return changed ? next : current;
+    });
+  }, [areaNames, selectedArea]);
+
   if (!scenario) {
     return (
       <aside className="panel panel--left">
@@ -236,6 +274,15 @@ export default function ObjectBrowser({
 
   const toggleSatellite = (name) => {
     setExpandedSatellites((current) => {
+      const next = new Set(current);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  };
+
+  const toggleArea = (name) => {
+    setExpandedAreas((current) => {
       const next = new Set(current);
       if (next.has(name)) next.delete(name);
       else next.add(name);
@@ -263,15 +310,10 @@ export default function ObjectBrowser({
   }
 
   const stations = scenario.groundPoints.filter((g) => g.kind === "groundStation");
-  const targets = scenario.groundPoints.filter((g) => g.kind === "target");
-  // Area grid points share a group tag; fold them under their parent area.
-  const ungroupedTargets = targets.filter((t) => !t.group);
-  const targetGroups = new Map();
-  for (const t of targets) {
-    if (!t.group) continue;
-    if (!targetGroups.has(t.group)) targetGroups.set(t.group, []);
-    targetGroups.get(t.group).push(t);
-  }
+  const { points: pointTargets, areas: areaGroups } = targetTree;
+  // Areas count as one object each in the section header; their grid points
+  // are implementation detail, not scenario objects the user reasons about.
+  const targetCount = pointTargets.length + areaGroups.size;
 
   return (
     <aside className="panel panel--left">
@@ -343,10 +385,10 @@ export default function ObjectBrowser({
           ))}
         </div>
 
-        {targets.length > 0 && (
+        {targetCount > 0 && (
           <div className="tree-group">
-            <div className="tree-group-label">Targets ({targets.length})</div>
-            {ungroupedTargets.map((gp) => (
+            <div className="tree-group-label">Targets ({targetCount})</div>
+            {pointTargets.map((gp) => (
               <button
                 key={gp.name}
                 className={`tree-item ${selection === gp.name ? "selected" : ""}`}
@@ -357,24 +399,81 @@ export default function ObjectBrowser({
                 <span className="meta">P{gp.priority ?? 1}</span>
               </button>
             ))}
-            {[...targetGroups.entries()].map(([group, points]) => (
-              <div key={group}>
-                <div className="tree-subgroup-label" title={group}>
-                  {group} ({points.length} pts)
+            {[...areaGroups.entries()].map(([group, points]) => {
+              const expanded = expandedAreas.has(group);
+              const area = points[0]?.area;
+              return (
+                <div
+                  key={group}
+                  className={`tree-node ${expanded ? "tree-node--open" : ""}`}
+                >
+                  <div className="tree-node-row">
+                    <button
+                      className="tree-disclosure"
+                      onClick={() => toggleArea(group)}
+                      aria-expanded={expanded}
+                      title={
+                        expanded
+                          ? `Collapse ${group}`
+                          : `Expand ${group} (${points.length} grid points)`
+                      }
+                    >
+                      {expanded ? "v" : ">"}
+                    </button>
+                    {/* The area itself is not a spec object (only its grid
+                        points are), so the row toggles instead of selecting. */}
+                    <div
+                      className="tree-item tree-item--area"
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => toggleArea(group)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") toggleArea(group);
+                      }}
+                      title={
+                        area
+                          ? `${group}: ${area.widthKm} x ${area.heightKm} km area sampled by ${points.length} grid points`
+                          : group
+                      }
+                    >
+                      <span className="area-glyph" />
+                      <span className="tree-item-name">{group}</span>
+                      {onDeleteArea && (
+                        <span className="tree-actions">
+                          <button
+                            className="tree-action-btn tree-action-btn--danger"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onDeleteArea(group);
+                            }}
+                            title={`Delete this area and its ${points.length} grid points`}
+                          >
+                            del
+                          </button>
+                        </span>
+                      )}
+                      <span className="meta">{points.length} pts</span>
+                    </div>
+                  </div>
+                  {expanded && (
+                    <div className="tree-children">
+                      {points.map((gp) => (
+                        <button
+                          key={gp.name}
+                          className={`tree-item tree-item--child ${selection === gp.name ? "selected" : ""}`}
+                          onClick={() => onSelect(gp.name)}
+                        >
+                          <span className="branch">|</span>
+                          <span className="shape" style={{ background: gp.color }} />
+                          <span className="tree-item-name">{gp.name}</span>
+                          <span className="meta">P{gp.priority ?? 1}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
-                {points.map((gp) => (
-                  <button
-                    key={gp.name}
-                    className={`tree-item ${selection === gp.name ? "selected" : ""}`}
-                    onClick={() => onSelect(gp.name)}
-                  >
-                    <span className="shape" style={{ background: gp.color }} />
-                    {gp.name}
-                    <span className="meta">P{gp.priority ?? 1}</span>
-                  </button>
-                ))}
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
 
