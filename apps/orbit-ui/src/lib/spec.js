@@ -270,6 +270,7 @@ export function expandWalker(params) {
     argPerigeeDeg,
     trueAnomalyOffsetDeg,
     propagator = "Keplerian",
+    sensor,
   } = params;
 
   if (!Number.isInteger(totalSatellites) || totalSatellites < 1) {
@@ -304,6 +305,10 @@ export function expandWalker(params) {
         propagator,
         massKg: 1000,
         group,
+        // Each member gets its own copy so editing one later cannot alias
+        // another. Sensor names stay unset: the backend derives a unique
+        // "<member> Sensor" per platform.
+        ...(sensor ? { sensor: { ...sensor } } : {}),
         orbit: {
           type: "keplerian",
           semiMajorAxisKm,
@@ -496,6 +501,12 @@ function validateSensor(sensor, errors, where) {
   if (typeof sensor !== "object" || sensor === null) {
     errors.push(`${where}: sensor must be an object.`);
     return;
+  }
+  if (
+    sensor.name !== undefined &&
+    (typeof sensor.name !== "string" || sensor.name.trim().length === 0)
+  ) {
+    errors.push(`${where}: sensor name must be a non-empty string.`);
   }
   if (!inRange(sensor.coneHalfAngleDeg, 0.1, 90)) {
     errors.push(`${where}: sensor cone half-angle must be in (0, 90] deg.`);

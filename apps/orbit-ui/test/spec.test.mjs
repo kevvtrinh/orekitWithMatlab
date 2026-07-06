@@ -154,6 +154,62 @@ test("expandWalker matches ConstellationFactory semantics", () => {
   );
 });
 
+test("expandWalker equips every member with an independent sensor copy", () => {
+  const base = {
+    pattern: "delta",
+    prefix: "IMG",
+    totalSatellites: 4,
+    planes: 2,
+    phasing: 0,
+    semiMajorAxisKm: 7000,
+    eccentricity: 0.001,
+    inclinationDeg: 53,
+    raanOffsetDeg: 0,
+    argPerigeeDeg: 0,
+    trueAnomalyOffsetDeg: 0,
+    propagator: "EcksteinHechler",
+  };
+
+  // Without a sensor param, members stay bare (no sensor key at all).
+  assert.ok(expandWalker(base).every((s) => !("sensor" in s)));
+
+  const sats = expandWalker({ ...base, sensor: sensorTemplate() });
+  assert.equal(sats.length, 4);
+  assert.ok(sats.every((s) => s.sensor?.coneHalfAngleDeg === 20));
+  assert.ok(sats.every((s) => s.propagator === "EcksteinHechler"));
+  // Copies must not alias: editing one member's sensor leaves the rest alone.
+  sats[0].sensor.coneHalfAngleDeg = 5;
+  assert.equal(sats[1].sensor.coneHalfAngleDeg, 20);
+  // The expanded constellation is a valid spec as inserted.
+  assert.deepEqual(validateSpec(stripEmptyFields(specWith(sats))), []);
+});
+
+test("sensor names are optional but must be non-empty strings", () => {
+  const named = specWith([
+    {
+      ...keplerianSatelliteTemplate("Imager"),
+      sensor: { ...sensorTemplate(), name: "EO Camera" },
+    },
+  ]);
+  assert.deepEqual(validateSpec(stripEmptyFields(named)), []);
+
+  const blank = specWith([
+    {
+      ...keplerianSatelliteTemplate("Imager"),
+      sensor: { ...sensorTemplate(), name: "   " },
+    },
+  ]);
+  assert.ok(validateSpec(blank).some((e) => e.includes("sensor name")));
+
+  const nonString = specWith([
+    {
+      ...keplerianSatelliteTemplate("Imager"),
+      sensor: { ...sensorTemplate(), name: 42 },
+    },
+  ]);
+  assert.ok(validateSpec(nonString).some((e) => e.includes("sensor name")));
+});
+
 test("expandAreaGrid produces a valid centered grid of point targets", () => {
   const targets = expandAreaGrid({
     name: "Basin",
