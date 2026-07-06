@@ -454,6 +454,46 @@ select.input option {
   cursor: pointer;
 }
 
+.tree-node-row {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+}
+
+.tree-node-row > .tree-item {
+  flex: 1;
+  min-width: 0;
+  padding-left: 0;
+}
+
+.tree-disclosure {
+  width: 18px;
+  flex: 0 0 18px;
+  border: none;
+  border-radius: 0;
+  background: none;
+  color: var(--text-faint);
+  font: 11px var(--mono);
+  cursor: pointer;
+}
+
+.tree-disclosure:hover:not(:disabled),
+.tree-disclosure:focus-visible {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.04);
+  outline: none;
+}
+
+.tree-disclosure:disabled {
+  cursor: default;
+  opacity: 0.2;
+}
+
+.tree-children {
+  border-left: 1px solid rgba(100, 107, 119, 0.28);
+  margin-left: 8px;
+}
+
 .tree-item:hover {
   background: rgba(255, 255, 255, 0.04);
 }
@@ -482,11 +522,19 @@ select.input option {
   font-size: 11px;
   font-family: var(--mono);
   color: var(--text-faint);
+  white-space: nowrap;
+}
+
+.tree-item-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Child rows (e.g. a satellite's sensor), STK object-browser style. */
 .tree-item--child {
-  padding-left: 26px;
+  padding-left: 17px;
   gap: 6px;
   font-size: 12px;
   color: var(--text-muted);
@@ -498,12 +546,35 @@ select.input option {
   flex: none;
 }
 
+.tree-item--child .dot {
+  width: 7px;
+  height: 7px;
+}
+
 .tree-item--child .sensor-glyph {
   width: 0;
   height: 0;
   border-left: 4px solid transparent;
   border-right: 4px solid transparent;
   border-top: 8px solid #7fb4d8;
+  flex: none;
+}
+
+.tree-item--child .task-glyph {
+  width: 8px;
+  height: 8px;
+  border: 1px solid rgba(224, 164, 60, 0.9);
+  background: rgba(224, 164, 60, 0.24);
+  border-radius: 2px;
+  flex: none;
+}
+
+.tree-item--child .sensor-access-glyph {
+  width: 9px;
+  height: 9px;
+  border: 1px solid rgba(95, 201, 143, 0.75);
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 2px rgba(95, 201, 143, 0.12);
   flex: none;
 }
 

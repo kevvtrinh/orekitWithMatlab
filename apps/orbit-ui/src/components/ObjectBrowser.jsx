@@ -1,3 +1,5 @@
+import { useEffect, useMemo, useState } from "react";
+
 // Scenario tree: spec-driven, so objects appear the moment they are added,
 // before any MATLAB run. Badges mark satellites whose displayed ephemeris is
 // a browser preview ("prev") or that are waiting on the backend ("run").
@@ -6,65 +8,182 @@ const SOURCE_BADGE = {
   pending: { text: "run", title: "Requires a MATLAB run (SGP4 propagates on the backend)" },
 };
 
-function SatelliteRow({ sat, selected, onSelect, onEditSensor, onRemoveSensor }) {
+function childSummary({ accessRows, taskRows, sensorAccessRows }) {
+  const parts = [];
+  if (accessRows.length > 0) {
+    parts.push(`${accessRows.length} access`);
+  }
+  if (taskRows.length > 0) {
+    parts.push(`${taskRows.length} task${taskRows.length === 1 ? "" : "s"}`);
+  }
+  if (sensorAccessRows.length > 0) {
+    parts.push(`${sensorAccessRows.length} sensor view`);
+  }
+  return parts.join(" / ");
+}
+
+function otherEndpoint(pair, satName) {
+  return pair.source === satName ? pair.target : pair.source;
+}
+
+function SatelliteRow({
+  sat,
+  selected,
+  expanded,
+  onToggleExpanded,
+  onSelect,
+  onEditSensor,
+  onRemoveSensor,
+  accessRows,
+  taskRows,
+  sensorAccessRows,
+}) {
   const badge = SOURCE_BADGE[sat.source];
+  const sensorName = sat.sensor?.name || "Sensor";
+  const hasChildren =
+    Boolean(sat.sensor) ||
+    accessRows.length > 0 ||
+    taskRows.length > 0 ||
+    sensorAccessRows.length > 0;
+  const summary = childSummary({ accessRows, taskRows, sensorAccessRows });
+
   return (
-    <div>
-      <button
-        className={`tree-item ${selected ? "selected" : ""}`}
-        onClick={() => onSelect(sat.name)}
-      >
-        <span className="dot" style={{ background: sat.color }} />
-        {sat.name}
-        {badge && (
-          <span className={`badge badge--${sat.source}`} title={badge.title}>
-            {badge.text}
-          </span>
-        )}
-        <span className="meta">{sat.propagatorType}</span>
-      </button>
-      {sat.sensor && (
-        // Child row, STK object-browser style. Selecting it selects the
-        // parent platform (the sensor has no standalone identity in the
-        // spec); the inspector then shows the sensor details.
-        <div
-          className={`tree-item tree-item--child ${selected ? "selected" : ""}`}
-          role="button"
-          tabIndex={0}
-          onClick={() => onSelect(sat.name)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === " ") onSelect(sat.name);
-          }}
-          title={`Imaging sensor on ${sat.name}`}
+    <div className={`tree-node ${expanded ? "tree-node--open" : ""}`}>
+      <div className="tree-node-row">
+        <button
+          className="tree-disclosure"
+          onClick={() => hasChildren && onToggleExpanded(sat.name)}
+          disabled={!hasChildren}
+          aria-expanded={hasChildren ? expanded : undefined}
+          title={
+            hasChildren
+              ? expanded
+                ? `Collapse ${sat.name}`
+                : `Expand ${sat.name}`
+              : "No child objects"
+          }
         >
-          <span className="branch">&#9492;</span>
-          <span className="sensor-glyph" />
-          Sensor
-          <span className="tree-actions">
-            <button
-              className="tree-action-btn"
-              onClick={(e) => {
-                e.stopPropagation();
-                onEditSensor(sat.name);
+          {hasChildren ? (expanded ? "v" : ">") : ""}
+        </button>
+        <button
+          className={`tree-item tree-item--satellite ${selected ? "selected" : ""}`}
+          onClick={() => onSelect(sat.name)}
+          title={summary || undefined}
+        >
+          <span className="dot" style={{ background: sat.color }} />
+          <span className="tree-item-name">{sat.name}</span>
+          {badge && (
+            <span className={`badge badge--${sat.source}`} title={badge.title}>
+              {badge.text}
+            </span>
+          )}
+          <span className="meta">{sat.propagatorType}</span>
+        </button>
+      </div>
+
+      {expanded && hasChildren && (
+        <div className="tree-children">
+          {/* Selecting the sensor selects its parent platform; the spec has no standalone sensor object id. */}
+          {sat.sensor && (
+            <div
+              className={`tree-item tree-item--child ${selected ? "selected" : ""}`}
+              role="button"
+              tabIndex={0}
+              onClick={() => onSelect(sat.name)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") onSelect(sat.name);
               }}
-              title="Edit this sensor"
+              title={`Imaging sensor on ${sat.name}`}
             >
-              edit
-            </button>
+              <span className="branch">|</span>
+              <span className="sensor-glyph" />
+              <span className="tree-item-name">{sensorName}</span>
+              <span className="tree-actions">
+                <button
+                  className="tree-action-btn"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onEditSensor(sat.name);
+                  }}
+                  title="Edit this sensor"
+                >
+                  edit
+                </button>
+                <button
+                  className="tree-action-btn tree-action-btn--danger"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onRemoveSensor(sat.name);
+                  }}
+                  title="Remove this sensor from the satellite"
+                >
+                  del
+                </button>
+              </span>
+              <span className="meta">
+                {sat.sensor.coneHalfAngleDeg}/{sat.sensor.fieldOfRegardDeg} deg
+              </span>
+            </div>
+          )}
+
+          {accessRows.map((a) => (
             <button
-              className="tree-action-btn tree-action-btn--danger"
-              onClick={(e) => {
-                e.stopPropagation();
-                onRemoveSensor(sat.name);
-              }}
-              title="Remove this sensor from the satellite"
+              key={`access:${a.source}->${a.target}`}
+              className={`tree-item tree-item--child ${a.stale ? "tree-item--stale" : ""}`}
+              onClick={() => onSelect(otherEndpoint(a, sat.name))}
+              title={
+                a.stale
+                  ? "Stale access result - run MATLAB again"
+                  : `${a.source} -> ${a.target}`
+              }
             >
-              del
+              <span className="branch">|</span>
+              <span
+                className="dot"
+                style={{
+                  background: a.stale
+                    ? "var(--text-faint)"
+                    : a.windows.length
+                      ? "var(--ok)"
+                      : "var(--text-faint)",
+                }}
+              />
+              <span className="tree-item-name">
+                Access to {otherEndpoint(a, sat.name)}
+              </span>
+              <span className="meta">{a.stale ? "stale" : `${a.windows.length}w`}</span>
             </button>
-          </span>
-          <span className="meta">
-            {sat.sensor.coneHalfAngleDeg}/{sat.sensor.fieldOfRegardDeg} deg
-          </span>
+          ))}
+
+          {taskRows.map((entry) => (
+            <button
+              key={`task:${entry.taskId}:${entry.startUtc}`}
+              className={`tree-item tree-item--child ${entry.stale ? "tree-item--stale" : ""}`}
+              onClick={() => onSelect(entry.targetName)}
+              title={`${entry.taskName}: ${entry.sensorName} -> ${entry.targetName}`}
+            >
+              <span className="branch">|</span>
+              <span className="task-glyph" />
+              <span className="tree-item-name">{entry.taskName}</span>
+              <span className="meta">{entry.targetName}</span>
+            </button>
+          ))}
+
+          {sensorAccessRows.map((pair) => (
+            <button
+              key={`sensor-access:${pair.sensor}->${pair.target}`}
+              className={`tree-item tree-item--child ${pair.stale ? "tree-item--stale" : ""}`}
+              onClick={() => onSelect(pair.target)}
+              title={`${pair.sensor} visibility to ${pair.target}`}
+            >
+              <span className="branch">|</span>
+              <span className="sensor-access-glyph" />
+              <span className="tree-item-name">{pair.sensor} to {pair.target}</span>
+              <span className="meta">
+                FOR {pair.forWindows.length} / FOV {pair.fovWindows.length}
+              </span>
+            </button>
+          ))}
         </div>
       )}
     </div>
@@ -78,6 +197,32 @@ export default function ObjectBrowser({
   onEditSensor,
   onRemoveSensor,
 }) {
+  const [expandedSatellites, setExpandedSatellites] = useState(() => new Set());
+  const satelliteNames = useMemo(
+    () => new Set((scenario?.satellites ?? []).map((sat) => sat.name)),
+    [scenario?.satellites],
+  );
+  const selectedSatellite = satelliteNames.has(selection) ? selection : null;
+
+  useEffect(() => {
+    setExpandedSatellites((current) => {
+      let changed = false;
+      const next = new Set();
+      for (const name of current) {
+        if (satelliteNames.has(name)) {
+          next.add(name);
+        } else {
+          changed = true;
+        }
+      }
+      if (selectedSatellite && !next.has(selectedSatellite)) {
+        next.add(selectedSatellite);
+        changed = true;
+      }
+      return changed ? next : current;
+    });
+  }, [satelliteNames, selectedSatellite]);
+
   if (!scenario) {
     return (
       <aside className="panel panel--left">
@@ -86,6 +231,25 @@ export default function ObjectBrowser({
       </aside>
     );
   }
+
+  const toggleSatellite = (name) => {
+    setExpandedSatellites((current) => {
+      const next = new Set(current);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  };
+
+  const rowContext = (sat) => ({
+    accessRows: scenario.accesses.filter(
+      (a) => a.source === sat.name || a.target === sat.name,
+    ),
+    taskRows: scenario.schedule.filter((entry) => entry.platformName === sat.name),
+    sensorAccessRows: scenario.sensorAccesses.filter(
+      (pair) => pair.platform === sat.name,
+    ),
+  });
 
   // Constellation members carry a group tag; render them under a sub-header.
   const ungrouped = scenario.satellites.filter((s) => !s.group);
@@ -121,9 +285,12 @@ export default function ObjectBrowser({
               key={sat.name}
               sat={sat}
               selected={selection === sat.name}
+              expanded={expandedSatellites.has(sat.name)}
+              onToggleExpanded={toggleSatellite}
               onSelect={onSelect}
               onEditSensor={onEditSensor}
               onRemoveSensor={onRemoveSensor}
+              {...rowContext(sat)}
             />
           ))}
           {[...groups.entries()].map(([group, sats]) => (
@@ -136,9 +303,12 @@ export default function ObjectBrowser({
                   key={sat.name}
                   sat={sat}
                   selected={selection === sat.name}
+                  expanded={expandedSatellites.has(sat.name)}
+                  onToggleExpanded={toggleSatellite}
                   onSelect={onSelect}
                   onEditSensor={onEditSensor}
                   onRemoveSensor={onRemoveSensor}
+                  {...rowContext(sat)}
                 />
               ))}
             </div>
