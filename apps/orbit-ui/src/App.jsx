@@ -437,7 +437,7 @@ export default function App() {
           scenario={scenario}
           selection={selection}
           job={job}
-          onRunMatlab={runMatlab}
+          onRunMatlab={() => runAccessRequests(null)}
           onOpenDialog={openDialog}
           onDeleteObject={deleteObject}
         />

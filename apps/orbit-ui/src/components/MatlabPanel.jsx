@@ -25,7 +25,7 @@ export default function MatlabPanel({ job, onRunMatlab, dirty }) {
 
       <button
         className="btn btn--primary"
-        onClick={onRunMatlab}
+        onClick={() => onRunMatlab?.()}
         disabled={running}
       >
         {running
