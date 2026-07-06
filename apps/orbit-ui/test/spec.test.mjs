@@ -8,6 +8,8 @@ import { fileURLToPath } from "node:url";
 
 import {
   accessRequestOptions,
+  areaOutlinePoints,
+  collectAreaOutlines,
   deepEqual,
   deriveSpecFromScenario,
   expandAreaGrid,
@@ -163,19 +165,36 @@ test("expandAreaGrid produces a valid centered grid of point targets", () => {
     spacingKm: 50,
     priority: 7,
   });
-  // 100 km / 50 km spacing -> 3 columns x 3 rows, centered on the middle.
-  assert.equal(targets.length, 9);
+  // 100 km / 50 km spacing -> 2x2 equal cells sampled at their centers.
+  assert.equal(targets.length, 4);
   assert.equal(targets[0].name, "Basin-R01C01");
-  assert.equal(targets[8].name, "Basin-R03C03");
-  const center = targets[4];
-  assert.equal(center.latitudeDeg, 39);
-  assert.equal(center.longitudeDeg, -105);
+  assert.equal(targets[3].name, "Basin-R02C02");
   assert.ok(targets.every((t) => t.kind === "target" && t.priority === 7));
+  // Every point carries the parent-area metadata for outline rendering.
+  assert.ok(
+    targets.every(
+      (t) =>
+        t.group === "Basin" &&
+        t.area.name === "Basin" &&
+        t.area.centerLatDeg === 39 &&
+        t.area.centerLonDeg === -105 &&
+        t.area.widthKm === 100 &&
+        t.area.heightKm === 100,
+    ),
+  );
+  // Cell centers sit strictly inside the area, symmetric about the center.
+  const kmPerDeg = 111.32;
+  const halfLatDeg = 50 / kmPerDeg;
+  assert.ok(
+    targets.every((t) => Math.abs(t.latitudeDeg - 39) < halfLatDeg),
+  );
+  assert.ok(Math.abs(targets[0].latitudeDeg - (39 - 25 / kmPerDeg)) < 1e-9);
+  assert.ok(Math.abs(targets[3].latitudeDeg - (39 + 25 / kmPerDeg)) < 1e-9);
+  const dLon = 25 / (kmPerDeg * Math.cos((39 * Math.PI) / 180));
+  assert.ok(Math.abs(targets[0].longitudeDeg - (-105 - dLon)) < 1e-9);
   // The whole grid drops into a spec as ordinary point targets.
   const spec = specWith(targets);
   assert.deepEqual(validateSpec(stripEmptyFields(spec)), []);
-  // Latitude spacing ~50 km ~ 0.449 deg.
-  assert.ok(Math.abs(targets[0].latitudeDeg - (39 - 50 / 111.32)) < 1e-9);
 
   // Single point when the area is smaller than the spacing.
   const single = expandAreaGrid({
@@ -226,6 +245,65 @@ test("expandAreaGrid produces a valid centered grid of point targets", () => {
       }),
     /Width/,
   );
+});
+
+test("area outlines derive from grid-point metadata", () => {
+  const gridA = expandAreaGrid({
+    name: "A",
+    centerLatDeg: 10,
+    centerLonDeg: 20,
+    widthKm: 100,
+    heightKm: 60,
+    spacingKm: 25,
+  });
+  const gridB = expandAreaGrid({
+    name: "B",
+    centerLatDeg: -30,
+    centerLonDeg: 40,
+    widthKm: 50,
+    heightKm: 50,
+    spacingKm: 50,
+  });
+  const outlines = collectAreaOutlines([
+    ...gridA,
+    targetTemplate("Solo"),
+    ...gridB,
+  ]);
+  // One outline per area; standalone targets contribute none.
+  assert.deepEqual(
+    outlines.map((o) => o.name),
+    ["A", "B"],
+  );
+
+  const a = outlines[0];
+  assert.equal(a.points.length, 32); // 4 edges x 8 segments, open ring
+  const lats = a.points.map((p) => p.latDeg);
+  const lons = a.points.map((p) => p.lonDeg);
+  const kmPerDeg = 111.32;
+  assert.ok(Math.abs(Math.max(...lats) - (10 + 30 / kmPerDeg)) < 1e-9);
+  assert.ok(Math.abs(Math.min(...lats) - (10 - 30 / kmPerDeg)) < 1e-9);
+  const halfLonDeg = 50 / (kmPerDeg * Math.cos((10 * Math.PI) / 180));
+  assert.ok(Math.abs(Math.max(...lons) - (20 + halfLonDeg)) < 1e-9);
+  assert.ok(Math.abs(Math.min(...lons) - (20 - halfLonDeg)) < 1e-9);
+  // Grid points sit strictly inside the outline bounds.
+  assert.ok(
+    gridA.every(
+      (t) =>
+        t.latitudeDeg > Math.min(...lats) &&
+        t.latitudeDeg < Math.max(...lats) &&
+        t.longitudeDeg > Math.min(...lons) &&
+        t.longitudeDeg < Math.max(...lons),
+    ),
+  );
+  // Subdivision count is adjustable.
+  assert.equal(areaOutlinePoints(outlines[1], 2).length, 8);
+
+  // The render scenario exposes outlines and per-point area tags for the 3D
+  // view while the spec still holds only plain point targets.
+  const scenario = buildRenderScenario(stripEmptyFields(specWith(gridA)), null);
+  assert.equal(scenario.areaOutlines.length, 1);
+  assert.equal(scenario.areaOutlines[0].name, "A");
+  assert.ok(scenario.groundPoints.every((gp) => gp.area?.name === "A"));
 });
 
 test("deriveSpecFromScenario round-trips the bundled sample", () => {

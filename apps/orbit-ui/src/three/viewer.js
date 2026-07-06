@@ -447,32 +447,73 @@ export function createViewer(container, { onSelect } = {}) {
 
     const stations = data.groundPoints.map((gp) => {
       const color = new THREE.Color(gp.color || "#5aa0d8");
+      // Area grid points render as small unlabeled dots; the parent area's
+      // outline and label (below) identify them. Standalone ground points
+      // keep the full-size marker + ring + label treatment.
+      const isAreaPoint = Boolean(gp.area);
       const marker = new THREE.Mesh(
-        new THREE.OctahedronGeometry(0.012),
-        new THREE.MeshBasicMaterial({ color: 0xd9dee6 }),
+        new THREE.OctahedronGeometry(isAreaPoint ? 0.004 : 0.012),
+        new THREE.MeshBasicMaterial({ color: isAreaPoint ? color : 0xd9dee6 }),
       );
       latLonToVec3(gp.latitudeDeg, gp.longitudeDeg, 1.006, marker.position);
       marker.userData.objectName = gp.name;
       groundGroup.add(marker);
       pickables.push(marker);
 
-      const ring = new THREE.Mesh(
-        new THREE.RingGeometry(0.02, 0.028, 32),
-        new THREE.MeshBasicMaterial({
-          color,
-          side: THREE.DoubleSide,
-          transparent: true,
-          opacity: 0.85,
-        }),
-      );
-      ring.position.copy(marker.position);
-      ring.lookAt(marker.position.clone().multiplyScalar(2));
-      groundGroup.add(ring);
+      let ring = null;
+      let label = null;
+      if (!isAreaPoint) {
+        ring = new THREE.Mesh(
+          new THREE.RingGeometry(0.02, 0.028, 32),
+          new THREE.MeshBasicMaterial({
+            color,
+            side: THREE.DoubleSide,
+            transparent: true,
+            opacity: 0.85,
+          }),
+        );
+        ring.position.copy(marker.position);
+        ring.lookAt(marker.position.clone().multiplyScalar(2));
+        groundGroup.add(ring);
 
-      const label = makeLabel(gp.name, "obj-label obj-label--gs");
-      marker.add(label);
+        label = makeLabel(gp.name, "obj-label obj-label--gs");
+        marker.add(label);
+      }
 
       return { data: gp, marker, ring, label };
+    });
+
+    // Area target outlines: one subtle ring per area, draped just above the
+    // surface to avoid z-fighting, with a single label at the area center.
+    const outlineVec = new THREE.Vector3();
+    const areaOutlines = (data.areaOutlines ?? []).map((area) => {
+      const positions = new Float32Array(area.points.length * 3);
+      for (let i = 0; i < area.points.length; i++) {
+        latLonToVec3(area.points[i].latDeg, area.points[i].lonDeg, 1.005, outlineVec);
+        positions.set([outlineVec.x, outlineVec.y, outlineVec.z], i * 3);
+      }
+      const outlineGeometry = new THREE.BufferGeometry();
+      outlineGeometry.setAttribute(
+        "position",
+        new THREE.BufferAttribute(positions, 3),
+      );
+      const line = new THREE.LineLoop(
+        outlineGeometry,
+        new THREE.LineBasicMaterial({
+          color: 0xe0705c,
+          transparent: true,
+          opacity: 0.55,
+        }),
+      );
+      groundGroup.add(line);
+
+      const anchor = new THREE.Object3D();
+      latLonToVec3(area.centerLatDeg, area.centerLonDeg, 1.006, anchor.position);
+      groundGroup.add(anchor);
+      const label = makeLabel(area.name, "obj-label obj-label--area");
+      anchor.add(label);
+
+      return { area, line, anchor, label };
     });
 
     // Access lines: one segment per access pair, shown only inside a window.
@@ -499,6 +540,7 @@ export function createViewer(container, { onSelect } = {}) {
       data,
       sats,
       stations,
+      areaOutlines,
       accessLines,
       stationByName,
       sensorAccessByKey,
@@ -541,8 +583,9 @@ export function createViewer(container, { onSelect } = {}) {
     }
     for (const st of scenarioContent.stations) {
       const selected = st.data.name === selectedName;
-      st.marker.scale.setScalar(selected ? 1.6 : 1);
-      st.label.element.classList.toggle("obj-label--selected", selected);
+      // Area grid points have no label; grow them more so selection reads.
+      st.marker.scale.setScalar(selected ? (st.label ? 1.6 : 2.6) : 1);
+      st.label?.element.classList.toggle("obj-label--selected", selected);
     }
   }
 
@@ -748,8 +791,13 @@ export function createViewer(container, { onSelect } = {}) {
         if (s.sensor) updateSensorViz(s, tSec);
       }
       for (const st of scenarioContent.stations) {
+        if (!st.label) continue;
         st.marker.getWorldPosition(tmpVec);
         st.label.visible = options.labels && !isOccludedByEarth(tmpVec);
+      }
+      for (const ao of scenarioContent.areaOutlines) {
+        ao.anchor.getWorldPosition(tmpVec);
+        ao.label.visible = options.labels && !isOccludedByEarth(tmpVec);
       }
       const posAttr = scenarioContent.accessLines.geometry.getAttribute("position");
       scenarioContent.data.accesses.forEach((a, i) => {

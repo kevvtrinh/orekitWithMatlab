@@ -15,7 +15,7 @@
 
 import { buildPreviewEphemeris } from "./preview.js";
 import { prepareSchedule, prepareSensorAccesses } from "./schedule.js";
-import { deepEqual, parseEpochMs } from "./spec.js";
+import { collectAreaOutlines, deepEqual, parseEpochMs } from "./spec.js";
 import { prepareSun } from "./sun.js";
 import {
   prepareAccesses,
@@ -97,6 +97,8 @@ export function buildRenderScenario(spec, matlabRaw) {
         type: GROUND_KINDS[obj.kind],
         kind: obj.kind,
         color: obj.color || (obj.kind === "target" ? "#e0705c" : "#5aa0d8"),
+        group: obj.group ?? null,
+        area: obj.area ?? null,
         latitudeDeg: obj.latitudeDeg,
         longitudeDeg: obj.longitudeDeg,
         altitudeM: obj.altitudeM,
@@ -181,6 +183,7 @@ export function buildRenderScenario(spec, matlabRaw) {
     epochMs,
     satellites,
     groundPoints,
+    areaOutlines: collectAreaOutlines(spec.objects),
     accesses,
     schedule,
     sensorAccesses,

@@ -103,7 +103,10 @@ export default function AreaTargetDialog({ spec, onSubmit, onClose }) {
           min={1}
         />
       </FormRow>
-      <FormRow label="Grid spacing (km)">
+      <FormRow
+        label="Grid spacing (km)"
+        hint="Points sample equal cells inside the area"
+      >
         <NumberInput
           value={params.spacingKm}
           onChange={(v) => setField("spacingKm", v)}
@@ -118,9 +121,10 @@ export default function AreaTargetDialog({ spec, onSubmit, onClose }) {
         />
       </FormRow>
       <div className="hint-text" style={{ paddingTop: 6 }}>
-        The area is sampled as point targets so MATLAB computes access and
-        schedules imaging per grid point - the same decomposition the MATLAB
-        UI's Generate Grid button performs.
+        The area is sampled as evenly spaced interior grid points so MATLAB
+        computes access and schedules imaging per point - the same
+        decomposition the MATLAB UI's Generate Grid button performs. The 3D
+        view draws the area outline with the grid points inside it.
       </div>
     </Modal>
   );

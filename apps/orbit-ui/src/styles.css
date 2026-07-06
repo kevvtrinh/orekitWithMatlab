@@ -686,6 +686,12 @@ select.input option {
   border-color: var(--sel);
 }
 
+/* Area target outline label: one per area, tinted to match the outline. */
+.obj-label--area {
+  color: #e0a598;
+  border-color: rgba(224, 112, 92, 0.55);
+}
+
 /* ---------- Timeline ---------- */
 
 .timeline {

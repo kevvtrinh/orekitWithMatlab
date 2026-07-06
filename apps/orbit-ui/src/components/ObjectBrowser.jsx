@@ -262,6 +262,14 @@ export default function ObjectBrowser({
 
   const stations = scenario.groundPoints.filter((g) => g.kind === "groundStation");
   const targets = scenario.groundPoints.filter((g) => g.kind === "target");
+  // Area grid points share a group tag; fold them under their parent area.
+  const ungroupedTargets = targets.filter((t) => !t.group);
+  const targetGroups = new Map();
+  for (const t of targets) {
+    if (!t.group) continue;
+    if (!targetGroups.has(t.group)) targetGroups.set(t.group, []);
+    targetGroups.get(t.group).push(t);
+  }
 
   return (
     <aside className="panel panel--left">
@@ -336,7 +344,7 @@ export default function ObjectBrowser({
         {targets.length > 0 && (
           <div className="tree-group">
             <div className="tree-group-label">Targets ({targets.length})</div>
-            {targets.map((gp) => (
+            {ungroupedTargets.map((gp) => (
               <button
                 key={gp.name}
                 className={`tree-item ${selection === gp.name ? "selected" : ""}`}
@@ -346,6 +354,24 @@ export default function ObjectBrowser({
                 {gp.name}
                 <span className="meta">P{gp.priority ?? 1}</span>
               </button>
+            ))}
+            {[...targetGroups.entries()].map(([group, points]) => (
+              <div key={group}>
+                <div className="tree-subgroup-label" title={group}>
+                  {group} ({points.length} pts)
+                </div>
+                {points.map((gp) => (
+                  <button
+                    key={gp.name}
+                    className={`tree-item ${selection === gp.name ? "selected" : ""}`}
+                    onClick={() => onSelect(gp.name)}
+                  >
+                    <span className="shape" style={{ background: gp.color }} />
+                    {gp.name}
+                    <span className="meta">P{gp.priority ?? 1}</span>
+                  </button>
+                ))}
+              </div>
             ))}
           </div>
         )}

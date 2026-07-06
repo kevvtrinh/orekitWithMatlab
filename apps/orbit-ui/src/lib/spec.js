@@ -340,10 +340,22 @@ export function areaTargetTemplate(name) {
   };
 }
 
+// Approximate km->deg conversion used for area grids and outlines.
+// 1 deg latitude ~ 111.32 km; longitude scaled by cos(latitude). Adequate
+// for imaging-area geometry well away from the poles.
+const KM_PER_DEG_LAT = 111.32;
+
 // Expand a rectangular area target into a grid of point targets, mirroring
 // the MATLAB UI's AreaTargetObject "Generate Grid" workflow. The MATLAB
 // backend schedules/computes access per point, so an area is represented in
-// the spec as its grid points (kind "target", grouped by name prefix).
+// the spec as its grid points (kind "target", grouped by name prefix). Each
+// point carries an `area` block describing the parent rectangle so the UI
+// can draw the area outline and shrink grid markers; MATLAB ignores the
+// extra metadata and sees ordinary point targets.
+//
+// The rectangle is split into equal cells no larger than the requested
+// spacing, with one point at each cell center, so points sample the
+// interior of the area rather than sitting on its border.
 export function expandAreaGrid(params) {
   const {
     name,
@@ -371,8 +383,8 @@ export function expandAreaGrid(params) {
     }
   }
 
-  const rows = Math.max(1, Math.floor(heightKm / spacingKm) + 1);
-  const cols = Math.max(1, Math.floor(widthKm / spacingKm) + 1);
+  const rows = Math.max(1, Math.ceil(heightKm / spacingKm));
+  const cols = Math.max(1, Math.ceil(widthKm / spacingKm));
   if (rows * cols > MAX_AREA_GRID_POINTS) {
     throw new Error(
       `Grid would have ${rows * cols} points (max ${MAX_AREA_GRID_POINTS}). ` +
@@ -380,24 +392,22 @@ export function expandAreaGrid(params) {
     );
   }
 
-  // Small-area approximation: 1 deg latitude ~ 111.32 km; longitude scaled by
-  // cos(latitude). Adequate for imaging-area grids well away from the poles.
-  const kmPerDegLat = 111.32;
-  const dLat = spacingKm / kmPerDegLat;
   const cosLat = Math.cos((centerLatDeg * Math.PI) / 180);
   if (cosLat < 0.05) {
     throw new Error("Area grids are not supported within ~87 deg of a pole.");
   }
-  const dLon = spacingKm / (kmPerDegLat * cosLat);
+  const heightDeg = heightKm / KM_PER_DEG_LAT;
+  const widthDeg = widthKm / (KM_PER_DEG_LAT * cosLat);
+  if (centerLatDeg + heightDeg / 2 > 90 || centerLatDeg - heightDeg / 2 < -90) {
+    throw new Error("Area grid extends beyond a pole - shrink the height.");
+  }
 
+  const area = { name, centerLatDeg, centerLonDeg, widthKm, heightKm };
   const targets = [];
   for (let r = 0; r < rows; r++) {
-    const lat = centerLatDeg + (r - (rows - 1) / 2) * dLat;
-    if (lat < -90 || lat > 90) {
-      throw new Error("Area grid extends beyond a pole - shrink the height.");
-    }
+    const lat = centerLatDeg + ((r + 0.5) / rows - 0.5) * heightDeg;
     for (let c = 0; c < cols; c++) {
-      let lon = centerLonDeg + (c - (cols - 1) / 2) * dLon;
+      let lon = centerLonDeg + ((c + 0.5) / cols - 0.5) * widthDeg;
       if (lon > 180) lon -= 360;
       if (lon < -180) lon += 360;
       targets.push({
@@ -405,6 +415,7 @@ export function expandAreaGrid(params) {
         name: `${name}-R${pad2(r + 1)}C${pad2(c + 1)}`,
         color: "",
         group: name,
+        area: { ...area },
         latitudeDeg: lat,
         longitudeDeg: lon,
         altitudeM,
@@ -413,6 +424,53 @@ export function expandAreaGrid(params) {
     }
   }
   return targets;
+}
+
+// Perimeter of an area target as geodetic points (lat/lon deg), each edge
+// subdivided so the ring hugs the curved surface when rendered on the globe.
+// The ring is open; consumers close the loop. Longitudes are left
+// unnormalized (may exceed +/-180) so rectangles crossing the antimeridian
+// stay contiguous - trig-based rendering handles that fine.
+export function areaOutlinePoints(area, segmentsPerEdge = 8) {
+  const halfLat = area.heightKm / 2 / KM_PER_DEG_LAT;
+  const cosLat = Math.max(
+    Math.cos((area.centerLatDeg * Math.PI) / 180),
+    0.05,
+  );
+  const halfLon = area.widthKm / 2 / (KM_PER_DEG_LAT * cosLat);
+  const corners = [
+    [area.centerLatDeg - halfLat, area.centerLonDeg - halfLon],
+    [area.centerLatDeg - halfLat, area.centerLonDeg + halfLon],
+    [area.centerLatDeg + halfLat, area.centerLonDeg + halfLon],
+    [area.centerLatDeg + halfLat, area.centerLonDeg - halfLon],
+  ];
+  const points = [];
+  for (let e = 0; e < 4; e++) {
+    const [lat0, lon0] = corners[e];
+    const [lat1, lon1] = corners[(e + 1) % 4];
+    for (let i = 0; i < segmentsPerEdge; i++) {
+      const f = i / segmentsPerEdge;
+      points.push({
+        latDeg: lat0 + (lat1 - lat0) * f,
+        lonDeg: lon0 + (lon1 - lon0) * f,
+      });
+    }
+  }
+  return points;
+}
+
+// One outline per distinct area referenced by the grid targets in `objects`.
+export function collectAreaOutlines(objects) {
+  const areas = new Map();
+  for (const obj of objects ?? []) {
+    if (obj?.kind === "target" && obj.area && !areas.has(obj.area.name)) {
+      areas.set(obj.area.name, {
+        ...obj.area,
+        points: areaOutlinePoints(obj.area),
+      });
+    }
+  }
+  return [...areas.values()];
 }
 
 // ---------------------------------------------------------------------------
@@ -776,6 +834,8 @@ export function deriveSpecFromScenario(raw) {
         kind: "target",
         name: gp.name,
         color: gp.color ?? "",
+        ...(gp.group ? { group: gp.group } : {}),
+        ...(gp.area ? { area: gp.area } : {}),
         latitudeDeg: gp.latitudeDeg,
         longitudeDeg: gp.longitudeDeg,
         altitudeM: gp.altitudeM,
