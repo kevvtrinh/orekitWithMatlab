@@ -97,6 +97,40 @@ export default function TopBar({
     },
   ];
 
+  const analysisItems = [
+    {
+      label: "Calculate Access...",
+      hint: "Choose the exact object pair to send to MATLAB/Orekit",
+      onClick: () => onOpenDialog({ type: "access" }),
+    },
+    {
+      label: "Run Full Scenario",
+      hint: "Run the current scenario spec through MATLAB/Orekit",
+      disabled: job?.state === "running",
+      onClick: onRunMatlab,
+      meta: job?.state === "running" ? "running" : undefined,
+    },
+    "---",
+    {
+      label: "Sensor Tasks...",
+      hint: "Schedule imaging tasks for satellite sensors",
+      onClick: () => onOpenDialog({ type: "tasks" }),
+    },
+  ];
+
+  const viewItems = [
+    ["Labels", "labels"],
+    ["Ground tracks", "groundTracks"],
+    ["Access lines", "accessLines"],
+    ["Sensor FOV", "sensorFov"],
+    ["Sensor FOR", "sensorFor"],
+    ["Sun", "sun"],
+  ].map(([label, key]) => ({
+    label,
+    meta: viewOptions[key] ? "on" : "off",
+    onClick: () => onToggleOption(key),
+  }));
+
   return (
     <header className="topbar">
       <div className="brand">
@@ -107,14 +141,8 @@ export default function TopBar({
       <div className="topbar-group">
         <Menu label="Scenario" items={scenarioItems} />
         <Menu label="Insert" items={insertItems} />
-        <button
-          className="btn"
-          onClick={onRunMatlab}
-          disabled={job?.state === "running"}
-          title="Run the authoritative MATLAB/Orekit pipeline: propagate, compute access windows, and schedule sensor tasks"
-        >
-          {job?.state === "running" ? "Calculating..." : "Calculate Access"}
-        </button>
+        <Menu label="Analysis" items={analysisItems} />
+        <Menu label="View" items={viewItems} />
       </div>
 
       <div className="scenario-chip" title="Active scenario">
@@ -163,55 +191,6 @@ export default function TopBar({
         </div>
       </div>
 
-      <div className="topbar-spacer" />
-
-      <div className="topbar-group">
-        <button
-          className="btn btn--toggle"
-          aria-pressed={viewOptions.labels}
-          onClick={() => onToggleOption("labels")}
-        >
-          Labels
-        </button>
-        <button
-          className="btn btn--toggle"
-          aria-pressed={viewOptions.groundTracks}
-          onClick={() => onToggleOption("groundTracks")}
-        >
-          Ground tracks
-        </button>
-        <button
-          className="btn btn--toggle"
-          aria-pressed={viewOptions.accessLines}
-          onClick={() => onToggleOption("accessLines")}
-        >
-          Access
-        </button>
-        <button
-          className="btn btn--toggle"
-          aria-pressed={viewOptions.sensorFov}
-          onClick={() => onToggleOption("sensorFov")}
-          title="Show sensor field-of-view cones (the instantaneous beam)"
-        >
-          FOV
-        </button>
-        <button
-          className="btn btn--toggle"
-          aria-pressed={viewOptions.sensorFor}
-          onClick={() => onToggleOption("sensorFor")}
-          title="Show sensor field-of-regard domes (how far the sensor can slew off nadir)"
-        >
-          FOR
-        </button>
-        <button
-          className="btn btn--toggle"
-          aria-pressed={viewOptions.sun}
-          onClick={() => onToggleOption("sun")}
-          title="Show the Sun in the 3D view"
-        >
-          Sun
-        </button>
-      </div>
     </header>
   );
 }

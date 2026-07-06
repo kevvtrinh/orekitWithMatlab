@@ -29,7 +29,9 @@ export default function Menu({ label, items }) {
         aria-expanded={open}
       >
         {label}
-        <span className="menu-caret">v</span>
+        <span className="menu-caret" aria-hidden="true">
+          v
+        </span>
       </button>
       {open && (
         <div className="menu-list" role="menu">

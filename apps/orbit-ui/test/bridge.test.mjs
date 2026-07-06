@@ -25,6 +25,12 @@ function http404() {
   return err;
 }
 
+function http500() {
+  const err = new Error("HTTP 500");
+  err.status = 500;
+  return err;
+}
+
 test("404 with healthy same-origin bridge means stale routes, not MATLAB", async () => {
   const result = await classifyBridgeError(
     http404(),
@@ -61,6 +67,28 @@ test("network failure with direct bridge alive means stale dev server", async ()
   assert.match(result.message, /dev server/i);
 });
 
+test("Vite proxy 500 with direct bridge alive means stale dev server", async () => {
+  const result = await classifyBridgeError(
+    http500(),
+    fetchStub({
+      "/api/health": 500,
+      [`${BRIDGE_DIRECT_URL}/api/health`]: "ok",
+    }),
+  );
+  assert.equal(result.state, "unreachable");
+  assert.match(result.message, /dev server/i);
+  assert.match(result.message, /did not fail/i);
+});
+
+test("Vite proxy 500 with bridge down means bridge offline", async () => {
+  const result = await classifyBridgeError(
+    http500(),
+    fetchStub({ "/api/health": 500 }),
+  );
+  assert.equal(result.state, "unreachable");
+  assert.match(result.message, /offline/i);
+});
+
 test("everything down means the web bridge is offline", async () => {
   const result = await classifyBridgeError(
     new TypeError("fetch failed"),
@@ -78,6 +106,15 @@ test("non-404 HTTP errors are real bridge answers and pass through", async () =>
   const result = await classifyBridgeError(err, fetchStub({}));
   assert.equal(result.state, "failed");
   assert.equal(result.message, "Spec validation failed: bad epoch");
+});
+
+test("HTTP 500 with healthy same-origin bridge passes through", async () => {
+  const result = await classifyBridgeError(
+    http500(),
+    fetchStub({ "/api/health": "ok" }),
+  );
+  assert.equal(result.state, "failed");
+  assert.equal(result.message, "HTTP 500");
 });
 
 test("network failure with same-origin health ok reports the original error", async () => {

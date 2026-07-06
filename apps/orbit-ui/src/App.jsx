@@ -12,6 +12,7 @@ import ScenarioSettingsDialog from "./components/dialogs/ScenarioSettingsDialog.
 import TasksDialog from "./components/dialogs/TasksDialog.jsx";
 import SensorDialog from "./components/dialogs/SensorDialog.jsx";
 import AreaTargetDialog from "./components/dialogs/AreaTargetDialog.jsx";
+import AccessDialog from "./components/dialogs/AccessDialog.jsx";
 import * as api from "./lib/api.js";
 import { buildRenderScenario } from "./lib/renderScenario.js";
 import { satLlaAt } from "./lib/scenarioUtils.js";
@@ -273,22 +274,46 @@ export default function App() {
   // MATLAB run / import / export
   // ---------------------------------------------------------------------
 
-  const runMatlab = useCallback(async () => {
+  const runMatlab = useCallback(async (runSpec) => {
     try {
-      const body = await api.runScenario(specMode === "server" ? spec : undefined);
+      const specForRun =
+        runSpec !== undefined ? runSpec : specMode === "server" ? spec : undefined;
+      const body = await api.runScenario(specForRun);
       jobStateRef.current = "running";
       setJob(body.job ?? { state: "running" });
+      return { ok: true };
     } catch (err) {
       if (err.status === 409) {
         jobStateRef.current = "running";
         pollJob();
-        return;
+        return { ok: true };
       }
       const { state, message } = await api.classifyBridgeError(err);
       jobStateRef.current = state;
       setJob({ state, error: message });
+      return { errors: [message] };
     }
   }, [spec, specMode, pollJob]);
+
+  const runAccessRequests = useCallback(
+    async (requests) => {
+      if (!spec) return { errors: ["No scenario spec is loaded."] };
+      const nextSpec =
+        requests === null
+          ? (() => {
+              const { accessRequests: _accessRequests, ...rest } = spec;
+              return rest;
+            })()
+          : { ...spec, accessRequests: requests };
+      const candidate = stripEmptyFields(nextSpec);
+      const errors = validateSpec(candidate);
+      if (errors.length > 0) return { errors };
+      setSpecError(null);
+      setSpec(candidate);
+      return runMatlab(candidate);
+    },
+    [spec, runMatlab],
+  );
 
   const handleExport = useCallback(
     (what) => {
@@ -372,7 +397,7 @@ export default function App() {
         onResetSpec={resetSpec}
         onExport={handleExport}
         onImportSpec={handleImportSpec}
-        onRunMatlab={runMatlab}
+        onRunMatlab={() => runAccessRequests(null)}
       />
       <div className="main">
         <ObjectBrowser
@@ -462,6 +487,13 @@ export default function App() {
       )}
       {dialog?.type === "tasks" && spec && (
         <TasksDialog spec={spec} onClose={closeDialog} onSubmit={updateTasks} />
+      )}
+      {dialog?.type === "access" && spec && (
+        <AccessDialog
+          spec={spec}
+          onClose={closeDialog}
+          onSubmit={runAccessRequests}
+        />
       )}
       {dialog?.type === "sensor" && spec && (
         <SensorDialog

@@ -25,6 +25,8 @@ arguments
     schedule table = emptySensorScheduleTable("UTC")
     options.AccessTimeStepSeconds (1, 1) double = 30
     options.MaxAccessPairs (1, 1) double = 24
+    options.AccessRequests = []
+    options.RestrictToAccessRequests (1, 1) logical = false
 end
 
 % --- Sensors attached to satellites ---
@@ -86,10 +88,34 @@ for k = 1:height(schedule)
         string(schedule.SensorName(k)), string(schedule.TargetName(k)), ...
         options.MaxAccessPairs);
 end
-for k = 1:numel(sensorNames)
-    for t = targetNames
-        pairs = addPair(pairs, sensorParents(k), sensorNames(k), t, ...
+
+if options.RestrictToAccessRequests
+    requests = entryCells(options.AccessRequests);
+    for k = 1:numel(requests)
+        request = requests{k};
+        type = lower(string(fieldOr(request, "type", "access")));
+        if type ~= "sensor"
+            continue
+        end
+        platform = string(fieldOr(request, "platformName", ...
+            fieldOr(request, "sourceName", "")));
+        target = string(fieldOr(request, "targetName", ""));
+        sensor = string(fieldOr(request, "sensorName", ""));
+        if strlength(sensor) == 0
+            idx = find(sensorParents == scalarString(platform), 1);
+            if ~isempty(idx)
+                sensor = sensorNames(idx);
+            end
+        end
+        pairs = addPair(pairs, platform, sensor, target, ...
             options.MaxAccessPairs);
+    end
+else
+    for k = 1:numel(sensorNames)
+        for ti = 1:numel(targetNames)
+            pairs = addPair(pairs, sensorParents(k), sensorNames(k), ...
+                targetNames(ti), options.MaxAccessPairs);
+        end
     end
 end
 
@@ -120,15 +146,22 @@ viz.sensorAccesses = accessEntries;
 end
 
 function pairs = addPair(pairs, platform, sensor, target, maxPairs)
+platform = scalarString(platform);
+sensor = scalarString(sensor);
+target = scalarString(target);
+if strlength(platform) == 0 || strlength(sensor) == 0 || strlength(target) == 0
+    return
+end
 if size(pairs, 1) >= maxPairs
     return
 end
+candidate = [platform, sensor, target];
 for k = 1:size(pairs, 1)
-    if all(pairs(k, :) == [platform, sensor, target])
+    if all(pairs(k, :) == candidate)
         return
     end
 end
-pairs(end + 1, :) = [platform, sensor, target];
+pairs(end + 1, :) = candidate;
 end
 
 function windows = windowList(accessWindows)
@@ -152,4 +185,31 @@ end
 function text = iso8601(t)
 t.TimeZone = "UTC";
 text = string(t, "uuuu-MM-dd'T'HH:mm:ss.SSS'Z'");
+end
+
+function entries = entryCells(entries)
+if isempty(entries)
+    entries = {};
+elseif isstruct(entries)
+    entries = num2cell(entries);
+elseif ~iscell(entries)
+    entries = {};
+end
+end
+
+function value = fieldOr(entry, name, fallback)
+if isfield(entry, name) && ~isempty(entry.(name))
+    value = entry.(name);
+else
+    value = fallback;
+end
+end
+
+function text = scalarString(value)
+text = string(value);
+if isempty(text)
+    text = "";
+else
+    text = text(1);
+end
 end

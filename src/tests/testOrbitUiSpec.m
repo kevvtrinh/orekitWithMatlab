@@ -197,6 +197,36 @@ verifyEqual(testCase, numel(payload.sun.eclipses), 1);
 verifyEqual(testCase, numel(payload.sun.groundLighting), 2);
 end
 
+function testRunScenarioWithSelectedPlainAccess(testCase)
+spec = jsondecode(specJson());
+spec.objects{end + 1} = struct( ...
+    "kind", "groundStation", ...
+    "name", "Canberra GS", ...
+    "latitudeDeg", -35.398, ...
+    "longitudeDeg", 148.9819, ...
+    "altitudeM", 691, ...
+    "minElevationDeg", 10);
+spec.accessRequests = struct( ...
+    "type", "access", ...
+    "sourceName", "Kep-1", ...
+    "targetName", "Denver GS");
+
+specFile = [tempname(), '.json'];
+outputFile = [tempname(), '.json'];
+cleanupFiles = onCleanup(@() cellfun(@deleteIfExists, {specFile, outputFile}));
+
+fid = fopen(specFile, "w");
+fwrite(fid, jsonencode(spec), "char");
+fclose(fid);
+
+payload = orbitUiRunScenario(specFile, outputFile);
+
+verifyEqual(testCase, numel(payload.accesses), 1);
+verifyEqual(testCase, string(payload.accesses{1}.source), "Kep-1");
+verifyEqual(testCase, string(payload.accesses{1}.target), "Denver GS");
+verifyEqual(testCase, string(payload.spec.accessRequests.type), "access");
+end
+
 function deleteIfExists(file)
 if exist(file, "file")
     delete(file);

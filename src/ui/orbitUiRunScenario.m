@@ -39,24 +39,18 @@ for k = 1:numel(scenario.Objects)
 end
 
 pairCount = 0;
-truncated = false;
 fieldNames = string.empty;
-for s = satNames
-    for g = groundNames
-        if pairCount >= MAX_ACCESS_PAIRS
-            truncated = true;
-            break
-        end
-        result = computeAccess(scenario, s, g);
-        fieldName = matlab.lang.makeValidName(s + "_to_" + g);
-        fieldName = matlab.lang.makeUniqueStrings(fieldName, fieldNames);
-        fieldNames(end + 1) = fieldName; %#ok<AGROW>
-        scenario.AccessResults.(fieldName) = result;
-        pairCount = pairCount + 1;
-    end
-    if truncated
-        break
-    end
+[accessPairs, truncated] = plainAccessPairs(spec, satNames, groundNames, ...
+    MAX_ACCESS_PAIRS);
+for p = 1:size(accessPairs, 1)
+    sourceName = accessPairs(p, 1);
+    targetName = accessPairs(p, 2);
+    result = computeAccess(scenario, sourceName, targetName);
+    fieldName = matlab.lang.makeValidName(sourceName + "_to_" + targetName);
+    fieldName = matlab.lang.makeUniqueStrings(fieldName, fieldNames);
+    fieldNames(end + 1) = fieldName; %#ok<AGROW>
+    scenario.AccessResults.(fieldName) = result;
+    pairCount = pairCount + 1;
 end
 if truncated
     warning("orbitUiRunScenario:AccessPairsTruncated", ...
@@ -78,7 +72,13 @@ if ~isempty(tasks)
     candidates = generateTaskCandidates(scenario, tasks, schedulerOptions);
     schedule = scheduleSensorTasksGreedy(scenario, candidates, schedulerOptions);
 end
-scheduleViz = exportScheduleViz(scenario, schedule);
+if isfield(spec, "accessRequests")
+    scheduleViz = exportScheduleViz(scenario, schedule, ...
+        "AccessRequests", spec.accessRequests, ...
+        "RestrictToAccessRequests", true);
+else
+    scheduleViz = exportScheduleViz(scenario, schedule);
+end
 if ~isempty(scheduleViz.sensors) || ~isempty(tasks)
     extra = mergeStructs(extra, scheduleViz);
 end
@@ -90,6 +90,58 @@ extra = mergeStructs(extra, exportSunViz(scenario));
 payload = exportScenarioJson(scenario, outputFile, "Extra", extra);
 fprintf("orbitUiRunScenario: wrote %s (%d satellites, %d ground objects, %d access pairs, %d scheduled tasks)\n", ...
     outputFile, numel(satNames), numel(groundNames), pairCount, height(schedule));
+end
+
+function [pairs, truncated] = plainAccessPairs(spec, satNames, groundNames, maxPairs)
+pairs = strings(0, 2);
+truncated = false;
+if isfield(spec, "accessRequests")
+    entries = entryCells(spec.accessRequests);
+    for k = 1:numel(entries)
+        entry = entries{k};
+        type = lower(string(fieldOr(entry, "type", "access")));
+        if type ~= "access"
+            continue
+        end
+        [pairs, truncated] = addPlainPair(pairs, ...
+            string(fieldOr(entry, "sourceName", "")), ...
+            string(fieldOr(entry, "targetName", "")), maxPairs);
+        if truncated
+            return
+        end
+    end
+    return
+end
+
+for s = 1:numel(satNames)
+    for g = 1:numel(groundNames)
+        [pairs, truncated] = addPlainPair(pairs, satNames(s), ...
+            groundNames(g), maxPairs);
+        if truncated
+            return
+        end
+    end
+end
+end
+
+function [pairs, truncated] = addPlainPair(pairs, sourceName, targetName, maxPairs)
+truncated = false;
+sourceName = scalarString(sourceName);
+targetName = scalarString(targetName);
+if strlength(sourceName) == 0 || strlength(targetName) == 0
+    return
+end
+if size(pairs, 1) >= maxPairs
+    truncated = true;
+    return
+end
+candidate = [sourceName, targetName];
+for k = 1:size(pairs, 1)
+    if all(pairs(k, :) == candidate)
+        return
+    end
+end
+pairs(end + 1, :) = candidate;
 end
 
 function tasks = buildSensorTasks(spec, scenario)
@@ -129,6 +181,27 @@ end
 end
 
 function value = taskFieldOr(entry, name, fallback)
+value = fieldOr(entry, name, fallback);
+end
+
+function merged = mergeStructs(merged, extra)
+names = fieldnames(extra);
+for k = 1:numel(names)
+    merged.(names{k}) = extra.(names{k});
+end
+end
+
+function entries = entryCells(entries)
+if isempty(entries)
+    entries = {};
+elseif isstruct(entries)
+    entries = num2cell(entries);
+elseif ~iscell(entries)
+    entries = {};
+end
+end
+
+function value = fieldOr(entry, name, fallback)
 if isfield(entry, name) && ~isempty(entry.(name))
     value = entry.(name);
 else
@@ -136,9 +209,11 @@ else
 end
 end
 
-function merged = mergeStructs(merged, extra)
-names = fieldnames(extra);
-for k = 1:numel(names)
-    merged.(names{k}) = extra.(names{k});
+function text = scalarString(value)
+text = string(value);
+if isempty(text)
+    text = "";
+else
+    text = text(1);
 end
 end

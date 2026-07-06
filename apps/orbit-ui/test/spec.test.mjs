@@ -7,6 +7,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
+  accessRequestOptions,
   deepEqual,
   deriveSpecFromScenario,
   expandAreaGrid,
@@ -357,6 +358,78 @@ test("sensor and task validation", () => {
   const dupIds = structuredClone(withSensor);
   dupIds.tasks.push({ ...dupIds.tasks[0] });
   assert.ok(validateSpec(dupIds).some((e) => e.includes("duplicate task id")));
+});
+
+test("access requests validate and enumerate only supported pairs", () => {
+  const sat = { ...keplerianSatelliteTemplate("Imager"), sensor: sensorTemplate() };
+  const relay = keplerianSatelliteTemplate("Relay");
+  const gs = groundStationTemplate("Denver GS");
+  const target = targetTemplate("Denver Target");
+  const spec = specWith([sat, relay, gs, target]);
+
+  const options = accessRequestOptions(spec);
+  assert.ok(
+    options.some(
+      (o) =>
+        o.request.type === "access" &&
+        o.request.sourceName === "Imager" &&
+        o.request.targetName === "Denver GS",
+    ),
+  );
+  assert.ok(
+    options.some(
+      (o) =>
+        o.request.type === "access" &&
+        o.request.sourceName === "Imager" &&
+        o.request.targetName === "Relay",
+    ),
+  );
+  assert.ok(
+    options.some(
+      (o) =>
+        o.request.type === "sensor" &&
+        o.request.platformName === "Imager" &&
+        o.request.targetName === "Denver Target",
+    ),
+  );
+
+  const selectedPlain = {
+    ...spec,
+    accessRequests: [
+      { type: "access", sourceName: "Imager", targetName: "Denver GS" },
+    ],
+  };
+  assert.deepEqual(validateSpec(stripEmptyFields(selectedPlain)), []);
+
+  const selectedSensor = {
+    ...spec,
+    accessRequests: [
+      {
+        type: "sensor",
+        platformName: "Imager",
+        sensorName: "Imager Sensor",
+        targetName: "Denver Target",
+      },
+    ],
+  };
+  assert.deepEqual(validateSpec(stripEmptyFields(selectedSensor)), []);
+
+  const unsupported = {
+    ...spec,
+    accessRequests: [
+      { type: "access", sourceName: "Denver Target", targetName: "Denver GS" },
+    ],
+  };
+  assert.ok(validateSpec(unsupported).some((e) => e.includes("plain access")));
+
+  const noSensor = structuredClone(spec);
+  delete noSensor.objects[0].sensor;
+  noSensor.accessRequests = [
+    { type: "sensor", platformName: "Imager", targetName: "Denver Target" },
+  ];
+  assert.ok(
+    validateSpec(noSensor).some((e) => e.includes("satellite with a sensor")),
+  );
 });
 
 test("buildRenderScenario merges schedule, sensor accesses, and sun data", () => {

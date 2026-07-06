@@ -74,14 +74,18 @@ async function probeHealth(url, fetchImpl) {
 // purely a web-plumbing problem. Probe /api/health (same-origin, then the
 // bridge port directly) to tell the cases apart.
 export async function classifyBridgeError(err, fetchImpl = (url) => fetch(url)) {
-  // Non-404 HTTP statuses are real answers from the bridge (validation
-  // errors, busy, MATLAB run failures) - report them as-is.
-  if (err?.status && err.status !== 404) {
+  // Most non-404 HTTP statuses are real answers from the bridge (validation
+  // errors, busy, MATLAB run failures). HTTP 500 is special in dev: Vite's
+  // proxy also returns it when the Node bridge on 5175 is down.
+  if (err?.status && err.status !== 404 && err.status !== 500) {
     return { state: "failed", message: err.message };
   }
 
   const sameOrigin = await probeHealth("/api/health", fetchImpl);
   if (sameOrigin === "ok") {
+    if (err?.status === 500) {
+      return { state: "failed", message: err.message };
+    }
     if (err?.status === 404) {
       return {
         state: "unreachable",

@@ -17,6 +17,7 @@ export const MAX_OBJECTS = 300;
 export const MAX_SATELLITES = 200;
 export const MAX_DURATION_SECONDS = 30 * 86400;
 export const MAX_TASKS = 24;
+export const MAX_ACCESS_REQUESTS = 80;
 
 const EARTH_RADIUS_KM = 6378.137;
 
@@ -107,6 +108,96 @@ export function taskTemplate(spec) {
     priority: 5,
     dwellSeconds: 60,
   };
+}
+
+// Access requests tell the MATLAB/Orekit run which expensive access products
+// to compute. Without this field, the backend keeps the legacy default
+// (satellite x ground-station access, capped). With it, only these requests
+// are computed, plus any scheduled task sensor windows.
+export function accessRequestOptions(spec) {
+  const objects = spec?.objects ?? [];
+  const satellites = objects.filter((o) => o.kind === "satellite");
+  const groundStations = objects.filter((o) => o.kind === "groundStation");
+  const targets = objects.filter((o) => o.kind === "target");
+  const options = [];
+
+  for (const sat of satellites) {
+    for (const ground of groundStations) {
+      options.push({
+        key: accessRequestKey({
+          type: "access",
+          sourceName: sat.name,
+          targetName: ground.name,
+        }),
+        label: `${sat.name} -> ${ground.name}`,
+        meta: "satellite / ground access",
+        request: {
+          type: "access",
+          sourceName: sat.name,
+          targetName: ground.name,
+        },
+      });
+    }
+  }
+
+  for (let i = 0; i < satellites.length; i += 1) {
+    for (let j = i + 1; j < satellites.length; j += 1) {
+      options.push({
+        key: accessRequestKey({
+          type: "access",
+          sourceName: satellites[i].name,
+          targetName: satellites[j].name,
+        }),
+        label: `${satellites[i].name} -> ${satellites[j].name}`,
+        meta: "satellite / satellite line of sight",
+        request: {
+          type: "access",
+          sourceName: satellites[i].name,
+          targetName: satellites[j].name,
+        },
+      });
+    }
+  }
+
+  for (const sat of satellites.filter((o) => o.sensor)) {
+    const sensorName = sat.sensor?.name || `${sat.name} Sensor`;
+    for (const target of targets) {
+      options.push({
+        key: accessRequestKey({
+          type: "sensor",
+          platformName: sat.name,
+          sensorName,
+          targetName: target.name,
+        }),
+        label: `${sensorName} -> ${target.name}`,
+        meta: "sensor FOR / FOV visibility",
+        request: {
+          type: "sensor",
+          platformName: sat.name,
+          sensorName,
+          targetName: target.name,
+        },
+      });
+    }
+  }
+
+  return options;
+}
+
+export function accessRequestKey(request) {
+  if ((request?.type ?? "access") === "sensor") {
+    return [
+      "sensor",
+      request.platformName ?? request.sourceName ?? "",
+      request.sensorName ?? "",
+      request.targetName ?? "",
+    ].join("|");
+  }
+  return [
+    "access",
+    request?.sourceName ?? "",
+    request?.targetName ?? "",
+  ].join("|");
 }
 
 export function nextTaskId(spec) {
@@ -419,6 +510,69 @@ function validateTasks(spec, errors) {
   });
 }
 
+function validateAccessRequests(spec, errors) {
+  const requests = spec.accessRequests;
+  if (requests === undefined) return;
+  if (!Array.isArray(requests)) {
+    errors.push("Spec accessRequests must be an array.");
+    return;
+  }
+  if (requests.length > MAX_ACCESS_REQUESTS) {
+    errors.push(`At most ${MAX_ACCESS_REQUESTS} access requests are supported.`);
+  }
+
+  const byName = new Map((spec.objects ?? []).map((o) => [o.name, o]));
+  const seen = new Set();
+  requests.forEach((request, i) => {
+    const where = `accessRequests[${i}]`;
+    if (!request || typeof request !== "object") {
+      errors.push(`${where}: must be an object.`);
+      return;
+    }
+    const type = request.type ?? "access";
+    if (type !== "access" && type !== "sensor") {
+      errors.push(`${where}: type must be 'access' or 'sensor'.`);
+      return;
+    }
+    const key = accessRequestKey(request);
+    if (seen.has(key)) {
+      errors.push(`${where}: duplicate access request.`);
+    }
+    seen.add(key);
+
+    if (type === "access") {
+      const source = byName.get(request.sourceName);
+      const target = byName.get(request.targetName);
+      if (!source) errors.push(`${where}: sourceName must reference an object.`);
+      if (!target) errors.push(`${where}: targetName must reference an object.`);
+      if (source && target) {
+        const kinds = new Set([source.kind, target.kind]);
+        const supported =
+          (source.kind === "satellite" && target.kind === "satellite") ||
+          (kinds.has("satellite") && kinds.has("groundStation"));
+        if (!supported) {
+          errors.push(
+            `${where}: plain access supports satellite/ground-station or satellite/satellite pairs.`,
+          );
+        }
+      }
+      return;
+    }
+
+    const platformName = request.platformName ?? request.sourceName;
+    const platform = byName.get(platformName);
+    const target = byName.get(request.targetName);
+    if (!platform || platform.kind !== "satellite" || !platform.sensor) {
+      errors.push(
+        `${where}: platformName must reference a satellite with a sensor.`,
+      );
+    }
+    if (!target || target.kind !== "target") {
+      errors.push(`${where}: targetName must reference a point target.`);
+    }
+  });
+}
+
 function validateSatellite(obj, errors, where) {
   if (!PROPAGATORS.includes(obj.propagator)) {
     errors.push(`${where}: unknown propagator '${obj.propagator}'.`);
@@ -583,6 +737,7 @@ export function validateSpec(spec) {
   }
 
   validateTasks(spec, errors);
+  validateAccessRequests(spec, errors);
 
   return errors;
 }
