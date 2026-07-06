@@ -9,6 +9,7 @@ import {
   startDemoJob,
   startSpecJob,
 } from "./matlabJob.js";
+import { ensureWorker, warmWorkerEnabled, workerStatus } from "./matlabWorker.js";
 import { loadSpec, resetSpec, saveSpec, writeRunSpec } from "./scenarioStore.js";
 import { localCors } from "./cors.js";
 
@@ -51,6 +52,27 @@ app.post("/api/spec/reset", (_req, res) => {
 
 app.get("/api/matlab/job", (_req, res) => {
   res.json(jobStatus());
+});
+
+// Warm MATLAB worker cache: status + explicit pre-warm (spawn the worker
+// before the user's first run so that run skips MATLAB/JVM/Orekit startup).
+app.get("/api/matlab/worker", (_req, res) => {
+  res.json({ worker: workerStatus() });
+});
+
+app.post("/api/matlab/warmup", (_req, res) => {
+  if (!warmWorkerEnabled()) {
+    res
+      .status(409)
+      .json({ error: "Warm worker is disabled (MATLAB_WARM_WORKER=0)." });
+    return;
+  }
+  const result = ensureWorker();
+  if (!result.ok) {
+    res.status(500).json({ error: result.reason });
+    return;
+  }
+  res.status(202).json({ worker: workerStatus() });
 });
 
 // Propagate the current spec through MATLAB/Orekit (single job at a time).

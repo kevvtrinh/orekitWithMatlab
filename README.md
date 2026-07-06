@@ -214,7 +214,9 @@ A non-MATLAB web frontend lives in `apps/orbit-ui`: an STK-style console
 by a small Node bridge that calls this suite through `matlab -batch`. It loads
 instantly with bundled sample data and has a one-click action that reruns the
 MATLAB/Orekit backend (`src/ui/orbitUiDemoScenario.m` and
-`src/ui/exportScenarioJson.m`) and refreshes the view with live results.
+`src/ui/exportScenarioJson.m`) and refreshes the view with live results. The
+bridge keeps a warm MATLAB worker (`src/ui/orbitUiWorker.m`) alive between
+runs, so only the first run pays MATLAB + JVM + Orekit startup.
 
 ```powershell
 cd apps\orbit-ui

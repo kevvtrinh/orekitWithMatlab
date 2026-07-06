@@ -165,6 +165,26 @@ merged main; re-applied on top of main's reworked UI:
   and thicken/brighten the footprint during active tasks. Uses main's
   satellitePositionKmAtTime apex + earthFixedToViewFrame.
 
+## Warm MATLAB worker cache for the web bridge (2026-07)
+
+Every orbit-ui bridge run paid full MATLAB + JVM + Orekit startup via a fresh
+`matlab -batch`. Added a warm worker cache (branch worktree
+matlab-warm-worker-cache):
+- `src/ui/orbitUiWorker.m` — persistent worker loop started once with
+  `startupOrekitSuite()`; file protocol (request.json/done.json/ready.json/
+  stop) in `apps/orbit-ui/server/data/worker/`; idle-timeout self-exit.
+  `src/ui/orbitUiWorkerProcessJob.m` — per-job dispatcher (ping/demo/
+  scenario), never throws.
+- Node: `server/workerProtocol.js` (pure helpers, unit-tested),
+  `server/matlabWorker.js` (lifecycle: lazy spawn, log routing, timeout
+  kill, exit-hook cleanup), `server/paths.js` (shared constants).
+  `matlabJob.js` dispatches warm (default) vs cold (`MATLAB_WARM_WORKER=0`);
+  `GET /api/matlab/worker` + `POST /api/matlab/warmup` endpoints; job status
+  now carries `worker`. `bridge:demo` CLI defaults to cold.
+- Tests: `test/worker.test.mjs` (Node, passing), `src/tests/
+  testOrbitUiWorkerProtocol.m` (MATLAB — needs local MATLAB run via
+  run_tests.ps1; not executed in this session).
+
 ## Known caveats / decisions
 
 - Harris-Priester drag: valid ~100–1000 km altitude; returns zero density above,

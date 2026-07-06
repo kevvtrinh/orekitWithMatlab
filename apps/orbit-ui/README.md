@@ -79,7 +79,8 @@ npm start        # http://127.0.0.1:5175
 
 ## How the MATLAB bridge works
 
-1. `POST /api/matlab/run-demo` spawns
+1. `POST /api/matlab/run-demo` hands the job to the warm MATLAB worker (see
+   below) — or, with `MATLAB_WARM_WORKER=0`, spawns a fresh
    `matlab -batch "startupOrekitSuite(); orbitUiDemoScenario('<out>.json')"`
    with the repository root as the working directory. One job at a time;
    `GET /api/matlab/job` reports `idle | running | succeeded | failed` plus a
@@ -96,9 +97,38 @@ npm start        # http://127.0.0.1:5175
    reloads the scenario when it succeeds - the status bar shows whether you
    are looking at *sample* or *live MATLAB* data.
 
-The first bridge run takes a minute or two (MATLAB + JVM startup); the job
-endpoint streams progress. Override the executable or timeout with the
-`MATLAB_EXE` / `MATLAB_TIMEOUT_MS` environment variables.
+Override the executable or per-job timeout with the `MATLAB_EXE` /
+`MATLAB_TIMEOUT_MS` environment variables.
+
+## Warm MATLAB worker cache
+
+MATLAB + JVM + Orekit startup dominates a bridge run (a minute or two); the
+computation itself takes seconds. The bridge therefore keeps **one persistent
+MATLAB worker** alive between runs:
+
+- The first run (or `POST /api/matlab/warmup`) spawns
+  `matlab -batch "startupOrekitSuite(); orbitUiWorker('<dir>', <idle>)"`.
+  `orbitUiWorker` (in `src/ui/` at the repo root) then loops, exchanging jobs
+  with Node through files in `server/data/worker/`: Node writes
+  `request.json` (`{ id, kind: ping|demo|scenario, specFile, outputFile }`),
+  the worker executes it (`orbitUiWorkerProcessJob`) and answers with
+  `done.json` (`{ id, ok, error }`). Writes on both sides are atomic
+  (temp file + rename) so a poller never reads a half-written file.
+- Repeat runs reuse the warm worker and skip startup entirely — a scenario
+  rerun drops from minutes to seconds.
+- The worker exits on its own after 15 idle minutes (`MATLAB_WORKER_IDLE_S`
+  overrides), when Node writes a `stop` file, or when the bridge process
+  exits — an orphaned MATLAB never lingers. The next run just respawns it.
+- A job that fails (bad spec, MATLAB error) reports its error through
+  `done.json` but leaves the worker warm; a job that *times out* kills the
+  worker.
+- `GET /api/matlab/worker` reports the cache state
+  (`off | booting | warm`, jobs run, pid); the same object rides along on
+  `GET /api/matlab/job` as `worker`. `POST /api/matlab/warmup` pre-warms so
+  the user's first real run is fast.
+- Set `MATLAB_WARM_WORKER=0` to disable the cache and run every job as a
+  fresh `matlab -batch` (the old behavior). `npm run bridge:demo` defaults to
+  this cold path since a one-shot CLI gains nothing from a warm worker.
 
 CLI verification without the browser:
 
@@ -131,8 +161,9 @@ npm run bridge:demo
 
 ```text
 apps/orbit-ui/
-  server/           Express bridge (index.js, matlabJob.js, runBridgeCli.js)
-  server/data/      MATLAB bridge output (gitignored)
+  server/           Express bridge (index.js, matlabJob.js, matlabWorker.js,
+                    workerProtocol.js, runBridgeCli.js)
+  server/data/      MATLAB bridge output + worker/ protocol files (gitignored)
   public/           sample-scenario.json, Earth texture
   src/              React app (components/, lib/, three/)
 ```

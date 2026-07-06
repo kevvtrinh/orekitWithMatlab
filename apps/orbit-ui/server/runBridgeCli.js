@@ -8,6 +8,12 @@ import {
   LIVE_SCENARIO_FILE,
 } from "./matlabJob.js";
 
+// One-shot CLI: a warm worker would outlive this process for nothing, so
+// default to the cold path unless the caller explicitly opts in.
+if (process.env.MATLAB_WARM_WORKER === undefined) {
+  process.env.MATLAB_WARM_WORKER = "0";
+}
+
 console.log("Starting MATLAB bridge demo job (this launches matlab -batch)...");
 
 let printed = 0;

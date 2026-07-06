@@ -1,27 +1,30 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
-export const APP_ROOT = path.resolve(__dirname, "..");
-export const REPO_ROOT = path.resolve(APP_ROOT, "..", "..");
-export const DATA_DIR = path.join(__dirname, "data");
-export const LIVE_SCENARIO_FILE = path.join(DATA_DIR, "scenario.json");
-export const SAMPLE_SCENARIO_FILE = path.join(
+import {
   APP_ROOT,
-  "public",
-  "sample-scenario.json",
-);
+  DATA_DIR,
+  LIVE_SCENARIO_FILE,
+  REPO_ROOT,
+  SAMPLE_SCENARIO_FILE,
+} from "./paths.js";
+import { makeRequest, quoteForMatlab } from "./workerProtocol.js";
+import { runWorkerJob, warmWorkerEnabled, workerStatus } from "./matlabWorker.js";
+
+export { APP_ROOT, DATA_DIR, LIVE_SCENARIO_FILE, REPO_ROOT, SAMPLE_SCENARIO_FILE };
 
 const MATLAB_EXE = process.env.MATLAB_EXE || "matlab";
 const JOB_TIMEOUT_MS = Number(process.env.MATLAB_TIMEOUT_MS || 10 * 60 * 1000);
 const MAX_LOG_LINES = 400;
 
-// Single-slot job model: MATLAB startup is expensive, so we never run two
+// Single-slot job model: MATLAB runs are heavyweight, so we never run two
 // bridge jobs concurrently. State is in-memory; a server restart forgets a
 // finished job but the JSON output on disk survives.
+//
+// Two execution paths per job:
+//  - warm (default): the job is handed to the persistent MATLAB worker
+//    (matlabWorker.js), which paid MATLAB + JVM + Orekit startup once.
+//  - cold (MATLAB_WARM_WORKER=0): a fresh `matlab -batch` per run.
 const job = {
   state: "idle", // idle | running | succeeded | failed
   label: null, // "demo" | "scenario"
@@ -52,6 +55,7 @@ export function jobStatus() {
     exitCode: job.exitCode,
     error: job.error,
     log: job.log.slice(-60),
+    worker: workerStatus(),
   };
 }
 
@@ -73,16 +77,14 @@ export function readScenario() {
   return { source: "none", file: null, scenario: null };
 }
 
-// MATLAB single-quoted string literal: escape ' by doubling it.
-const quoteForMatlab = (text) => text.replace(/'/g, "''");
-
 // Demo job kept for the CLI smoke test (npm run bridge:demo): builds the
 // hard-coded demo scenario in MATLAB.
 export function startDemoJob({ onDone } = {}) {
-  const output = quoteForMatlab(LIVE_SCENARIO_FILE);
+  const output = LIVE_SCENARIO_FILE;
   return startJob({
     label: "demo",
-    batchCommand: `startupOrekitSuite(); orbitUiDemoScenario('${output}');`,
+    batchCommand: `startupOrekitSuite(); orbitUiDemoScenario('${quoteForMatlab(output)}');`,
+    request: () => makeRequest("demo", { outputFile: output }),
     onDone,
   });
 }
@@ -95,11 +97,13 @@ export function startSpecJob(specFile, { onDone } = {}) {
   return startJob({
     label: "scenario",
     batchCommand: `startupOrekitSuite(); orbitUiRunScenario('${spec}', '${output}');`,
+    request: () =>
+      makeRequest("scenario", { specFile, outputFile: LIVE_SCENARIO_FILE }),
     onDone,
   });
 }
 
-function startJob({ label, batchCommand, onDone }) {
+function startJob({ label, batchCommand, request, onDone }) {
   if (job.state === "running") {
     return { ok: false, reason: "A MATLAB job is already running." };
   }
@@ -113,6 +117,57 @@ function startJob({ label, batchCommand, onDone }) {
   job.exitCode = null;
   job.error = null;
   job.log = [];
+
+  if (warmWorkerEnabled()) {
+    return startWarmJob({ request: request(), onDone });
+  }
+  return startColdJob({ batchCommand, onDone });
+}
+
+// Shared job epilogue: a run counts as succeeded only when MATLAB reported
+// success AND the output file exists and parses as JSON.
+function finishJob({ ok, error, exitCode = null, onDone }) {
+  job.exitCode = exitCode;
+  job.finishedAt = new Date().toISOString();
+  if (ok && existsSync(LIVE_SCENARIO_FILE)) {
+    try {
+      JSON.parse(readFileSync(LIVE_SCENARIO_FILE, "utf8"));
+      job.state = "succeeded";
+    } catch (err) {
+      job.state = "failed";
+      job.error = `MATLAB reported success but output JSON is invalid: ${err.message}`;
+    }
+  } else {
+    job.state = "failed";
+    job.error = ok
+      ? "MATLAB reported success but produced no output file."
+      : error;
+  }
+  onDone?.(jobStatus());
+}
+
+// Warm path: run on the persistent MATLAB worker. The worker's stdout
+// (including startup output when this job triggered the spawn) streams into
+// this job's log.
+function startWarmJob({ request, onDone }) {
+  pushLog(`> warm worker job: ${request.kind}`);
+  runWorkerJob(request, { timeoutMs: JOB_TIMEOUT_MS, onLog: pushLog })
+    .then((done) =>
+      finishJob({
+        ok: done.ok,
+        error: done.error ? `MATLAB job failed: ${done.error}` : done.error,
+        onDone,
+      }),
+    )
+    .catch((err) => {
+      pushLog(`! ${err.message}`);
+      finishJob({ ok: false, error: err.message, onDone });
+    });
+  return { ok: true, status: jobStatus() };
+}
+
+// Cold path: fresh `matlab -batch` per run (MATLAB_WARM_WORKER=0).
+function startColdJob({ batchCommand, onDone }) {
   pushLog(`> ${MATLAB_EXE} -batch "${batchCommand}"`);
   pushLog(`> cwd: ${REPO_ROOT}`);
 
@@ -147,25 +202,13 @@ function startJob({ label, batchCommand, onDone }) {
   });
   child.on("close", (code) => {
     clearTimeout(timeout);
-    job.exitCode = code;
-    job.finishedAt = new Date().toISOString();
     job.child = null;
-    if (code === 0 && existsSync(LIVE_SCENARIO_FILE)) {
-      try {
-        JSON.parse(readFileSync(LIVE_SCENARIO_FILE, "utf8"));
-        job.state = "succeeded";
-      } catch (err) {
-        job.state = "failed";
-        job.error = `MATLAB exited 0 but output JSON is invalid: ${err.message}`;
-      }
-    } else {
-      job.state = "failed";
-      job.error =
-        code === 0
-          ? "MATLAB exited 0 but produced no output file."
-          : `MATLAB exited with code ${code}.`;
-    }
-    onDone?.(jobStatus());
+    finishJob({
+      ok: code === 0,
+      error: `MATLAB exited with code ${code}.`,
+      exitCode: code,
+      onDone,
+    });
   });
 
   return { ok: true, status: jobStatus() };
