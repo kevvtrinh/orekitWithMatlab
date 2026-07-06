@@ -12,13 +12,24 @@ function windowSeconds(w, epochMs) {
 }
 
 // Raw schedule entries (MATLAB exportScheduleViz) -> render entries with
-// epoch offsets and the slew lead-in, sorted by start time.
+// epoch offsets, the slew lead-in, and the return-home slew-out, sorted by
+// start time. Home is the nominal nadir boresight; after stopSec the sensor
+// slews back home over returnSlewTimeSeconds when the export provides it,
+// otherwise over the lead-in slew duration.
 export function prepareSchedule(rawSchedule, epochMs) {
   return (rawSchedule ?? [])
     .map((entry) => {
       const prepared = windowSeconds(entry, epochMs);
       const slewSec = Math.max(entry.slewTimeSeconds ?? 0, 0);
-      return { ...prepared, slewStartSec: prepared.startSec - slewSec };
+      const returnSlewSec = Math.max(
+        entry.returnSlewTimeSeconds ?? entry.slewTimeSeconds ?? 0,
+        0,
+      );
+      return {
+        ...prepared,
+        slewStartSec: prepared.startSec - slewSec,
+        returnEndSec: prepared.stopSec + returnSlewSec,
+      };
     })
     .sort((a, b) => a.startSec - b.startSec);
 }
@@ -34,12 +45,17 @@ export function prepareSensorAccesses(rawAccesses, epochMs) {
 
 // Pointing state of one platform's sensor at tSec, given that platform's
 // prepared schedule entries (sorted by startSec):
-//   idle  - nominal (nadir) pointing, no task in progress
-//   slew  - slewing from the previous pointing toward entry's target;
-//           progress in [0, 1]
-//   track - boresight locked on entry's target
-// fromTarget is the previous task's target name (null means nadir), so the
-// viewer can interpolate the slew from the right starting direction.
+//   idle   - home (nadir) pointing, no task in progress
+//   slew   - slewing from the previous pointing toward entry's target;
+//            progress in [0, 1]
+//   track  - boresight locked on entry's target
+//   return - slewing from the finished entry's target back to the home
+//            (nadir) boresight; progress in [0, 1]
+// fromTarget is the pointing the phase starts from (a target name, or null
+// for home/nadir), so the viewer can interpolate from the right direction.
+// A slew starts from the previous task's target only when that task's
+// return-home slew had not yet finished; a lead-in that begins during the
+// return phase therefore wins over it, keeping the transition smooth.
 export function pointingStateAt(entries, tSec) {
   let prev = null;
   for (const entry of entries) {
@@ -52,14 +68,24 @@ export function pointingStateAt(entries, tSec) {
     }
     if (tSec >= entry.slewStartSec) {
       const span = entry.startSec - entry.slewStartSec;
+      const fromPrev = prev && entry.slewStartSec <= prev.returnEndSec;
       return {
         phase: "slew",
         entry,
-        fromTarget: prev?.targetName ?? null,
+        fromTarget: fromPrev ? prev.targetName : null,
         progress: span > 0 ? (tSec - entry.slewStartSec) / span : 1,
       };
     }
     break;
+  }
+  if (prev && tSec <= prev.returnEndSec) {
+    const span = prev.returnEndSec - prev.stopSec;
+    return {
+      phase: "return",
+      entry: prev,
+      fromTarget: prev.targetName,
+      progress: span > 0 ? (tSec - prev.stopSec) / span : 1,
+    };
   }
   return { phase: "idle", entry: null, fromTarget: null, progress: 0 };
 }

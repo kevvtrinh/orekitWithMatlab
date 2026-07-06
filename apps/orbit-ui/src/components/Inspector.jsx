@@ -67,13 +67,17 @@ function SatelliteDetails({ sat, tSec, sun, schedule }) {
             </dd>
             <dt>Pointing</dt>
             <dd>
-              {pointing.phase === "idle" && "Nadir"}
+              {pointing.phase === "idle" && "Nadir (home)"}
               {pointing.phase === "slew" &&
                 `Slewing to ${pointing.entry.targetName} (${Math.round(
                   pointing.progress * 100,
                 )}%)`}
               {pointing.phase === "track" &&
                 `Tracking ${pointing.entry.targetName}`}
+              {pointing.phase === "return" &&
+                `Returning to nadir (home) from ${
+                  pointing.entry.targetName
+                } (${Math.round(pointing.progress * 100)}%)`}
             </dd>
           </>
         )}

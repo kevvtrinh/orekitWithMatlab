@@ -22,8 +22,8 @@ export default function TimelineBar({ scenario }) {
         });
       }
     }
-    // Scheduled sensor tasks get their own lane; the slew lead-in renders as
-    // a lighter block in front of the on-target dwell.
+    // Scheduled sensor tasks get their own lane; the slew lead-in and the
+    // return-home slew render as lighter blocks around the on-target dwell.
     for (const e of scenario.schedule ?? []) {
       if (e.stale) continue;
       if (e.startSec > e.slewStartSec) {
@@ -40,6 +40,14 @@ export default function TimelineBar({ scenario }) {
         slew: false,
         title: `${e.taskName}: ${e.sensorName} -> ${e.targetName}`,
       });
+      if ((e.returnEndSec ?? e.stopSec) > e.stopSec) {
+        taskBlocks.push({
+          left: pct(e.stopSec),
+          width: Math.max(pct(e.returnEndSec - e.stopSec), 0.15),
+          slew: true,
+          title: `${e.taskName}: return to nadir (${e.sensorName})`,
+        });
+      }
     }
   }
 

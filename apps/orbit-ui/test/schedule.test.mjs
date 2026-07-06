@@ -52,9 +52,30 @@ test("prepareSchedule converts to epoch offsets with slew lead-in", () => {
   assert.equal(schedule[0].stopSec, 720);
   assert.equal(schedule[0].slewStartSec, 570);
   assert.equal(schedule[1].slewStartSec, 1960);
+  // Return-home slew defaults to the lead-in slew duration.
+  assert.equal(schedule[0].returnEndSec, 750);
+  assert.equal(schedule[1].returnEndSec, 2140);
 });
 
-test("pointingStateAt walks idle -> slew -> track -> idle", () => {
+test("prepareSchedule prefers returnSlewTimeSeconds for the slew-out", () => {
+  const [entry] = prepareSchedule(
+    [
+      {
+        taskId: "task-1",
+        platformName: "Sat-1",
+        targetName: "T1",
+        startUtc: iso(600),
+        stopUtc: iso(720),
+        slewTimeSeconds: 30,
+        returnSlewTimeSeconds: 90,
+      },
+    ],
+    EPOCH_MS,
+  );
+  assert.equal(entry.returnEndSec, 810);
+});
+
+test("pointingStateAt walks idle -> slew -> track -> return -> idle", () => {
   const entries = prepareSchedule(
     [
       {
@@ -88,16 +109,81 @@ test("pointingStateAt walks idle -> slew -> track -> idle", () => {
   const tracking = pointingStateAt(entries, 700);
   assert.equal(tracking.phase, "track");
   assert.equal(tracking.entry.targetName, "T1");
+  // Still tracking at the very end of the window.
+  assert.equal(pointingStateAt(entries, 720).phase, "track");
 
-  // Between tasks: idle again, then the slew into task 2 starts from T1.
+  // After stopSec the sensor slews home (nadir) instead of snapping: t1
+  // stops at 720 with a 30 s return, so t=735 is halfway home.
+  const returning = pointingStateAt(entries, 735);
+  assert.equal(returning.phase, "return");
+  assert.equal(returning.entry.targetName, "T1");
+  assert.equal(returning.fromTarget, "T1");
+  assert.ok(Math.abs(returning.progress - 0.5) < 1e-9);
+
+  // Once the return finishes (t=750) the sensor is idle at home, so the
+  // slew into task 2 starts from nadir, not from T1.
   assert.equal(pointingStateAt(entries, 1500).phase, "idle");
   const secondSlew = pointingStateAt(entries, 1980);
   assert.equal(secondSlew.phase, "slew");
   assert.equal(secondSlew.entry.targetName, "T2");
-  assert.equal(secondSlew.fromTarget, "T1");
+  assert.equal(secondSlew.fromTarget, null);
 
+  // Idle again after task 2's return-home completes (2100 + 40 = 2140).
+  assert.equal(pointingStateAt(entries, 2120).phase, "return");
   assert.equal(pointingStateAt(entries, 5000).phase, "idle");
   assert.equal(pointingStateAt([], 100).phase, "idle");
+});
+
+test("next task's slew lead-in wins over an unfinished return home", () => {
+  const entries = prepareSchedule(
+    [
+      {
+        taskId: "t1",
+        platformName: "Sat-1",
+        targetName: "T1",
+        startUtc: iso(600),
+        stopUtc: iso(720),
+        slewTimeSeconds: 60,
+      },
+      {
+        // Lead-in starts at 740, while t1 is still returning home (720-780).
+        taskId: "t2",
+        platformName: "Sat-1",
+        targetName: "T2",
+        startUtc: iso(800),
+        stopUtc: iso(900),
+        slewTimeSeconds: 60,
+      },
+    ],
+    EPOCH_MS,
+  );
+
+  // Return home runs until the next lead-in takes over.
+  assert.equal(pointingStateAt(entries, 730).phase, "return");
+  const handoff = pointingStateAt(entries, 750);
+  assert.equal(handoff.phase, "slew");
+  assert.equal(handoff.entry.targetName, "T2");
+  // The interrupted return means the slew starts from T1, not from nadir.
+  assert.equal(handoff.fromTarget, "T1");
+});
+
+test("zero-length return slew goes straight back to idle", () => {
+  const entries = prepareSchedule(
+    [
+      {
+        taskId: "t1",
+        platformName: "Sat-1",
+        targetName: "T1",
+        startUtc: iso(600),
+        stopUtc: iso(720),
+        slewTimeSeconds: 30,
+        returnSlewTimeSeconds: 0,
+      },
+    ],
+    EPOCH_MS,
+  );
+  assert.equal(pointingStateAt(entries, 720).phase, "track");
+  assert.equal(pointingStateAt(entries, 720.001).phase, "idle");
 });
 
 test("prepareSensorAccesses converts both window sets", () => {

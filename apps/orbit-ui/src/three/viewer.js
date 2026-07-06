@@ -609,8 +609,9 @@ export function createViewer(container, { onSelect } = {}) {
     }
     tmpNadir.copy(p).multiplyScalar(-1 / r);
 
-    // Boresight: nadir when idle, the task target while tracking, and an
-    // interpolated direction while slewing into a task.
+    // Boresight: home (nadir) when idle, the task target while tracking, an
+    // interpolated direction while slewing into a task, and an interpolation
+    // from the finished target back to nadir during the return-home phase.
     const pointing = pointingStateAt(viz.entries, tSec);
     const dir = tmpDir.copy(tmpNadir);
     let targetPos = null;
@@ -621,6 +622,10 @@ export function createViewer(container, { onSelect } = {}) {
         tmpTo.subVectors(targetPos, p).normalize();
         if (pointing.phase === "track") {
           dir.copy(tmpTo);
+        } else if (pointing.phase === "return") {
+          dir
+            .lerpVectors(tmpTo, tmpNadir, Math.min(pointing.progress, 1))
+            .normalize();
         } else {
           tmpFrom.copy(tmpNadir);
           const prev = pointing.fromTarget
@@ -637,7 +642,10 @@ export function createViewer(container, { onSelect } = {}) {
       }
     }
 
-    const tracking = pointing.phase !== "idle" && targetPos;
+    // The tracking line only makes sense while pointing at (or toward) the
+    // upcoming/active target; the return-home slew has no target to show.
+    const tracking =
+      pointing.phase !== "idle" && pointing.phase !== "return" && targetPos;
     const fovActive = tracking
       ? isFovActive(s.data.name, pointing.entry.targetName, tSec)
       : false;
