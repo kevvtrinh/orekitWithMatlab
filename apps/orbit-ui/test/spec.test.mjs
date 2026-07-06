@@ -579,6 +579,14 @@ test("buildRenderScenario merges schedule, sensor accesses, and sun data", () =>
   );
   assert.equal(fresh.dirty, false);
 
+  // MATLAB jsonencode can collapse a one-entry struct array back into a
+  // single object inside raw.spec; the run is still fresh.
+  const singletonTaskRaw = structuredClone(raw);
+  singletonTaskRaw.spec.tasks = singletonTaskRaw.spec.tasks[0];
+  const singletonTaskFresh = buildRenderScenario(spec, singletonTaskRaw);
+  assert.equal(singletonTaskFresh.schedule[0].stale, false);
+  assert.equal(singletonTaskFresh.dirty, false);
+
   // Editing the task list marks the schedule stale and the scenario dirty.
   const editedTasks = structuredClone(spec);
   editedTasks.tasks[0].priority = 9;

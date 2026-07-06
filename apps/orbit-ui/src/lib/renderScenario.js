@@ -25,6 +25,11 @@ import {
 
 const GROUND_KINDS = { groundStation: "GroundStation", target: "Target" };
 
+function asArray(value) {
+  if (value === undefined || value === null) return [];
+  return Array.isArray(value) ? value : [value];
+}
+
 function pickColor(specColor, index, seen) {
   let color = specColor;
   if (!color || seen.has(color)) {
@@ -40,11 +45,10 @@ export function buildRenderScenario(spec, matlabRaw) {
   // Timing/meta freshness: everything MATLAB computed assumed this meta.
   const metaFresh = runSpec ? deepEqual(spec.meta, runSpec.meta) : false;
 
-  const runObjectByName = new Map(
-    (runSpec?.objects ?? []).map((o) => [o.name, o]),
-  );
+  const runObjects = asArray(runSpec?.objects);
+  const runObjectByName = new Map(runObjects.map((o) => [o.name, o]));
   const matlabSatByName = new Map(
-    (matlabRaw?.satellites ?? []).map((s) => [s.name, s]),
+    asArray(matlabRaw?.satellites).map((s) => [s.name, s]),
   );
 
   const freshNames = new Set();
@@ -112,7 +116,7 @@ export function buildRenderScenario(spec, matlabRaw) {
   // Accesses: keep only pairs whose two endpoints still exist; flag staleness.
   const specNames = new Set(spec.objects.map((o) => o.name));
   const accesses = prepareAccesses(
-    (matlabRaw?.accesses ?? []).filter(
+    asArray(matlabRaw?.accesses).filter(
       (a) => specNames.has(a.source) && specNames.has(a.target),
     ),
     Number.isNaN(epochMs) ? 0 : epochMs,
@@ -126,9 +130,9 @@ export function buildRenderScenario(spec, matlabRaw) {
   // A schedule entry is stale as soon as either endpoint (or the task list)
   // changed; the whole schedule is recomputed on the next run anyway.
   const tasksFresh =
-    metaFresh && deepEqual(spec.tasks ?? [], runSpec?.tasks ?? []);
+    metaFresh && deepEqual(asArray(spec.tasks), asArray(runSpec?.tasks));
   const schedule = prepareSchedule(
-    (matlabRaw?.schedule ?? []).filter(
+    asArray(matlabRaw?.schedule).filter(
       (e) => specNames.has(e.platformName) && specNames.has(e.targetName),
     ),
     Number.isNaN(epochMs) ? 0 : epochMs,
@@ -140,7 +144,7 @@ export function buildRenderScenario(spec, matlabRaw) {
       !freshNames.has(e.targetName),
   }));
   const sensorAccesses = prepareSensorAccesses(
-    (matlabRaw?.sensorAccesses ?? []).filter(
+    asArray(matlabRaw?.sensorAccesses).filter(
       (a) => specNames.has(a.platform) && specNames.has(a.target),
     ),
     Number.isNaN(epochMs) ? 0 : epochMs,
@@ -157,10 +161,10 @@ export function buildRenderScenario(spec, matlabRaw) {
     ? prepareSun(
         {
           ...rawSun,
-          eclipses: (rawSun.eclipses ?? []).filter((e) =>
+          eclipses: asArray(rawSun.eclipses).filter((e) =>
             freshNames.has(e.satellite),
           ),
-          groundLighting: (rawSun.groundLighting ?? []).filter((g) =>
+          groundLighting: asArray(rawSun.groundLighting).filter((g) =>
             freshNames.has(g.name),
           ),
         },
@@ -173,7 +177,7 @@ export function buildRenderScenario(spec, matlabRaw) {
     !metaFresh ||
     !tasksFresh ||
     spec.objects.some((o) => !freshNames.has(o.name)) ||
-    spec.objects.length !== (runSpec.objects?.length ?? 0);
+    spec.objects.length !== runObjects.length;
 
   return {
     meta: {
