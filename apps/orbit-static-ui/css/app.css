@@ -64,6 +64,7 @@ body {
   gap: 8px;
   margin-right: 8px;
   flex: 0 0 auto;
+  min-width: 0;
 }
 
 .brand-mark {
@@ -92,13 +93,15 @@ body {
   border: 1px solid var(--border);
   border-radius: 4px;
   font-size: 12px;
-  max-width: 260px;
+  flex: 1 1 160px;
+  min-width: 110px;
+  max-width: 240px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.topbar-spacer { flex: 1; }
+.topbar-spacer { flex: 1 1 8px; min-width: 0; }
 
 .topbar-group {
   display: flex;
@@ -108,6 +111,7 @@ body {
 }
 
 .utc-readout {
+  flex: 0 0 auto;
   font-family: var(--mono);
   font-size: 12px;
   background: var(--bg-inset);
@@ -117,6 +121,31 @@ body {
   min-width: 186px;
   text-align: center;
   white-space: nowrap;
+}
+
+@media (max-width: 1360px) {
+  .topbar {
+    gap: 7px;
+    padding: 0 8px;
+  }
+
+  .brand-sub { display: none; }
+  .scenario-chip { max-width: 170px; }
+  .toggle-btn { padding: 5px 9px; }
+  .utc-readout {
+    min-width: 164px;
+    padding: 4px 6px;
+    font-size: 11px;
+  }
+  .topbar-group { gap: 4px; }
+  .topbar-group .btn {
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+  .pill {
+    padding-left: 7px;
+    padding-right: 7px;
+  }
 }
 
 /* ---------- Buttons, pills, toggles ---------- */
@@ -212,6 +241,7 @@ body {
 
 .view-toggle {
   display: flex;
+  flex: 0 0 auto;
   background: var(--bg-inset);
   border: 1px solid var(--border);
   border-radius: 4px;
@@ -417,6 +447,10 @@ body {
   width: 100%;
   height: 100%;
   display: block;
+}
+
+.viewport canvas[hidden] {
+  display: none !important;
 }
 
 #canvas-3d { cursor: grab; }

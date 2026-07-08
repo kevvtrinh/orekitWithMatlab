@@ -871,6 +871,9 @@
     lines.push(pad("CONTACTS", 10) +
       (liveCount > 0 ? liveCount + " ACTIVE" : "none") +
       (state.dirty ? " (STALE)" : ""));
+    var sun = Orbit.data.subsolarPoint(scn.epochMs + state.simSec * 1000);
+    lines.push(pad("SUN", 10) +
+      sun.latDeg.toFixed(2) + "  " + sun.lonDeg.toFixed(2) + " SUBSOLAR");
     var sel = state.selection && Orbit.panels.findSelected(state, state.selection);
     var scnSat = sel && (sel.scnSat || null);
     if (scnSat) {

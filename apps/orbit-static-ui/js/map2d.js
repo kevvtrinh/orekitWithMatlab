@@ -58,11 +58,51 @@ window.Orbit = window.Orbit || {};
 
   function drawBase(ctx, rect) {
     var grad = ctx.createLinearGradient(0, rect.y, 0, rect.y + rect.h);
-    grad.addColorStop(0, "#0c141c");
-    grad.addColorStop(0.5, "#0e1822");
-    grad.addColorStop(1, "#0c141c");
+    grad.addColorStop(0, "#071724");
+    grad.addColorStop(0.22, "#0a2636");
+    grad.addColorStop(0.5, "#0a3342");
+    grad.addColorStop(0.78, "#0a2636");
+    grad.addColorStop(1, "#071724");
     ctx.fillStyle = grad;
     ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+
+    drawBathymetry(ctx, rect);
+    drawPolarIce(ctx, rect);
+  }
+
+  function drawBathymetry(ctx, rect) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(rect.x, rect.y, rect.w, rect.h);
+    ctx.clip();
+    ctx.strokeStyle = "rgba(118, 172, 187, 0.075)";
+    ctx.lineWidth = 1;
+    for (var lat = -75; lat <= 75; lat += 15) {
+      ctx.beginPath();
+      for (var lon = -180; lon <= 180; lon += 6) {
+        var p = project(rect, lat, lon);
+        var wobble = Math.sin((lon * 1.7 + lat * 2.1) * DEG) * 1.7 +
+          Math.sin((lon * 0.6 - lat * 1.3) * DEG) * 0.9;
+        if (lon === -180) ctx.moveTo(p.x, p.y + wobble);
+        else ctx.lineTo(p.x, p.y + wobble);
+      }
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  function drawPolarIce(ctx, rect) {
+    var north = ctx.createLinearGradient(0, rect.y, 0, rect.y + rect.h * 0.2);
+    north.addColorStop(0, "rgba(220, 232, 232, 0.23)");
+    north.addColorStop(1, "rgba(220, 232, 232, 0)");
+    ctx.fillStyle = north;
+    ctx.fillRect(rect.x, rect.y, rect.w, rect.h * 0.2);
+
+    var south = ctx.createLinearGradient(0, rect.y + rect.h, 0, rect.y + rect.h * 0.78);
+    south.addColorStop(0, "rgba(220, 232, 232, 0.26)");
+    south.addColorStop(1, "rgba(220, 232, 232, 0)");
+    ctx.fillStyle = south;
+    ctx.fillRect(rect.x, rect.y + rect.h * 0.78, rect.w, rect.h * 0.22);
   }
 
   function frame(ctx, rect) {
@@ -108,19 +148,68 @@ window.Orbit = window.Orbit || {};
   }
 
   function drawLand(ctx, rect) {
-    ctx.fillStyle = "#1c2b2e";
-    ctx.strokeStyle = "rgba(102, 132, 133, 0.4)";
-    ctx.lineWidth = 1;
+    ctx.save();
+    beginLandPath(ctx, rect);
+    ctx.clip();
+    var land = ctx.createLinearGradient(0, rect.y, 0, rect.y + rect.h);
+    land.addColorStop(0, "#d9e3dd");
+    land.addColorStop(0.16, "#6d8062");
+    land.addColorStop(0.32, "#a48756");
+    land.addColorStop(0.5, "#4e7d5c");
+    land.addColorStop(0.68, "#a08355");
+    land.addColorStop(0.84, "#66785b");
+    land.addColorStop(1, "#d8dedf");
+    ctx.fillStyle = land;
+    ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+    drawLandRelief(ctx, rect);
+    ctx.restore();
+
+    ctx.save();
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
+    beginLandPath(ctx, rect);
+    ctx.strokeStyle = "rgba(3, 9, 12, 0.55)";
+    ctx.lineWidth = 3;
+    ctx.stroke();
+    beginLandPath(ctx, rect);
+    ctx.strokeStyle = "rgba(164, 205, 190, 0.58)";
+    ctx.lineWidth = 0.9;
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function beginLandPath(ctx, rect) {
+    ctx.beginPath();
     Orbit.world.landPolygons.forEach(function (ring) {
-      ctx.beginPath();
       ring.forEach(function (pt, i) {
         var p = project(rect, pt[1], pt[0]);
         if (i === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y);
       });
       ctx.closePath();
-      ctx.fill();
-      ctx.stroke();
     });
+  }
+
+  function drawLandRelief(ctx, rect) {
+    ctx.strokeStyle = "rgba(248, 241, 211, 0.055)";
+    ctx.lineWidth = 1;
+    for (var y = rect.y + 8; y < rect.y + rect.h; y += 10) {
+      ctx.beginPath();
+      for (var x = rect.x; x <= rect.x + rect.w; x += 10) {
+        var yy = y + Math.sin((x * 0.055 + y * 0.023)) * 2.4;
+        if (x === rect.x) ctx.moveTo(x, yy); else ctx.lineTo(x, yy);
+      }
+      ctx.stroke();
+    }
+
+    ctx.strokeStyle = "rgba(12, 24, 16, 0.075)";
+    for (var y2 = rect.y + 5; y2 < rect.y + rect.h; y2 += 13) {
+      ctx.beginPath();
+      for (var x2 = rect.x; x2 <= rect.x + rect.w; x2 += 12) {
+        var yy2 = y2 + Math.sin((x2 * 0.04 - y2 * 0.031)) * 1.8;
+        if (x2 === rect.x) ctx.moveTo(x2, yy2); else ctx.lineTo(x2, yy2);
+      }
+      ctx.stroke();
+    }
   }
 
   // Night-side shading bounded by the solar terminator.
@@ -144,15 +233,32 @@ window.Orbit = window.Orbit || {};
     ctx.fillStyle = "rgba(2, 6, 12, 0.42)";
     ctx.fill();
 
-    // Subsolar marker.
+    drawSunMarker(ctx, rect, sun);
+  }
+
+  function drawSunMarker(ctx, rect, sun) {
     var sp = project(rect, sun.latDeg, sun.lonDeg);
-    ctx.strokeStyle = "rgba(240, 200, 90, 0.55)";
-    ctx.lineWidth = 1;
+    var glow = ctx.createRadialGradient(sp.x, sp.y, 2, sp.x, sp.y, 36);
+    glow.addColorStop(0, "rgba(244, 203, 95, 0.34)");
+    glow.addColorStop(1, "rgba(244, 203, 95, 0)");
+    ctx.fillStyle = glow;
     ctx.beginPath();
-    ctx.arc(sp.x, sp.y, 5, 0, 2 * Math.PI);
-    ctx.moveTo(sp.x - 8, sp.y); ctx.lineTo(sp.x + 8, sp.y);
-    ctx.moveTo(sp.x, sp.y - 8); ctx.lineTo(sp.x, sp.y + 8);
+    ctx.arc(sp.x, sp.y, 36, 0, 2 * Math.PI);
+    ctx.fill();
+
+    ctx.strokeStyle = "rgba(244, 203, 95, 0.82)";
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.arc(sp.x, sp.y, 6, 0, 2 * Math.PI);
+    ctx.moveTo(sp.x - 11, sp.y); ctx.lineTo(sp.x + 11, sp.y);
+    ctx.moveTo(sp.x, sp.y - 11); ctx.lineTo(sp.x, sp.y + 11);
     ctx.stroke();
+
+    ctx.fillStyle = "#f4cb5f";
+    ctx.beginPath();
+    ctx.arc(sp.x, sp.y, 3, 0, 2 * Math.PI);
+    ctx.fill();
+    label(ctx, sp, "SUN", "#f4cb5f", -13);
   }
 
   // Full track faint + recent trail bright, split at the dateline.
