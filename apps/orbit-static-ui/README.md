@@ -116,5 +116,41 @@ drag-to-rotate and wheel-zoom.
 `selftest.html` is a browser-only sanity check for the pure JavaScript data
 and spec helpers, including Walker/TLE/area-grid authoring, the
 sensor/access-request workflows, sensor task and maneuver validation,
-schedule/pointing normalization, and the Level 5 sun/eclipse parsing and
-sensor pointing/footprint geometry. It can be opened directly from disk.
+schedule/pointing normalization, the Level 5 sun/eclipse parsing and sensor
+pointing/footprint geometry, and the Level 6 ephemeris CSV export and
+`js/api.js` sample-reload/error-classification codepaths (a few checks are
+asynchronous and exercise real `fetch()` calls). It can be opened directly
+from disk.
+
+## Operational Polish
+
+A **Log** button next to the bridge pill opens a worker/status panel: the
+worker's state (idle / running / succeeded / failed / offline), whether the
+MATLAB session behind the bridge is connected ("warm" - it is the same
+long-lived process for the whole session, so there is no per-run cold start),
+the last run's finish time and duration, and a capped history of recent
+status-bar messages so a run/refresh failure stays visible after the status
+line moves on. Bridge calls classify failures by kind - a request that timed
+out, one the browser could not reach at all, a non-2xx HTTP status, or a 2xx
+response whose body was not valid JSON - so messages say why a call failed
+instead of one generic string; busy and stale state are already visible via
+the pulsing status message and the EDITED/STALE pills.
+
+The File menu adds two commands:
+
+- **Export Ephemeris CSV** downloads the propagated position samples (time
+  offset, UTC time, lat/lon/altitude, ECI XYZ, eclipse state where available)
+  for the selected satellite, or every propagated satellite if none is
+  selected, as a single CSV with one header row.
+- **Reset Demo Spec** (confirmation required) restores the shipped demo
+  scenario's editable spec through the same derive/validate/save path as any
+  other edit. It does not propagate - the result is flagged stale (like any
+  edit) until Run Demo or Re-run.
+
+Keyboard shortcuts, layered onto the existing Space play/pause: Left/Right
+arrow steps the clock by one time step, Home rewinds to the scenario start,
+1/2 switch between the 2D map and 3D globe, Delete removes the current
+selection (with the existing confirmation dialogs), R reloads scenario data,
+and Escape closes an open menu. All of them are skipped while a dialog is
+open or while typing in a text/number/select field, and the buttons/rows that
+expose these commands spell the shortcut out in their tooltip.

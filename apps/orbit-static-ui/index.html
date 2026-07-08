@@ -26,8 +26,8 @@
             title="Objects changed since the last MATLAB run - tracks, access windows, and the timeline are stale until Re-run">EDITED</span>
       <div class="topbar-spacer"></div>
       <div class="view-toggle" role="tablist" aria-label="Mission view">
-        <button class="toggle-btn is-active" id="btn-view-2d" role="tab">2D MAP</button>
-        <button class="toggle-btn" id="btn-view-3d" role="tab">3D GLOBE</button>
+        <button class="toggle-btn is-active" id="btn-view-2d" role="tab" title="2D map view (1)">2D MAP</button>
+        <button class="toggle-btn" id="btn-view-3d" role="tab" title="3D globe view (2)">3D GLOBE</button>
       </div>
       <div class="utc-readout" id="utc-readout">&ndash;&ndash;&ndash;&ndash;&#8209;&ndash;&ndash;&#8209;&ndash;&ndash; &ndash;&ndash;:&ndash;&ndash;:&ndash;&ndash; UTC</div>
       <div class="topbar-group">
@@ -39,6 +39,11 @@
             <button class="menu-item" id="menu-import-spec">Import Spec JSON&hellip;</button>
             <button class="menu-item" id="menu-export-spec">Export Spec JSON</button>
             <button class="menu-item" id="menu-export-scenario">Export Scenario JSON</button>
+            <button class="menu-item" id="menu-export-ephemeris"
+                    title="Propagated position samples for the selected satellite, or every satellite if none is selected">Export Ephemeris CSV</button>
+            <hr class="menu-sep">
+            <button class="menu-item" id="menu-reset-demo"
+                    title="Restore the shipped demo scenario's editable spec (confirmation required)">Reset Demo Spec&hellip;</button>
           </div>
         </div>
         <div class="menu-wrap">
@@ -58,12 +63,25 @@
                     title="Sun glyph / subsolar marker">Sun</button>
           </div>
         </div>
-        <button class="btn" id="btn-refresh" title="Reload scenario data">&#10227; Refresh</button>
+        <button class="btn" id="btn-refresh" title="Reload scenario data (R)">&#10227; Refresh</button>
         <button class="btn btn-accent" id="btn-run-demo"
                 title="Propagate the demo scenario with MATLAB / Orekit">Run Demo</button>
         <button class="btn btn-accent" id="btn-run-scenario"
                 title="Re-propagate the current objects with MATLAB / Orekit">Re-run</button>
         <span class="pill pill-wait" id="bridge-pill">checking&hellip;</span>
+        <div class="menu-wrap">
+          <button class="btn btn-small" id="btn-worker-log"
+                  title="Worker status and recent activity log">Log &#9662;</button>
+          <div class="menu worker-panel" id="worker-panel" hidden>
+            <div class="worker-status-row">
+              <span class="status-dot" id="worker-status-dot"></span>
+              <span id="worker-status-text">Idle</span>
+            </div>
+            <div class="worker-status-detail" id="worker-status-detail"></div>
+            <div class="insp-caption">RECENT ACTIVITY</div>
+            <div class="worker-log-list" id="worker-log-list"></div>
+          </div>
+        </div>
       </div>
     </header>
 
@@ -114,8 +132,8 @@
 
     <section class="timeline">
       <div class="transport">
-        <button class="icon-btn" id="btn-rewind" title="Jump to scenario start">&#9198;</button>
-        <button class="icon-btn" id="btn-play" title="Play / pause (Space)">&#9654;</button>
+        <button class="icon-btn" id="btn-rewind" title="Jump to scenario start (Home)">&#9198;</button>
+        <button class="icon-btn" id="btn-play" title="Play / pause (Space) - Left/Right arrow to step">&#9654;</button>
         <label class="speed-label">SPEED
           <select id="speed-select" class="speed-select">
             <option value="1">1&times;</option>

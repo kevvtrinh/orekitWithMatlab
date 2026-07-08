@@ -373,6 +373,48 @@ window.Orbit = window.Orbit || {};
     return { x: v.x / r, y: v.y / r, z: v.z / r, latDeg: sp.latDeg, lonDeg: sp.lonDeg };
   }
 
+  // ---- CSV export ------------------------------------------------------------
+
+  function csvField(value) {
+    var s = value == null ? "" : String(value);
+    return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  }
+
+  // One CSV table of a scenario's propagated ephemeris samples: satNames
+  // (optional) restricts the rows to those satellites, else every satellite
+  // that has samples. LightingState is blank when the payload carries no
+  // sun/eclipse block (see Orbit.data.lightingStateAt).
+  var EPHEMERIS_CSV_HEADER = ["Satellite", "TimeOffsetSec", "UtcTime",
+    "LatitudeDeg", "LongitudeDeg", "AltitudeKm", "EciXKm", "EciYKm", "EciZKm",
+    "LightingState"];
+
+  function ephemerisCsv(scn, satNames) {
+    var wanted = null;
+    if (satNames && satNames.length > 0) {
+      wanted = {};
+      satNames.forEach(function (n) { wanted[n] = true; });
+    }
+    var lines = [EPHEMERIS_CSV_HEADER.join(",")];
+    (scn && scn.sats || []).forEach(function (sat) {
+      if (wanted && !wanted[sat.name]) return;
+      var n = Math.min(sat.t.length, sat.lla.length);
+      for (var i = 0; i < n; i++) {
+        var lla = sat.lla[i] || [];
+        var eci = sat.eci[i] || [];
+        var lighting = lightingStateAt(scn, sat.name, sat.t[i]);
+        lines.push([
+          csvField(sat.name),
+          sat.t[i],
+          fmtUtc(scn.epochMs + sat.t[i] * 1000).replace(" ", "T") + "Z",
+          lla[0], lla[1], lla[2],
+          eci[0], eci[1], eci[2],
+          lighting || "",
+        ].join(","));
+      }
+    });
+    return lines.join("\r\n") + "\r\n";
+  }
+
   // ---- formatting ------------------------------------------------------------
 
   function pad2(n) { return (n < 10 ? "0" : "") + n; }
@@ -417,6 +459,7 @@ window.Orbit = window.Orbit || {};
     sunDirEcef: sunDirEcef,
     lightingStateAt: lightingStateAt,
     groundDaylightAt: groundDaylightAt,
+    ephemerisCsv: ephemerisCsv,
     fmtUtc: fmtUtc,
     fmtHms: fmtHms,
     fmtDuration: fmtDuration,

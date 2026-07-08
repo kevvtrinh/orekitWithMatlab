@@ -37,6 +37,12 @@
       sensorFor: false,
       sun: true,
     },
+    // Recent status-bar messages, newest last, capped (worker/log panel).
+    log: [],
+    // Outcome of the last MATLAB job this session: null | "succeeded" | "failed".
+    lastRunOutcome: null,
+    lastRunFinishedMs: null,
+    lastRunDurationMs: null,
   };
 
   var VIEW_OPTIONS = [
@@ -53,7 +59,10 @@
     "bridge-pill", "dirty-pill", "btn-view-2d", "btn-view-3d", "canvas-2d", "canvas-3d",
     "viewport-hud", "viewport-frame-tag", "btn-reset-view", "object-tree", "inspector",
     "btn-settings", "btn-file-menu", "file-menu", "menu-import-spec",
-    "menu-export-spec", "menu-export-scenario", "import-spec-input",
+    "menu-export-spec", "menu-export-scenario", "menu-export-ephemeris",
+    "menu-reset-demo", "import-spec-input",
+    "btn-worker-log", "worker-panel", "worker-status-dot", "worker-status-text",
+    "worker-status-detail", "worker-log-list",
     "btn-view-menu", "view-menu",
     "menu-toggle-labels", "menu-toggle-ground-tracks", "menu-toggle-access-lines",
     "menu-toggle-sensor-fov", "menu-toggle-sensor-for", "menu-toggle-sun",
@@ -66,12 +75,99 @@
 
   var globeDrag = Orbit.globe3d.attach(els.canvas3d);
 
+  function esc(text) {
+    return String(text).replace(/[&<>"']/g, function (ch) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch];
+    });
+  }
+
+  // Diagnostic error kinds set by js/api.js (see taggedError there): a short
+  // suffix so status messages/the log say *why* a call failed, not just that
+  // it did (offline vs. timed out vs. a bad HTTP status vs. a malformed body).
+  var ERROR_KIND_LABEL = {
+    timeout: "timed out",
+    network: "unreachable",
+    http: "HTTP error",
+    malformed: "malformed response",
+  };
+
+  function kindSuffix(err) {
+    var label = err && err.kind && ERROR_KIND_LABEL[err.kind];
+    return label ? " (" + label + ")" : "";
+  }
+
   // ---- status helpers --------------------------------------------------------
 
   function setMessage(text, tone) {
     els.statusMessage.textContent = text;
     els.statusMessage.className = "status-item" +
       (tone ? " is-" + tone : "");
+    logEvent(text, tone);
+  }
+
+  // Worker/log panel: a running history of status-bar messages so run/refresh
+  // failures stay visible after the status line moves on. Capped so the
+  // panel (and this array) cannot grow without bound in a long session.
+  var LOG_LIMIT = 60;
+
+  function logEvent(text, tone) {
+    var now = new Date();
+    state.log.push({
+      timeText: now.toISOString().slice(11, 19) + "Z",
+      tone: tone || "info",
+      text: text,
+    });
+    if (state.log.length > LOG_LIMIT) state.log.shift();
+    if (!els.workerPanel.hidden) renderWorkerPanel();
+  }
+
+  var WORKER_STATE_LABEL = {
+    running: "Running",
+    offline: "Offline - sample data",
+    succeeded: "Succeeded",
+    failed: "Failed",
+    idle: "Idle",
+  };
+
+  // Derives the worker's displayed state from existing state (no separate
+  // state machine to keep in sync): busy wins, then whether a bridge is
+  // connected at all, then the outcome of the last job this session.
+  function currentWorkerState() {
+    if (state.busy) return "running";
+    if (!state.bridge) return "offline";
+    if (state.lastRunOutcome) return state.lastRunOutcome;
+    return "idle";
+  }
+
+  function renderWorkerPanel() {
+    var st = currentWorkerState();
+    els.workerStatusDot.className = "status-dot status-dot-" + st;
+    els.workerStatusText.textContent = WORKER_STATE_LABEL[st] || st;
+
+    var detail = [];
+    detail.push(state.bridge
+      ? "MATLAB " + (state.bridge.matlabRelease || "") + " bridge connected - warm session"
+      : "No MATLAB bridge - editing the bundled sample scenario");
+    if (state.lastRunFinishedMs) {
+      detail.push("Last run finished " + Orbit.data.fmtUtc(state.lastRunFinishedMs) + " UTC" +
+        (state.lastRunDurationMs != null
+          ? " (" + (state.lastRunDurationMs / 1000).toFixed(1) + "s)" : ""));
+    }
+    if (state.dirty) detail.push("Spec has unpropagated edits - results are stale.");
+    els.workerStatusDetail.textContent = detail.join(" - ");
+
+    els.workerLogList.innerHTML = state.log.length === 0
+      ? '<div class="worker-log-empty">No activity yet.</div>'
+      : state.log.slice().reverse().map(function (entry) {
+          return '<div class="worker-log-row log-' + esc(entry.tone) + '">' +
+            '<span class="worker-log-time">' + esc(entry.timeText) + '</span>' +
+            '<span class="worker-log-text">' + esc(entry.text) + '</span></div>';
+        }).join("");
+  }
+
+  function toggleWorkerPanel(open) {
+    els.workerPanel.hidden = open === undefined ? !els.workerPanel.hidden : !open;
+    if (!els.workerPanel.hidden) renderWorkerPanel();
   }
 
   function refreshStatusBar() {
@@ -124,11 +220,13 @@
     els.btnRunDemo.title = "Propagate the demo scenario with MATLAB / Orekit" + why;
     els.btnRunScenario.title = "Propagate the current spec with MATLAB / Orekit" + why;
     refreshStatusBar();
+    if (!els.workerPanel.hidden) renderWorkerPanel();
   }
 
   function updateDirtyUi() {
     els.dirtyPill.hidden = !state.dirty;
     els.timelineLanes.classList.toggle("is-stale", state.dirty);
+    if (!els.workerPanel.hidden) renderWorkerPanel();
   }
 
   function updateEditButtons() {
@@ -180,10 +278,10 @@
       Orbit.api.detectBridge().then(function (health) {
         setBridge(health);
         if (health) {
-          setMessage("Spec save failed: " + err.message, "error");
+          setMessage("Spec save failed" + kindSuffix(err) + ": " + err.message, "error");
         } else {
           state.specMode = "local";
-          setMessage("MATLAB bridge unreachable - edits stay local until it returns.", "error");
+          setMessage("MATLAB bridge unreachable (offline) - edits stay local until it returns.", "error");
         }
       });
     });
@@ -320,7 +418,7 @@
       setScenario(res.scenario, res.source);
       setMessage("Scenario loaded (" + res.source + ").", "ok");
     }).catch(function (err) {
-      setMessage("Load failed: " + err.message, "error");
+      setMessage("Load failed" + kindSuffix(err) + ": " + err.message, "error");
     });
   }
 
@@ -330,9 +428,11 @@
     setBridge(state.bridge); // recompute run-button state
     updateEditButtons();
     if (message) setMessage(message, busy ? "busy" : "ok");
+    if (!els.workerPanel.hidden) renderWorkerPanel();
   }
 
   function runJob(promise, doneMessage, adoptSpecFromPayload) {
+    var startedMs = Date.now();
     setBusy(true, "MATLAB is propagating with Orekit - the console stays live on current data...");
     promise.then(function (res) {
       if (res && res.scenario) {
@@ -344,11 +444,19 @@
           saveSpecToBridge();
         }
       }
+      state.lastRunOutcome = "succeeded";
+      state.lastRunFinishedMs = Date.now();
+      state.lastRunDurationMs = state.lastRunFinishedMs - startedMs;
       setBusy(false);
       setMessage(doneMessage, "ok");
     }).catch(function (err) {
+      state.lastRunOutcome = "failed";
+      state.lastRunFinishedMs = Date.now();
+      state.lastRunDurationMs = state.lastRunFinishedMs - startedMs;
       setBusy(false);
-      setMessage("MATLAB run failed: " + err.message, "error");
+      var label = err && err.kind === "timeout" ? "MATLAB run timed out"
+        : "MATLAB run failed" + kindSuffix(err);
+      setMessage(label + ": " + err.message, "error");
     });
   }
 
@@ -1334,11 +1442,19 @@
   els.btnFileMenu.addEventListener("click", function (ev) {
     ev.stopPropagation();
     toggleViewMenu(false);
+    toggleWorkerPanel(false);
     toggleFileMenu();
+  });
+  els.btnWorkerLog.addEventListener("click", function (ev) {
+    ev.stopPropagation();
+    toggleFileMenu(false);
+    toggleViewMenu(false);
+    toggleWorkerPanel();
   });
   document.addEventListener("click", function () {
     toggleFileMenu(false);
     toggleViewMenu(false);
+    toggleWorkerPanel(false);
   });
 
   // ---- view menu (labels / ground tracks / access lines / sensor FOV+FOR / sun) --
@@ -1357,6 +1473,7 @@
   els.btnViewMenu.addEventListener("click", function (ev) {
     ev.stopPropagation();
     toggleFileMenu(false);
+    toggleWorkerPanel(false);
     toggleViewMenu();
   });
 
@@ -1390,6 +1507,69 @@
     toggleFileMenu(false);
     if (state.raw) Orbit.api.downloadJson("scenario.json", state.raw);
     else setMessage("No propagated scenario to export yet.", "error");
+  });
+
+  // Exports the selected satellite's propagated samples, or every satellite
+  // with samples when nothing satellite-shaped is selected.
+  els.menuExportEphemeris.addEventListener("click", function () {
+    toggleFileMenu(false);
+    if (!state.scn) {
+      setMessage("No propagated scenario to export yet.", "error");
+      return;
+    }
+    var sel = state.selection && Orbit.panels.findSelected(state, state.selection);
+    var isSatSelection = sel && (sel.type === "satellite" || sel.type === "payload-satellite");
+    if (isSatSelection && !sel.scnSat) {
+      setMessage("'" + state.selection + "' has no propagated ephemeris yet - " +
+        "Re-run to compute it.", "error");
+      return;
+    }
+    var sats = isSatSelection ? [sel.scnSat] : state.scn.sats.filter(function (s) {
+      return s.t.length > 0;
+    });
+    if (sats.length === 0) {
+      setMessage("No propagated satellite ephemeris to export - Run Demo or " +
+        "Re-run first.", "error");
+      return;
+    }
+    var names = sats.map(function (s) { return s.name; });
+    var csv = Orbit.data.ephemerisCsv(state.scn, names);
+    var filename = (isSatSelection
+      ? sats[0].name.replace(/[^\w.-]+/g, "_")
+      : "all-satellites") + "-ephemeris.csv";
+    Orbit.api.downloadText(filename, csv, "text/csv");
+    setMessage("Exported ephemeris CSV for " + sats.length + " satellite(s).", "ok");
+  });
+
+  // Restores the shipped demo's editable spec without propagating it - the
+  // dirty pill flags the result stale until Run Demo / Re-run, same as any
+  // other spec edit.
+  els.menuResetDemo.addEventListener("click", function () {
+    toggleFileMenu(false);
+    if (state.busy) {
+      setMessage("MATLAB is propagating - try again when the run finishes.", "error");
+      return;
+    }
+    var hasObjects = !!(state.spec && state.spec.objects && state.spec.objects.length > 0);
+    if (!window.confirm("Reset to the shipped demo spec?" + (hasObjects
+        ? "\n\nThis replaces the current objects, tasks, and access requests. " +
+          "It does not propagate - press Run Demo or Re-run afterward."
+        : ""))) {
+      return;
+    }
+    Orbit.api.loadSampleScenario().then(function (res) {
+      var demoSpec = Orbit.spec.deriveSpecFromScenario(res.scenario);
+      return applySpec(demoSpec);
+    }).then(function (result) {
+      if (result.errors) {
+        setMessage("Reset failed: " + result.errors.join(" "), "error");
+      } else {
+        setMessage("Reset to the shipped demo spec - press Run Demo or " +
+          "Re-run to propagate it.", "ok");
+      }
+    }).catch(function (err) {
+      setMessage("Reset failed" + kindSuffix(err) + ": " + err.message, "error");
+    });
   });
 
   els.importSpecInput.addEventListener("change", function () {
@@ -1632,10 +1812,54 @@
     if (hit) select(hit.name);
   });
 
+  // Typing/select/contenteditable targets (spec form fields live inside a
+  // modal, which owns its own key handling below) never see these shortcuts,
+  // so plain text entry is never hijacked.
+  function isTypingTarget(el) {
+    if (!el) return false;
+    var tag = el.tagName;
+    return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || !!el.isContentEditable;
+  }
+
   window.addEventListener("keydown", function (ev) {
-    if (ev.code === "Space" && ev.target === document.body && !Orbit.modal.isOpen()) {
+    if (Orbit.modal.isOpen()) return; // js/modal.js owns Escape/Enter while a dialog is open
+
+    if (ev.code === "Space" && ev.target === document.body) {
       ev.preventDefault();
       setPlaying(!state.playing);
+      return;
+    }
+    if (isTypingTarget(ev.target)) return;
+
+    if (ev.key === "Escape") {
+      toggleFileMenu(false);
+      toggleViewMenu(false);
+      toggleWorkerPanel(false);
+      return;
+    }
+    if (ev.key === "1") { setView("2d"); return; }
+    if (ev.key === "2") { setView("3d"); return; }
+    if ((ev.key === "r" || ev.key === "R") && !ev.metaKey && !ev.ctrlKey && !els.btnRefresh.disabled) {
+      ev.preventDefault();
+      els.btnRefresh.click();
+      return;
+    }
+    if (!state.scn) return; // remaining shortcuts act on the loaded scenario/selection
+
+    if (ev.key === "ArrowLeft" || ev.key === "ArrowRight") {
+      ev.preventDefault();
+      var stepSec = state.scn.stepSec || 60;
+      seek(state.simSec + (ev.key === "ArrowRight" ? stepSec : -stepSec));
+      return;
+    }
+    if (ev.key === "Home") {
+      ev.preventDefault();
+      seek(0);
+      return;
+    }
+    if (ev.key === "Delete" && state.spec && state.selection && !state.busy) {
+      ev.preventDefault();
+      deleteObject(state.selection);
     }
   });
 

@@ -48,7 +48,23 @@ HTML/CSS/classic JavaScript with the MATLAB bridge
   alongside the existing drag-to-rotate/wheel-zoom. 2D/3D access lines and
   ground-track visibility are both toggle-gated; the Natural Earth
   map/globe/sun rendering from the prior step is unchanged.
-- [ ] **Level 6 - Operational polish**
-  Warm worker/status/log panels, better stale-bridge diagnostics, export
-  ephemeris CSV, reset demo spec, keyboard polish, and self-tests for more
-  browser workflows.
+- [x] **Level 6 - Operational polish**
+  A Log button next to the bridge pill opens a worker/status panel (idle /
+  running / succeeded / failed / offline, warm-session detail, last-run
+  duration) backed by a capped history of status-bar messages, so run/refresh
+  failures stay visible after the status line moves on. Bridge calls
+  (`js/api.js`) tag failures with a diagnostic kind - timeout, network
+  (unreachable), http, or malformed payload - surfaced in status messages and
+  the log instead of one generic failure string; busy and stale are already
+  visible via the busy status pulse and the EDITED/STALE pills. File menu
+  gains Export Ephemeris CSV (propagated position samples for the selected
+  satellite, or every propagated satellite if none is selected, with clear
+  column headers incl. lighting state) and Reset Demo Spec (confirmation,
+  restores the shipped demo's editable spec through the same derive/validate/
+  save path as any other edit, without silently propagating it). Keyboard
+  polish: Left/Right steps the clock, Home rewinds, 1/2 switch 2D/3D, Delete
+  removes the current selection, R refreshes, Escape closes open menus - all
+  skipped while typing in a field or with a dialog open; button tooltips spell
+  out the new shortcuts. `selftest.html` gained ephemeris-CSV and sample/
+  demo-reload coverage, plus async checks that exercise `js/api.js`'s real
+  fetch/error-classification codepaths instead of reimplementing them.

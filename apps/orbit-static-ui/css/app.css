@@ -263,6 +263,85 @@ body {
   color: var(--accent-text);
 }
 
+.menu-sep {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 4px 2px;
+}
+
+/* ---------- Worker / activity log panel ---------- */
+
+.worker-panel {
+  min-width: 300px;
+  max-width: 340px;
+  padding: 8px 10px;
+}
+
+.worker-status-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 2px 4px;
+}
+
+.status-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-faint);
+}
+
+.status-dot-running { background: var(--warn); animation: pulse 1.6s ease-in-out infinite; }
+.status-dot-succeeded { background: var(--ok); }
+.status-dot-failed { background: var(--err); }
+.status-dot-offline { background: var(--text-faint); }
+.status-dot-idle { background: var(--sel); }
+
+.worker-status-detail {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-muted);
+  padding: 0 2px 4px;
+}
+
+.worker-log-list {
+  max-height: 220px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.worker-log-row {
+  display: flex;
+  gap: 8px;
+  padding: 3px 2px;
+  font-size: 11px;
+  line-height: 1.4;
+  border-radius: 3px;
+}
+
+.worker-log-time {
+  flex: none;
+  font-family: var(--mono);
+  color: var(--text-faint);
+}
+
+.worker-log-text { flex: 1; min-width: 0; word-break: break-word; }
+
+.worker-log-row.log-ok .worker-log-text { color: var(--ok); }
+.worker-log-row.log-error .worker-log-text { color: var(--err); }
+.worker-log-row.log-busy .worker-log-text { color: var(--warn); }
+
+.worker-log-empty {
+  padding: 6px 2px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
 .view-toggle {
   display: flex;
   flex: 0 0 auto;

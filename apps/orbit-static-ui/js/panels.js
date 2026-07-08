@@ -499,7 +499,7 @@ window.Orbit = window.Orbit || {};
       '<button class="btn btn-small" data-action="edit" data-name="' +
       esc(name) + '"' + dis + ">Edit</button>" +
       '<button class="btn btn-small btn-danger" data-action="delete" data-name="' +
-      esc(name) + '"' + dis + ">Delete</button></div>";
+      esc(name) + '" title="Delete (Del)"' + dis + ">Delete</button></div>";
   }
 
   function elementsKv(d, orbit) {
@@ -823,7 +823,7 @@ window.Orbit = window.Orbit || {};
       '<button class="btn btn-small" data-action="edit" data-name="' +
       esc(sel.key) + '"' + dis + ">Edit</button>" +
       '<button class="btn btn-small btn-danger" data-action="delete" data-name="' +
-      esc(sel.key) + '"' + dis + ">Delete</button></div></div>";
+      esc(sel.key) + '" title="Delete (Del)"' + dis + ">Delete</button></div></div>";
   }
 
   // Scheduled dwell windows, one row per entry; clicking seeks to the start
@@ -918,7 +918,7 @@ window.Orbit = window.Orbit || {};
     return html +
       '<div class="insp-actions">' +
       '<button class="btn btn-small btn-danger" data-action="delete" data-name="' +
-      esc(sel.key) + '"' + dis + ">Delete Request</button></div></div>";
+      esc(sel.key) + '" title="Delete (Del)"' + dis + ">Delete Request</button></div></div>";
   }
 
   // ---- timeline ------------------------------------------------------------------

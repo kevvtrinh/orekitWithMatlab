@@ -25,25 +25,41 @@
   <script src="js/data.js"></script>
   <script src="js/spec.js"></script>
   <script src="js/sensorviz.js"></script>
+  <script src="js/api.js"></script>
   <script>
     (function () {
       "use strict";
       var results = document.getElementById("results");
       var failures = 0, total = 0;
+      var pending = []; // promises from async checks; summary waits on these
 
+      // fn() may return a promise (e.g. exercising js/api.js's real fetch
+      // codepaths) - either shape reports PASS/FAIL the same way.
       function check(name, fn) {
         total++;
         var row = document.createElement("div");
-        try {
-          fn();
+        results.appendChild(row);
+        function pass() {
           row.className = "pass";
           row.textContent = "PASS  " + name;
-        } catch (err) {
+        }
+        function fail(err) {
           failures++;
           row.className = "fail";
-          row.textContent = "FAIL  " + name + " - " + err.message;
+          row.textContent = "FAIL  " + name + " - " + ((err && err.message) || err);
         }
-        results.appendChild(row);
+        var outcome;
+        try {
+          outcome = fn();
+        } catch (err) {
+          fail(err);
+          return;
+        }
+        if (outcome && typeof outcome.then === "function") {
+          pending.push(outcome.then(pass, fail));
+        } else {
+          pass();
+        }
       }
 
       function assert(cond, msg) { if (!cond) throw new Error(msg || "assertion failed"); }
@@ -768,11 +784,90 @@
         near(gp.altM, 100, 1e-6, "area centroid altitude");
       });
 
+      // ---- Level 6: ephemeris CSV export, sample/demo reload, error diagnostics ----
+
+      check("ephemerisCsv renders headers and interpolation-free sample rows", function () {
+        var raw3 = {
+          meta: { epochUtc: "2026-01-01T00:00:00Z", durationSeconds: 60, stepSeconds: 60 },
+          satellites: [{ name: "Sat-A", ephemeris: {
+            tOffsetSec: [0, 60],
+            llaDeg: [[10, 20, 500], [11, 21, 505]],
+            eciKm: [[1, 2, 3], [4, 5, 6]],
+          } }],
+          sun: { eclipses: [{ satellite: "Sat-A", windows: [{ type: "Umbra",
+            startUtc: "2026-01-01T00:00:00Z", stopUtc: "2026-01-01T00:00:30Z" }] }] },
+        };
+        var scn3 = Orbit.data.parseScenario(raw3);
+        var csv = Orbit.data.ephemerisCsv(scn3, ["Sat-A"]);
+        var rows = csv.trim().split("\r\n");
+        assert(rows.length === 3, "expected header + 2 rows, got " + rows.length);
+        assert(rows[0].split(",")[0] === "Satellite", "missing header row");
+        assert(rows[1] === "Sat-A,0,2026-01-01T00:00:00Z,10,20,500,1,2,3,Umbra",
+          "row 1 mismatch: " + rows[1]);
+        assert(rows[2] === "Sat-A,60,2026-01-01T00:01:00Z,11,21,505,4,5,6,Sunlit",
+          "row 2 mismatch: " + rows[2]);
+      });
+
+      check("ephemerisCsv filters to requested satellites and quotes special names", function () {
+        var scn3 = Orbit.data.parseScenario({
+          meta: { epochUtc: "2026-01-01T00:00:00Z", durationSeconds: 60, stepSeconds: 60 },
+          satellites: [
+            { name: "Keep, Inc", ephemeris: { tOffsetSec: [0], llaDeg: [[0, 0, 0]], eciKm: [[0, 0, 0]] } },
+            { name: "Drop", ephemeris: { tOffsetSec: [0], llaDeg: [[0, 0, 0]], eciKm: [[0, 0, 0]] } },
+          ],
+        });
+        var csv = Orbit.data.ephemerisCsv(scn3, ["Keep, Inc"]);
+        var rows = csv.trim().split("\r\n");
+        assert(rows.length === 2, "expected header + 1 row, got " + rows.length);
+        assert(rows[1].indexOf('"Keep, Inc",0,') === 0,
+          "expected the comma-bearing name to be quoted: " + rows[1]);
+        assert(csv.indexOf("Drop") === -1, "unrequested satellite leaked into the export");
+        var all = Orbit.data.ephemerisCsv(scn3, []);
+        assert(all.trim().split("\r\n").length === 3, "empty filter should export every satellite");
+      });
+
+      check("api.loadSampleScenario resolves the bundled demo scenario", function () {
+        // selftest.html is meant to run from disk (file://), so this exercises
+        // the same embedded-sample codepath the console falls back to offline.
+        return Orbit.api.loadSampleScenario().then(function (res) {
+          assert(res && res.scenario && res.scenario.meta, "missing scenario payload");
+          assert(res.source.indexOf("sample") === 0, "unexpected source: " + res.source);
+          var demoSpec = Orbit.spec.deriveSpecFromScenario(res.scenario);
+          assert(Orbit.spec.validateSpec(demoSpec).length === 0,
+            "demo spec derived for Reset Demo Spec should validate cleanly");
+        });
+      });
+
+      // These two exercise js/api.js's real fetch codepaths rather than
+      // reimplemented logic. This page may be opened either from disk
+      // (file://, no bridge - the common case) or through a live
+      // orbitStaticUiServe bridge, so both accept either outcome and only
+      // assert the *shape* of whichever one actually happened.
+      check("api.detectBridge resolves cleanly (offline null, or a live health payload)", function () {
+        return Orbit.api.detectBridge().then(function (health) {
+          assert(health === null || health.ok === true,
+            "expected null (offline) or an ok health payload");
+        });
+      });
+
+      check("api calls classify a bridge-unreachable failure with a diagnostic kind", function () {
+        return Orbit.api.fetchSpec().then(function () {
+          return true; // a live bridge answered with a stored spec - nothing to classify
+        }, function (err) {
+          assert(err && err.kind, "error should carry a .kind for diagnostics: " + (err && err.message));
+          assert(["network", "timeout", "http", "malformed"].indexOf(err.kind) >= 0,
+            "unexpected error kind: " + err.kind);
+        });
+      });
+
       var summary = document.getElementById("summary");
-      summary.textContent = failures === 0
-        ? "All " + total + " checks passed."
-        : failures + " of " + total + " checks FAILED.";
-      summary.className = failures === 0 ? "pass" : "fail";
+      summary.textContent = "Running " + pending.length + " async check(s)...";
+      Promise.all(pending).then(function () {
+        summary.textContent = failures === 0
+          ? "All " + total + " checks passed."
+          : failures + " of " + total + " checks FAILED.";
+        summary.className = failures === 0 ? "pass" : "fail";
+      });
     })();
   </script>
 </body>
