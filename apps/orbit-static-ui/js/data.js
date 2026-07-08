@@ -34,7 +34,24 @@ window.Orbit = window.Orbit || {};
       sats: [],
       grounds: [],
       accesses: [],
+      sensorAccesses: [],
     };
+
+    function parseWindows(list) {
+      return (list || []).map(function (w) {
+        var startMs = Date.parse(w.startUtc);
+        var stopMs = Date.parse(w.stopUtc);
+        return {
+          startMs: startMs,
+          stopMs: stopMs,
+          startSec: (startMs - scn.epochMs) / 1000,
+          stopSec: (stopMs - scn.epochMs) / 1000,
+          durationSec: num(w.durationSeconds, (stopMs - startMs) / 1000),
+          maxElevationDeg: num(w.maxElevationDeg, null),
+          minRangeKm: num(w.minRangeKm, null),
+        };
+      });
+    }
 
     (raw.satellites || []).forEach(function (sat, i) {
       var eph = sat.ephemeris || {};
@@ -65,26 +82,27 @@ window.Orbit = window.Orbit || {};
     });
 
     (raw.accesses || []).forEach(function (acc) {
-      var windows = (acc.windows || []).map(function (w) {
-        var startMs = Date.parse(w.startUtc);
-        var stopMs = Date.parse(w.stopUtc);
-        return {
-          startMs: startMs,
-          stopMs: stopMs,
-          startSec: (startMs - scn.epochMs) / 1000,
-          stopSec: (stopMs - scn.epochMs) / 1000,
-          durationSec: num(w.durationSeconds, (stopMs - startMs) / 1000),
-          maxElevationDeg: num(w.maxElevationDeg, null),
-          minRangeKm: num(w.minRangeKm, null),
-        };
-      });
       scn.accesses.push({
         kind: "access",
         name: acc.source + " -> " + acc.target,
         source: acc.source,
         target: acc.target,
         totalDurationSec: num(acc.totalDurationSeconds, 0),
-        windows: windows,
+        windows: parseWindows(acc.windows),
+      });
+    });
+
+    // Sensor FOR/FOV visibility per sensor/target pair (exportScheduleViz.m):
+    // forWindows = the sensor could slew to see the target, fovWindows = the
+    // target crossed the instantaneous beam.
+    (raw.sensorAccesses || []).forEach(function (sa) {
+      scn.sensorAccesses.push({
+        kind: "sensorAccess",
+        platform: sa.platform || "",
+        sensor: sa.sensor || "",
+        target: sa.target || "",
+        forWindows: parseWindows(sa.forWindows),
+        fovWindows: parseWindows(sa.fovWindows),
       });
     });
 

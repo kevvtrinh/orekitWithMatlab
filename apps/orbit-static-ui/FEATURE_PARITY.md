@@ -10,14 +10,17 @@ HTML/CSS/classic JavaScript with the MATLAB bridge
   spec/scenario JSON, scenario settings, add/edit/delete basic satellites,
   ground stations, and point targets, local validation, dirty marking of
   propagated data, and re-running the current spec.
-- [x] **Level 2 - Expanded object creation** *(this step)*
+- [x] **Level 2 - Expanded object creation**
   Walker constellations, TLE satellites, area targets as grouped grids,
   object tree grouping/collapse, and edit/delete flows that preserve task
   references.
-- [ ] **Level 3 - Sensors and access workflows**
-  Add/edit/remove sensors, sensor pointing modes, selected access-pair
-  dialog, FOR/FOV visibility requests, and clear display of stale access
-  results.
+- [x] **Level 3 - Sensors and access workflows** *(this step)*
+  Add/edit/remove sensors, sensor pointing modes (incl. FixedVector
+  boresight), selected access-pair requests via `spec.accessRequests`
+  (satellite/ground, satellite/satellite line of sight, sensor FOR/FOV
+  visibility), request rows in the tree/inspector with computed-vs-pending
+  status, and clear display of stale access results. Sensor removal prunes
+  its visibility requests and unpins tasks; renames carry requests along.
 - [ ] **Level 4 - Tasking and maneuvers**
   Sensor task manager, area scan tasks, scheduling results/timeline rows,
   impulsive maneuver editor, and task-aware inspector details.

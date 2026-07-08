@@ -376,6 +376,18 @@ body {
   padding: 1px 4px;
 }
 
+/* Access request awaiting its first MATLAB run (no computed windows yet). */
+.tree-pending {
+  flex: none;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  color: var(--warn);
+  border: 1px solid rgba(224, 164, 60, 0.5);
+  border-radius: 3px;
+  padding: 1px 4px;
+}
+
 .tree-empty {
   padding: 10px 12px;
   color: var(--text-faint);
@@ -817,6 +829,10 @@ body {
   align-items: center;
   margin-bottom: 8px;
 }
+
+/* The hidden attribute must beat the grid display above (conditional
+   fields, e.g. the boresight rows outside FixedVector pointing). */
+.form-row[hidden] { display: none; }
 
 .form-label {
   font-size: 12px;

@@ -1,12 +1,12 @@
 // Orbit.spec - the editable scenario spec: templates, validation, cleanup,
-// and derivation from a propagated payload. Level 2 subset of
+// and derivation from a propagated payload. Level 3 subset of
 // apps/orbit-ui/src/lib/spec.js: meta, Keplerian and TLE satellites, Walker
-// constellations, ground stations, point targets, and area targets (grouped
-// grids). Sensors, maneuvers, tasks, and access requests are not authored
-// here yet (Level 3+), but specs containing them are accepted, validated,
-// and preserved through edits so nothing is silently dropped. Validation
-// must agree with the MATLAB side (src/ui/buildScenarioFromSpec.m), which
-// stays authoritative.
+// constellations, ground stations, point targets, area targets (grouped
+// grids), satellite sensors, and access requests. Maneuvers and tasks are
+// not authored here yet (Level 4+), but specs containing them are accepted,
+// validated, and preserved through edits so nothing is silently dropped.
+// Validation must agree with the MATLAB side
+// (src/ui/buildScenarioFromSpec.m), which stays authoritative.
 window.Orbit = window.Orbit || {};
 
 (function () {
@@ -20,8 +20,8 @@ window.Orbit = window.Orbit || {};
   var MAX_DURATION_SECONDS = 30 * 86400;
   var EARTH_RADIUS_KM = 6378.137;
 
-  // Preserved Level 3+ content (validated, not authored here yet).
   var SENSOR_POINTING_MODES = ["Nadir", "VelocityVector", "SunPointing", "FixedVector"];
+  // Preserved Level 4+ content (validated, not authored here yet).
   var TASK_TYPES = ["TrackPointTarget", "ScanAreaTarget"];
   var MAX_TASKS = 24;
   var MAX_ACCESS_REQUESTS = 80;
@@ -128,6 +128,27 @@ window.Orbit = window.Orbit || {};
       spacingKm: 50,
       priority: 5,
     };
+  }
+
+  // Conic imaging sensor attached to a satellite. The cone half-angle is the
+  // instantaneous beam (FOV); the field of regard is how far the sensor can
+  // slew off its nominal boresight when tasked. Defaults mirror
+  // apps/orbit-ui/src/lib/spec.js sensorTemplate.
+  function sensorTemplate() {
+    return {
+      coneHalfAngleDeg: 20,
+      fieldOfRegardDeg: 60,
+      slewRateDegPerSec: 2,
+      pointing: "Nadir",
+    };
+  }
+
+  // Effective sensor label: an explicit sensor name, else the backend's
+  // default "<satellite> Sensor" (buildScenarioFromSpec.m uses the same
+  // fallback, so tree rows and access requests agree with MATLAB).
+  function sensorDisplayName(sat) {
+    if (sat && sat.sensor && sat.sensor.name) return sat.sensor.name;
+    return ((sat && sat.name) || "?") + " Sensor";
   }
 
   // ---- naming ---------------------------------------------------------------
@@ -408,6 +429,142 @@ window.Orbit = window.Orbit || {};
       });
     }
     return { changes: changes, removed: removed };
+  }
+
+  // ---- sensors & access requests -----------------------------------------------
+
+  function isSensorRequest(req) {
+    return !!req && (req.type == null ? "access" : req.type) === "sensor";
+  }
+
+  function sensorRequestPlatform(req) {
+    return req.platformName != null ? req.platformName : req.sourceName;
+  }
+
+  // Human-readable "A -> B" label for a request (sensor requests lead with
+  // the sensor name, matching the tree rows the React console renders).
+  function accessRequestLabel(req) {
+    if (isSensorRequest(req)) {
+      var sensor = req.sensorName || ((sensorRequestPlatform(req) || "?") + " Sensor");
+      return sensor + " -> " + (req.targetName || "?");
+    }
+    return (req.sourceName || "?") + " -> " + (req.targetName || "?");
+  }
+
+  // Every access pair the current spec could request: satellite/ground
+  // access, satellite/satellite line of sight, and sensor/target FOR-FOV
+  // visibility. Mirrors apps/orbit-ui/src/lib/spec.js accessRequestOptions.
+  // Returns [{ key, label, meta, request }].
+  function accessRequestOptions(spec) {
+    var objects = (spec && spec.objects) || [];
+    var satellites = objects.filter(function (o) { return o && o.kind === "satellite"; });
+    var stations = objects.filter(function (o) { return o && o.kind === "groundStation"; });
+    var targets = objects.filter(function (o) { return o && o.kind === "target"; });
+    var options = [];
+
+    satellites.forEach(function (sat) {
+      stations.forEach(function (ground) {
+        var request = { type: "access", sourceName: sat.name, targetName: ground.name };
+        options.push({
+          key: accessRequestKey(request),
+          label: sat.name + " -> " + ground.name,
+          meta: "satellite / ground access",
+          request: request,
+        });
+      });
+    });
+
+    for (var i = 0; i < satellites.length; i++) {
+      for (var j = i + 1; j < satellites.length; j++) {
+        var losRequest = {
+          type: "access",
+          sourceName: satellites[i].name,
+          targetName: satellites[j].name,
+        };
+        options.push({
+          key: accessRequestKey(losRequest),
+          label: satellites[i].name + " -> " + satellites[j].name,
+          meta: "satellite / satellite line of sight",
+          request: losRequest,
+        });
+      }
+    }
+
+    satellites.filter(function (s) { return !!s.sensor; }).forEach(function (sat) {
+      var sensorName = sensorDisplayName(sat);
+      targets.forEach(function (target) {
+        var sensorRequest = {
+          type: "sensor",
+          platformName: sat.name,
+          sensorName: sensorName,
+          targetName: target.name,
+        };
+        options.push({
+          key: accessRequestKey(sensorRequest),
+          label: sensorName + " -> " + target.name,
+          meta: "sensor FOR / FOV visibility",
+          request: sensorRequest,
+        });
+      });
+    });
+
+    return options;
+  }
+
+  // Sensor requests on a platform carry the sensor name explicitly; keep
+  // them in sync when the sensor (or its satellite, when the sensor uses
+  // the default "<satellite> Sensor" name) is renamed.
+  // Returns { changes, count }; `changes` only carries accessRequests when
+  // the spec had the key.
+  function renameSensorRequests(spec, satName, newSensorName) {
+    var count = 0;
+    var changes = {};
+    if (spec.accessRequests !== undefined) {
+      changes.accessRequests = asArray(spec.accessRequests).map(function (r) {
+        if (!isSensorRequest(r) || sensorRequestPlatform(r) !== satName ||
+            r.sensorName === newSensorName) {
+          return r;
+        }
+        count++;
+        var next = {};
+        Object.keys(r).forEach(function (k) { next[k] = r[k]; });
+        next.sensorName = newSensorName;
+        return next;
+      });
+    }
+    return { changes: changes, count: count };
+  }
+
+  // When a satellite loses its sensor: drop the sensor visibility requests
+  // that need it and unpin tasks so they fall back to "any sensor" instead
+  // of failing validation (same behavior as the React console).
+  // Returns { changes, removedRequests, retargetedTasks }.
+  function detachSensorReferences(spec, satName) {
+    var removedRequests = 0;
+    var retargetedTasks = 0;
+    var changes = {};
+    if (spec.accessRequests !== undefined) {
+      changes.accessRequests = asArray(spec.accessRequests).filter(function (r) {
+        var hit = isSensorRequest(r) && sensorRequestPlatform(r) === satName;
+        if (hit) removedRequests++;
+        return !hit;
+      });
+    }
+    if (spec.tasks !== undefined) {
+      changes.tasks = asArray(spec.tasks).map(function (t) {
+        if (!t || t.satelliteName !== satName) return t;
+        retargetedTasks++;
+        var next = {};
+        Object.keys(t).forEach(function (k) { next[k] = t[k]; });
+        delete next.satelliteName;
+        return next;
+      });
+    }
+    return {
+      changes: changes,
+      removedRequests: removedRequests,
+      retargetedTasks: retargetedTasks,
+    };
   }
 
   // ---- time -------------------------------------------------------------------
@@ -994,6 +1151,8 @@ window.Orbit = window.Orbit || {};
     MAX_SATELLITES: MAX_SATELLITES,
     MAX_DURATION_SECONDS: MAX_DURATION_SECONDS,
     MAX_AREA_GRID_POINTS: MAX_AREA_GRID_POINTS,
+    MAX_ACCESS_REQUESTS: MAX_ACCESS_REQUESTS,
+    SENSOR_POINTING_MODES: SENSOR_POINTING_MODES,
     EARTH_RADIUS_KM: EARTH_RADIUS_KM,
     keplerianSatelliteTemplate: keplerianSatelliteTemplate,
     tleSatelliteTemplate: tleSatelliteTemplate,
@@ -1005,6 +1164,13 @@ window.Orbit = window.Orbit || {};
     expandAreaGrid: expandAreaGrid,
     groupTargets: groupTargets,
     areaGroup: areaGroup,
+    sensorTemplate: sensorTemplate,
+    sensorDisplayName: sensorDisplayName,
+    accessRequestKey: accessRequestKey,
+    accessRequestLabel: accessRequestLabel,
+    accessRequestOptions: accessRequestOptions,
+    renameSensorRequests: renameSensorRequests,
+    detachSensorReferences: detachSensorReferences,
     countReferences: countReferences,
     renameReferences: renameReferences,
     pruneReferences: pruneReferences,

@@ -5,8 +5,11 @@ classic JavaScript, canvas rendering, and a small MATLAB-hosted localhost
 bridge. There is no `npm install`, Vite server, or Node bridge.
 
 The console edits a scenario spec (scenario settings, Keplerian and TLE
-satellites, Walker constellations, ground stations, point targets, and area
-target grids), saves it through the bridge, and re-runs it in MATLAB. See
+satellites, Walker constellations, ground stations, point targets, area
+target grids, satellite sensors, and access requests), saves it through the
+bridge, and re-runs it in MATLAB. Access/visibility windows are computed by
+MATLAB on Re-run; requested pairs show as pending until then, and everything
+propagated is flagged stale while the spec has unpropagated edits. See
 `FEATURE_PARITY.md` for the parity roadmap against the React console in
 `apps/orbit-ui`.
 
@@ -70,5 +73,5 @@ apps/orbit-static-ui/
 ```
 
 `selftest.html` is a browser-only sanity check for the pure JavaScript data
-and spec helpers, including Walker/TLE/area-grid authoring. It can be opened
-directly from disk.
+and spec helpers, including Walker/TLE/area-grid authoring and the
+sensor/access-request workflows. It can be opened directly from disk.

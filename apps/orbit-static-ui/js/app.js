@@ -36,7 +36,7 @@
     "btn-settings", "btn-file-menu", "file-menu", "menu-import-spec",
     "menu-export-spec", "menu-export-scenario", "import-spec-input",
     "btn-add-sat", "btn-add-tle", "btn-add-walker", "btn-add-station",
-    "btn-add-target", "btn-add-area",
+    "btn-add-target", "btn-add-area", "btn-add-sensor", "btn-add-access",
     "btn-rewind", "btn-play", "speed-select", "sim-offset", "timeline-lanes",
     "status-message", "status-counts", "status-source", "status-bridge",
   ].forEach(function (id) { els[id.replace(/-([a-z0-9])/g, function (_, c) { return c.toUpperCase(); })] = document.getElementById(id); });
@@ -63,8 +63,12 @@
       counts = { sats: state.scn.sats.length, grounds: state.scn.grounds.length };
     }
     if (counts) {
+      var reqCount = state.spec && state.spec.accessRequests !== undefined
+        ? Orbit.spec.asArray(state.spec.accessRequests).length
+        : null;
       els.statusCounts.textContent = counts.sats + " sat - " + counts.grounds +
-        " ground - " + (state.scn ? state.scn.accesses.length : 0) + " access";
+        " ground - " + (state.scn ? state.scn.accesses.length : 0) + " access" +
+        (reqCount == null ? "" : " - " + reqCount + " req");
     }
     if (state.source) {
       els.statusSource.textContent = "data: " + state.source +
@@ -103,7 +107,8 @@
   function updateEditButtons() {
     var disabled = state.busy || !state.spec;
     [els.btnSettings, els.btnAddSat, els.btnAddTle, els.btnAddWalker,
-     els.btnAddStation, els.btnAddTarget, els.btnAddArea]
+     els.btnAddStation, els.btnAddTarget, els.btnAddArea,
+     els.btnAddSensor, els.btnAddAccess]
       .forEach(function (btn) { btn.disabled = disabled; });
     els.menuImportSpec.disabled = state.busy;
   }
@@ -196,6 +201,17 @@
           changes[k] = renamed.changes[k];
         });
         renamedRefs = renamed.count;
+        if (obj.kind === "satellite" && obj.sensor && !obj.sensor.name) {
+          // The sensor uses the default "<satellite> Sensor" label, so the
+          // satellite rename renames the sensor too; sensor requests carry
+          // that name explicitly and must follow.
+          var sensorRenamed = Orbit.spec.renameSensorRequests(
+            specWith(changes), obj.name, obj.name + " Sensor");
+          Object.keys(sensorRenamed.changes).forEach(function (k) {
+            changes[k] = sensorRenamed.changes[k];
+          });
+          renamedRefs += sensorRenamed.count;
+        }
       }
     } else {
       changes.objects = state.spec.objects.concat([obj]);
@@ -323,8 +339,8 @@
   ];
 
   // Shallow copy of `base` with `changes` applied; edit dialogs build the
-  // updated object this way so fields this console cannot author yet
-  // (sensor, maneuvers, group, area, color) survive a round trip unchanged.
+  // updated object this way so fields the dialog does not show (sensor,
+  // maneuvers, group, area, color) survive a round trip unchanged.
   function copyWith(base, changes) {
     var out = {};
     Object.keys(base || {}).forEach(function (k) { out[k] = base[k]; });
@@ -642,6 +658,260 @@
     });
   }
 
+  // ---- sensors ---------------------------------------------------------------
+
+  var POINTING_OPTIONS = [
+    ["Nadir", "Nadir (straight down)"],
+    ["VelocityVector", "Velocity vector (along-track)"],
+    ["SunPointing", "Sun pointing"],
+    ["FixedVector", "Fixed vector (ECEF)"],
+  ];
+
+  function satelliteByName(name) {
+    var found = null;
+    state.spec.objects.forEach(function (o) {
+      if (o.kind === "satellite" && o.name === name) found = o;
+    });
+    return found;
+  }
+
+  // Attach/replace (sensor object) or remove (null) a satellite's sensor,
+  // keeping the rest of the spec consistent: a renamed sensor carries its
+  // access requests along; a removed sensor drops its sensor requests and
+  // unpins tasks so they fall back to "any sensor".
+  function applySensor(satName, sensor) {
+    var sat = satelliteByName(satName);
+    if (!sat) return Promise.resolve({ errors: ["Satellite no longer exists."] });
+    var next = copyWith(sat, {});
+    if (sensor) next.sensor = sensor;
+    else delete next.sensor;
+    var changes = {
+      objects: state.spec.objects.map(function (o) {
+        return o.name === satName ? next : o;
+      }),
+    };
+    var note;
+    if (sensor) {
+      var effective = sensor.name || satName + " Sensor";
+      var renamed = Orbit.spec.renameSensorRequests(specWith(changes), satName, effective);
+      Object.keys(renamed.changes).forEach(function (k) {
+        changes[k] = renamed.changes[k];
+      });
+      note = (sat.sensor ? "Updated" : "Added") + " sensor '" + effective +
+        "' on '" + satName + "'." +
+        (renamed.count > 0 ? " Updated " + renamed.count + " access request(s)." : "");
+    } else {
+      var detached = Orbit.spec.detachSensorReferences(specWith(changes), satName);
+      Object.keys(detached.changes).forEach(function (k) {
+        changes[k] = detached.changes[k];
+      });
+      note = "Removed the sensor from '" + satName + "'.";
+      if (detached.removedRequests > 0) {
+        note += " Removed " + detached.removedRequests + " sensor access request(s).";
+      }
+      if (detached.retargetedTasks > 0) {
+        note += " " + detached.retargetedTasks + " task(s) now accept any sensor.";
+      }
+    }
+    return applySpec(specWith(changes)).then(function (result) {
+      if (result.ok) {
+        state.selection = satName;
+        renderPanels();
+        setMessage(note, "ok");
+      }
+      return result;
+    });
+  }
+
+  // satName pins the dialog to one satellite (inspector Add/Edit Sensor);
+  // null shows a platform picker (toolbar + Sensor).
+  function openSensorDialog(satName) {
+    var sats = state.spec.objects.filter(function (o) {
+      return o.kind === "satellite";
+    });
+    if (sats.length === 0) {
+      setMessage("Insert a satellite first - sensors mount on satellites.", "error");
+      return;
+    }
+    var pinned = satName ? satelliteByName(satName) : null;
+    if (satName && !pinned) return;
+    var initialSat = pinned;
+    if (!initialSat) {
+      // Prefer a satellite without a sensor, like the React console.
+      sats.forEach(function (s) { if (!initialSat && !s.sensor) initialSat = s; });
+      if (!initialSat) initialSat = sats[0];
+    }
+    var tpl = initialSat.sensor || Orbit.spec.sensorTemplate();
+    var boresight = Array.isArray(tpl.boresight) ? tpl.boresight : [1, 0, 0];
+    var boresightVisible = function (v) { return v.pointing === "FixedVector"; };
+
+    var fields = [];
+    if (!pinned) {
+      fields.push({ key: "satellite", label: "Satellite", type: "select",
+        value: initialSat.name,
+        options: sats.map(function (s) {
+          return [s.name, s.name + (s.sensor ? " (has sensor)" : "")];
+        }),
+        hint: "The platform this sensor mounts on" });
+    }
+    fields.push(
+      { key: "name", label: "Sensor name", type: "text", value: tpl.name || "",
+        hint: "Shown in the tree and access requests; blank uses '<satellite> Sensor'" },
+      { key: "coneHalfAngleDeg", label: "FOV half-angle (deg)", type: "number",
+        value: tpl.coneHalfAngleDeg, min: 0.1, max: 90,
+        hint: "Instantaneous beam: half-angle of the sensor cone" },
+      { key: "fieldOfRegardDeg", label: "FOR half-angle (deg)", type: "number",
+        value: tpl.fieldOfRegardDeg, min: 0.1, max: 180,
+        hint: "Field of regard: how far the sensor can slew off its boresight" },
+      { key: "slewRateDegPerSec", label: "Slew rate (deg/s)", type: "number",
+        value: tpl.slewRateDegPerSec == null ? 2 : tpl.slewRateDegPerSec,
+        min: 0.01, max: 60 },
+      { key: "pointing", label: "Pointing", type: "select",
+        value: tpl.pointing || "Nadir", options: POINTING_OPTIONS,
+        hint: "Nominal boresight; the field of regard slews around it" },
+      { key: "boresightX", label: "Boresight X", type: "number",
+        value: boresight[0], visibleWhen: boresightVisible,
+        hint: "Constant Earth-fixed (ECEF) direction; magnitude is ignored" },
+      { key: "boresightY", label: "Boresight Y", type: "number",
+        value: boresight[1], visibleWhen: boresightVisible },
+      { key: "boresightZ", label: "Boresight Z", type: "number",
+        value: boresight[2], visibleWhen: boresightVisible });
+
+    Orbit.modal.form({
+      title: pinned
+        ? (pinned.sensor ? "Edit Sensor - " : "Add Sensor - ") + pinned.name
+        : "Sensor",
+      submitLabel: "Apply",
+      fields: fields,
+      // The form keeps its values when the platform changes; warn when
+      // Apply would replace an existing sensor on the picked satellite.
+      preview: pinned ? null : function (v) {
+        var sat = satelliteByName(v.satellite);
+        return sat && sat.sensor
+          ? "'" + v.satellite + "' already has a sensor - Apply replaces it."
+          : "The sensor will be attached to '" + v.satellite + "'.";
+      },
+      onSubmit: function (v) {
+        var target = pinned || satelliteByName(v.satellite);
+        if (!target) return { errors: ["Satellite no longer exists."] };
+        // Copy the existing sensor first so unknown fields survive edits.
+        var sensor = copyWith(target.sensor || {}, {
+          name: v.name,
+          coneHalfAngleDeg: v.coneHalfAngleDeg,
+          fieldOfRegardDeg: v.fieldOfRegardDeg,
+          slewRateDegPerSec: v.slewRateDegPerSec,
+          pointing: v.pointing,
+        });
+        if (!v.name) delete sensor.name;
+        if (v.pointing === "FixedVector") {
+          sensor.boresight = [v.boresightX, v.boresightY, v.boresightZ];
+        } else {
+          delete sensor.boresight;
+        }
+        return applySensor(target.name, sensor);
+      },
+    });
+  }
+
+  function removeSensor(satName) {
+    var sat = satelliteByName(satName);
+    if (!sat || !sat.sensor) return;
+    // Preview the fallout before confirming (pure helper, nothing applied).
+    var detached = Orbit.spec.detachSensorReferences(state.spec, satName);
+    var parts = [];
+    if (detached.removedRequests > 0) {
+      parts.push("removes " + detached.removedRequests + " sensor access request(s)");
+    }
+    if (detached.retargetedTasks > 0) {
+      parts.push("re-points " + detached.retargetedTasks + " task(s) at any sensor");
+    }
+    var warning = parts.length > 0 ? "\n\nThis also " + parts.join(" and ") + "." : "";
+    if (!window.confirm("Remove the sensor from '" + satName + "'?" + warning)) return;
+    applySensor(satName, null).then(function (result) {
+      if (result.errors) setMessage(result.errors.join(" "), "error");
+    });
+  }
+
+  // ---- access requests ---------------------------------------------------------
+
+  function openAccessDialog() {
+    var current = Orbit.spec.asArray(state.spec.accessRequests);
+    var existing = {};
+    current.forEach(function (r) {
+      if (r) existing[Orbit.spec.accessRequestKey(r)] = true;
+    });
+    var options = Orbit.spec.accessRequestOptions(state.spec).filter(function (o) {
+      return !existing[o.key];
+    });
+    if (options.length === 0) {
+      setMessage(current.length > 0
+        ? "Every available access pair is already requested."
+        : "Add a satellite plus a ground station, a second satellite, or a " +
+          "sensor and a point target before requesting access.", "error");
+      return;
+    }
+    Orbit.modal.form({
+      title: "Request Access",
+      submitLabel: "Add Request",
+      fields: [
+        { key: "key", label: "Access pair", type: "select",
+          value: options[0].key,
+          options: options.map(function (o) {
+            return [o.key, o.label + " - " + o.meta];
+          }),
+          hint: "Only requested pairs are computed on Re-run" },
+      ],
+      preview: function () {
+        if (state.spec.accessRequests === undefined) {
+          return "First request: Re-run will compute only requested pairs " +
+            "instead of the default satellite/ground sweep.";
+        }
+        return current.length + " request(s) already in the spec (max " +
+          Orbit.spec.MAX_ACCESS_REQUESTS + ").";
+      },
+      onSubmit: function (v) {
+        var option = null;
+        options.forEach(function (o) { if (o.key === v.key) option = o; });
+        if (!option) return { errors: ["Pick an access pair."] };
+        var requests = Orbit.spec.asArray(state.spec.accessRequests)
+          .concat([option.request]);
+        return applySpec(specWith({ accessRequests: requests }))
+          .then(function (result) {
+            if (result.ok) {
+              state.selection = Orbit.panels.requestSelectionKey(option.request);
+              renderPanels();
+              setMessage("Requested " + option.label +
+                " - press Re-run to compute it.", "ok");
+            }
+            return result;
+          });
+      },
+    });
+  }
+
+  function deleteAccessRequest(selectionKey) {
+    var key = selectionKey.slice("req:".length);
+    var target = null;
+    var remaining = Orbit.spec.asArray(state.spec.accessRequests)
+      .filter(function (r) {
+        var hit = !!r && Orbit.spec.accessRequestKey(r) === key;
+        if (hit && !target) target = r;
+        return !hit;
+      });
+    if (!target) return;
+    var label = Orbit.spec.accessRequestLabel(target);
+    if (!window.confirm("Remove the access request '" + label + "'?" +
+        (remaining.length === 0
+          ? "\n\nNo requests will remain - the next Re-run computes no access windows."
+          : ""))) {
+      return;
+    }
+    applySpec(specWith({ accessRequests: remaining })).then(function (result) {
+      if (result.errors) setMessage(result.errors.join(" "), "error");
+      else setMessage("Removed access request '" + label + "'.", "ok");
+    });
+  }
+
   function openSettingsDialog() {
     var meta = state.spec.meta;
     Orbit.modal.form({
@@ -699,6 +969,11 @@
   }
 
   function deleteObject(name) {
+    if (name.indexOf("req:") === 0) {
+      // The inspector's delete button on an access request row.
+      deleteAccessRequest(name);
+      return;
+    }
     var exists = state.spec.objects.some(function (o) { return o.name === name; });
     if (!exists) {
       // Area target groups are deleted as a whole.
@@ -856,6 +1131,8 @@
       onSeek: seek,
       onEdit: editObject,
       onDelete: deleteObject,
+      onSensor: openSensorDialog,
+      onRemoveSensor: removeSensor,
     });
   }
 
@@ -949,6 +1226,12 @@
   });
   els.btnAddArea.addEventListener("click", function () {
     if (state.spec) openAreaDialog(null);
+  });
+  els.btnAddSensor.addEventListener("click", function () {
+    if (state.spec) openSensorDialog(null);
+  });
+  els.btnAddAccess.addEventListener("click", function () {
+    if (state.spec) openAccessDialog();
   });
 
   els.btnRefresh.addEventListener("click", function () {

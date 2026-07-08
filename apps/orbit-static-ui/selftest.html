@@ -267,6 +267,119 @@
         assert(pruned.changes.tasks.length === 1, "task not pruned");
       });
 
+      check("sensor template validates; FixedVector pointing needs a boresight", function () {
+        var spec = Orbit.spec.deriveSpecFromScenario(raw);
+        var sat = Orbit.spec.keplerianSatelliteTemplate("SensorAuth");
+        sat.sensor = Orbit.spec.sensorTemplate();
+        spec.objects = [sat];
+        var errors = Orbit.spec.validateSpec(Orbit.spec.stripEmptyFields(spec));
+        assert(errors.length === 0, errors[0]);
+        assert(Orbit.spec.sensorDisplayName(sat) === "SensorAuth Sensor",
+          "default sensor name");
+        sat.sensor.name = "Imager-1";
+        assert(Orbit.spec.sensorDisplayName(sat) === "Imager-1", "explicit sensor name");
+        sat.sensor.pointing = "FixedVector";
+        assert(Orbit.spec.validateSpec(spec).some(function (e) {
+          return e.indexOf("boresight") >= 0;
+        }), "missing boresight not flagged");
+        sat.sensor.boresight = [1, 0, 0];
+        errors = Orbit.spec.validateSpec(spec);
+        assert(errors.length === 0, errors[0]);
+      });
+
+      check("accessRequestOptions enumerates ground, LOS, and sensor pairs", function () {
+        var satA = Orbit.spec.keplerianSatelliteTemplate("OptA");
+        var satB = Orbit.spec.keplerianSatelliteTemplate("OptB");
+        satB.sensor = Orbit.spec.sensorTemplate();
+        var spec = { objects: [satA, satB,
+          Orbit.spec.groundStationTemplate("OptG"),
+          Orbit.spec.targetTemplate("OptT")] };
+        var options = Orbit.spec.accessRequestOptions(spec);
+        assert(options.length === 4, "expected 4 options, got " + options.length);
+        var keys = {};
+        options.forEach(function (o) {
+          assert(!keys[o.key], "duplicate option key " + o.key);
+          keys[o.key] = true;
+        });
+        assert(options.some(function (o) {
+          return o.label === "OptA -> OptG" && o.request.type === "access";
+        }), "sat/ground option missing");
+        assert(options.some(function (o) {
+          return o.label === "OptA -> OptB";
+        }), "sat/sat LOS option missing");
+        var sensorOption = null;
+        options.forEach(function (o) {
+          if (o.request.type === "sensor") sensorOption = o;
+        });
+        assert(sensorOption && sensorOption.label === "OptB Sensor -> OptT",
+          "sensor option missing or mislabeled");
+        assert(sensorOption.request.platformName === "OptB" &&
+          sensorOption.request.sensorName === "OptB Sensor",
+          "sensor request fields wrong");
+      });
+
+      check("validateSpec flags duplicate and broken access requests", function () {
+        var spec = Orbit.spec.deriveSpecFromScenario(raw);
+        var sat = Orbit.spec.keplerianSatelliteTemplate("ReqSat");
+        sat.sensor = Orbit.spec.sensorTemplate();
+        var bare = Orbit.spec.keplerianSatelliteTemplate("BareSat");
+        var target = Orbit.spec.targetTemplate("ReqTarget");
+        spec.objects = [sat, bare, target];
+        var request = { type: "sensor", platformName: "ReqSat",
+          sensorName: "ReqSat Sensor", targetName: "ReqTarget" };
+        spec.accessRequests = [request, request];
+        assert(Orbit.spec.validateSpec(spec).some(function (e) {
+          return e.indexOf("duplicate access request") >= 0;
+        }), "duplicate request not flagged");
+        spec.accessRequests = [{ type: "sensor", platformName: "BareSat",
+          sensorName: "BareSat Sensor", targetName: "ReqTarget" }];
+        assert(Orbit.spec.validateSpec(spec).some(function (e) {
+          return e.indexOf("satellite with a sensor") >= 0;
+        }), "sensorless platform not flagged");
+      });
+
+      check("sensor rename and removal keep requests and tasks consistent", function () {
+        var spec = {
+          objects: [],
+          tasks: [{ id: "t1", satelliteName: "SatX", targetName: "T" }],
+          accessRequests: [
+            { type: "sensor", platformName: "SatX", sensorName: "Old", targetName: "T" },
+            { type: "access", sourceName: "SatX", targetName: "G" },
+          ],
+        };
+        var renamed = Orbit.spec.renameSensorRequests(spec, "SatX", "New");
+        assert(renamed.count === 1, "rename count");
+        assert(renamed.changes.accessRequests[0].sensorName === "New",
+          "sensor request not renamed");
+        assert(renamed.changes.accessRequests[1].sourceName === "SatX",
+          "plain request should be untouched");
+        var detached = Orbit.spec.detachSensorReferences(spec, "SatX");
+        assert(detached.removedRequests === 1, "sensor request not removed");
+        assert(detached.changes.accessRequests.length === 1 &&
+          detached.changes.accessRequests[0].type === "access",
+          "plain request should survive sensor removal");
+        assert(detached.retargetedTasks === 1, "pinned task not retargeted");
+        assert(detached.changes.tasks[0].satelliteName === undefined,
+          "task should fall back to any sensor");
+      });
+
+      check("parseScenario normalizes sensorAccesses windows", function () {
+        var scn2 = Orbit.data.parseScenario({
+          meta: { epochUtc: "2026-01-01T00:00:00Z", durationSeconds: 7200,
+            stepSeconds: 60 },
+          sensorAccesses: [{ platform: "S", sensor: "S Sensor", target: "T",
+            forWindows: [{ startUtc: "2026-01-01T00:10:00Z",
+              stopUtc: "2026-01-01T00:20:00Z" }],
+            fovWindows: [] }],
+        });
+        assert(scn2.sensorAccesses.length === 1, "sensor access missing");
+        var pair = scn2.sensorAccesses[0];
+        assert(pair.platform === "S" && pair.target === "T", "pair fields wrong");
+        near(pair.forWindows[0].startSec, 600, 1e-6, "startSec");
+        near(pair.forWindows[0].durationSec, 600, 1e-6, "durationSec");
+        assert(pair.fovWindows.length === 0, "fov windows should be empty");
+      });
+
       check("stripEmptyFields drops null/empty values deeply", function () {
         var out = Orbit.spec.stripEmptyFields({
           a: 1, b: "", c: null, d: undefined,

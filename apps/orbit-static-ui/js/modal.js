@@ -50,7 +50,8 @@ window.Orbit = window.Orbit || {};
         esc(field.value == null ? "" : field.value) + '"' +
         (field.placeholder ? ' placeholder="' + esc(field.placeholder) + '"' : "") + ">";
     }
-    return '<label class="form-row"><span class="form-label"' +
+    return '<label class="form-row" id="modal-row-' + esc(field.key) +
+      '"><span class="form-label"' +
       (field.hint ? ' title="' + esc(field.hint) + '"' : "") + ">" +
       esc(field.label) + "</span>" + html + "</label>";
   }
@@ -77,7 +78,11 @@ window.Orbit = window.Orbit || {};
   // onSubmit returns { errors: [...] } to keep the modal open with the errors
   // shown, anything else (or a promise of it) to close. Field spec:
   // { key, label, type: "text"|"number"|"select"|"datetime",
-  //   value, options: [[value, label]], min, max, step, mono, hint, placeholder }
+  //   value, options: [[value, label]], min, max, step, mono, hint,
+  //   placeholder, visibleWhen(values) }
+  // `visibleWhen` (optional) hides the row while it returns false; hidden
+  // fields still report their values on submit, so onSubmit decides what to
+  // keep (e.g. drop the boresight unless pointing is FixedVector).
   function form(options) {
     close();
     var overlay = document.createElement("div");
@@ -110,6 +115,20 @@ window.Orbit = window.Orbit || {};
       noteEl.textContent = text;
     }
 
+    var hasConditionalFields = options.fields.some(function (field) {
+      return typeof field.visibleWhen === "function";
+    });
+
+    function refreshVisibility() {
+      if (!hasConditionalFields) return;
+      var values = readValues(overlay, options.fields);
+      options.fields.forEach(function (field) {
+        if (typeof field.visibleWhen !== "function") return;
+        var row = overlay.querySelector("#modal-row-" + field.key);
+        if (row) row.hidden = !field.visibleWhen(values);
+      });
+    }
+
     function submit() {
       errorEl.textContent = "";
       submitBtn.disabled = true;
@@ -134,10 +153,14 @@ window.Orbit = window.Orbit || {};
     overlay.querySelector(".modal-close").addEventListener("click", close);
     overlay.querySelector("#modal-cancel").addEventListener("click", close);
     submitBtn.addEventListener("click", submit);
-    if (options.preview) {
-      overlay.querySelector(".modal-body").addEventListener("input", refreshPreview);
-      overlay.querySelector(".modal-body").addEventListener("change", refreshPreview);
-      refreshPreview();
+    if (options.preview || hasConditionalFields) {
+      var refreshDynamic = function () {
+        refreshVisibility();
+        refreshPreview();
+      };
+      overlay.querySelector(".modal-body").addEventListener("input", refreshDynamic);
+      overlay.querySelector(".modal-body").addEventListener("change", refreshDynamic);
+      refreshDynamic();
     }
 
     var keyHandler = function (ev) {

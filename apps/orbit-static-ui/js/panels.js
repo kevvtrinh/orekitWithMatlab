@@ -57,14 +57,65 @@ window.Orbit = window.Orbit || {};
     return stored === undefined ? defaultOpen : stored;
   }
 
+  // ---- access requests ---------------------------------------------------------
+
+  // Selection keys for access requests are namespaced ("req:<key>") so they
+  // can never collide with object names.
+  function requestSelectionKey(request) {
+    return "req:" + Orbit.spec.accessRequestKey(request);
+  }
+
+  // The propagated result matching a request, if the last MATLAB run
+  // computed it: { access } for plain requests, { sensorAccess } for sensor
+  // requests, else null.
+  function findRequestResult(state, request) {
+    var scn = state.scn;
+    if (!scn || !request) return null;
+    var type = request.type == null ? "access" : request.type;
+    if (type === "sensor") {
+      var platform = request.platformName != null
+        ? request.platformName : request.sourceName;
+      for (var i = 0; i < scn.sensorAccesses.length; i++) {
+        var sa = scn.sensorAccesses[i];
+        if (sa.platform === platform && sa.target === request.targetName &&
+            (!request.sensorName || !sa.sensor || sa.sensor === request.sensorName)) {
+          return { sensorAccess: sa };
+        }
+      }
+      return null;
+    }
+    for (var j = 0; j < scn.accesses.length; j++) {
+      var acc = scn.accesses[j];
+      if ((acc.source === request.sourceName && acc.target === request.targetName) ||
+          (acc.source === request.targetName && acc.target === request.sourceName)) {
+        return { access: acc };
+      }
+    }
+    return null;
+  }
+
   // ---- selection -------------------------------------------------------------
 
   // Resolve a selected name against the spec first (objects, then area target
-  // groups), then the payload (an access pair, or a satellite from the last
-  // run that is no longer in the spec but still drawn in the viewport).
-  // Returns a descriptor or null.
+  // groups, then access requests), then the payload (an access pair, or a
+  // satellite from the last run that is no longer in the spec but still
+  // drawn in the viewport). Returns a descriptor or null.
   function findSelected(state, name) {
     var scn = state.scn;
+    if (name && name.indexOf("req:") === 0 && state.spec) {
+      var requests = Orbit.spec.asArray(state.spec.accessRequests);
+      for (var r = 0; r < requests.length; r++) {
+        if (requests[r] && requestSelectionKey(requests[r]) === name) {
+          return {
+            type: "accessRequest",
+            key: name,
+            request: requests[r],
+            result: findRequestResult(state, requests[r]),
+          };
+        }
+      }
+      return null;
+    }
     var sats = specSatellites(state.spec);
     for (var i = 0; i < sats.length; i++) {
       if (sats[i].name === name) {
@@ -234,6 +285,36 @@ window.Orbit = window.Orbit || {};
       }
     });
 
+    // Requested access products (spec.accessRequests). Rows show whether the
+    // last run computed the pair; the header carries the stale tag when the
+    // spec has unpropagated edits.
+    if (spec && spec.accessRequests !== undefined) {
+      var requests = Orbit.spec.asArray(spec.accessRequests);
+      html += '<div class="tree-group-label">ACCESS REQUESTS (' + requests.length +
+        ")" + staleTag(state) + "</div>";
+      if (requests.length === 0) {
+        html += '<div class="tree-empty">No pairs requested - the next Re-run ' +
+          "computes no access windows. Use + Access to request pairs.</div>";
+      }
+      requests.forEach(function (req) {
+        if (!req) return;
+        var isSensor = (req.type == null ? "access" : req.type) === "sensor";
+        var result = findRequestResult(state, req);
+        var meta = "";
+        var extra = "";
+        if (result && result.access) {
+          meta = result.access.windows.length + " win";
+        } else if (result && result.sensorAccess) {
+          meta = "FOR " + result.sensorAccess.forWindows.length +
+            " / FOV " + result.sensorAccess.fovWindows.length;
+        } else {
+          extra = '<span class="tree-pending">RUN</span>';
+        }
+        html += row2(requestSelectionKey(req), Orbit.spec.accessRequestLabel(req),
+          state.selection, isSensor ? "#c77ddb" : "#5fc98f", true, meta, extra, false);
+      });
+    }
+
     var accesses = scn ? scn.accesses : [];
     html += '<div class="tree-group-label">ACCESS (' + accesses.length + ")" +
       staleTag(state) + "</div>";
@@ -259,29 +340,37 @@ window.Orbit = window.Orbit || {};
   }
 
   function row(name, selection, color, square, meta, extra, child) {
+    return row2(name, name, selection, color, square, meta, extra, child);
+  }
+
+  // Like row() but the selection key and the visible label differ (access
+  // request rows select "req:<key>" while showing the pair label).
+  function row2(key, label, selection, color, square, meta, extra, child) {
     return '<button class="tree-row' + (child ? " tree-row-child" : "") +
-      (selection === name ? " is-selected" : "") +
-      '" data-name="' + esc(name) + '">' +
+      (selection === key ? " is-selected" : "") +
+      '" data-name="' + esc(key) + '">' +
       '<span class="tree-dot' + (square ? " dot-square" : "") +
       '" style="background:' + esc(color) + '"></span>' +
-      '<span class="tree-name">' + esc(name) + "</span>" + extra +
+      '<span class="tree-name">' + esc(label) + "</span>" + extra +
       '<span class="tree-meta">' + esc(meta) + "</span></button>";
   }
 
   // ---- inspector ---------------------------------------------------------------
 
-  // handlers: { onSeek(sec), onEdit(name), onDelete(name) }
+  // handlers: { onSeek(sec), onEdit(name), onDelete(name),
+  //   onSensor(satName), onRemoveSensor(satName) }
   function renderInspector(el, state, handlers) {
     var sel = state.selection ? findSelected(state, state.selection) : null;
     if (!sel) {
       el.innerHTML = '<div class="insp-hint">Select a satellite, ground object, ' +
-        "area target, or access pair to see its details.<br><br>Click objects in " +
-        "the tree or directly in the mission view.</div>";
+        "area target, access request, or access pair to see its details.<br><br>" +
+        "Click objects in the tree or directly in the mission view.</div>";
       return;
     }
     if (sel.type === "satellite") el.innerHTML = specSatelliteHtml(sel, state);
     else if (sel.type === "ground") el.innerHTML = groundHtml(sel, state);
     else if (sel.type === "areaGroup") el.innerHTML = areaGroupHtml(sel, state);
+    else if (sel.type === "accessRequest") el.innerHTML = accessRequestHtml(sel, state);
     else if (sel.type === "access") el.innerHTML = accessHtml(sel.access, state);
     else el.innerHTML = payloadSatelliteHtml(sel.scnSat, state);
 
@@ -300,6 +389,18 @@ window.Orbit = window.Orbit || {};
     if (deleteBtn) {
       deleteBtn.addEventListener("click", function () {
         handlers.onDelete(deleteBtn.dataset.name);
+      });
+    }
+    var sensorBtn = el.querySelector('[data-action="sensor"]');
+    if (sensorBtn) {
+      sensorBtn.addEventListener("click", function () {
+        handlers.onSensor(sensorBtn.dataset.name);
+      });
+    }
+    var removeSensorBtn = el.querySelector('[data-action="remove-sensor"]');
+    if (removeSensorBtn) {
+      removeSensorBtn.addEventListener("click", function () {
+        handlers.onRemoveSensor(removeSensorBtn.dataset.name);
       });
     }
   }
@@ -367,14 +468,13 @@ window.Orbit = window.Orbit || {};
     }
     var extras = [];
     if (sat.massKg != null) extras.push(["Mass", sat.massKg + " kg"]);
-    // Preserved Level 3+ content this console cannot edit yet.
-    if (sat.sensor) {
-      extras.push(["Sensor", (sat.sensor.name || "conic imager") + " (preserved)"]);
-    }
+    // Preserved Level 4+ content this console cannot edit yet.
     if (sat.maneuvers && sat.maneuvers.length > 0) {
       extras.push(["Maneuvers", sat.maneuvers.length + " (preserved)"]);
     }
     if (extras.length > 0) html += kv(extras);
+
+    html += sensorSectionHtml(sat, state);
 
     html += '<hr class="insp-divider"><div class="insp-caption">EPHEMERIS' +
       staleTag(state) + "</div>";
@@ -460,22 +560,50 @@ window.Orbit = window.Orbit || {};
       actionsHtml(sel.name, state.busy) + "</div>";
   }
 
-  function accessHtml(acc, state) {
+  // Satellite sensor block: parameters plus add/edit/remove controls. The
+  // sensor lives on the satellite spec object; there is no standalone
+  // sensor entry in the tree.
+  function sensorSectionHtml(sat, state) {
     var d = fmt();
-    var live = !state.dirty && isLive(acc, state.simSec);
-    var html = '<div class="insp-section">' +
-      '<div class="insp-title">' + esc(acc.name) +
-      (live ? ' <span class="tree-live">LIVE</span>' : "") + staleTag(state) + "</div>" +
-      '<div class="insp-subtitle">Access - ' + acc.windows.length +
-      " windows - total " + d.fmtDuration(acc.totalDurationSec) + "</div>" +
-      '<div class="insp-caption">WINDOWS - CLICK TO JUMP</div>' +
-      '<div class="window-list">';
-    if (acc.windows.length === 0) {
+    var dis = state.busy ? " disabled" : "";
+    var html = '<hr class="insp-divider"><div class="insp-caption">SENSOR</div>';
+    if (!sat.sensor) {
+      return html + '<div class="insp-hint">No sensor equipped.</div>' +
+        '<div class="insp-actions">' +
+        '<button class="btn btn-small" data-action="sensor" data-name="' +
+        esc(sat.name) + '"' + dis + ">Add Sensor</button></div>";
+    }
+    var sensor = sat.sensor;
+    var pairs = [
+      ["Name", Orbit.spec.sensorDisplayName(sat)],
+      ["FOV half-angle", d.fmtDeg(sensor.coneHalfAngleDeg, 1)],
+      ["Field of regard", d.fmtDeg(sensor.fieldOfRegardDeg, 1)],
+    ];
+    if (sensor.slewRateDegPerSec != null) {
+      pairs.push(["Slew rate", sensor.slewRateDegPerSec + " deg/s"]);
+    }
+    pairs.push(["Pointing", sensor.pointing || "Nadir"]);
+    if ((sensor.pointing || "Nadir") === "FixedVector" &&
+        Array.isArray(sensor.boresight)) {
+      pairs.push(["Boresight", sensor.boresight.join(", ")]);
+    }
+    return html + kv(pairs) +
+      '<div class="insp-actions">' +
+      '<button class="btn btn-small" data-action="sensor" data-name="' +
+      esc(sat.name) + '"' + dis + ">Edit Sensor</button>" +
+      '<button class="btn btn-small btn-danger" data-action="remove-sensor" data-name="' +
+      esc(sat.name) + '"' + dis + ">Remove Sensor</button></div>";
+  }
+
+  function windowListHtml(windows, state) {
+    var d = fmt();
+    var html = '<div class="window-list">';
+    if (windows.length === 0) {
       html += '<div class="insp-hint">No visibility in this scenario span.</div>';
     }
-    acc.windows.forEach(function (w) {
+    windows.forEach(function (w) {
       var nowIn = state.simSec >= w.startSec && state.simSec <= w.stopSec;
-      html += '<button class="window-row' + (nowIn ? " is-live" : "") +
+      html += '<button class="window-row' + (nowIn && !state.dirty ? " is-live" : "") +
         '" data-seek="' + w.startSec + '">' +
         '<span class="win-time">' + esc(d.fmtUtc(w.startMs).slice(11)) + " -> " +
         esc(d.fmtUtc(w.stopMs).slice(11)) + "</span>" +
@@ -483,7 +611,64 @@ window.Orbit = window.Orbit || {};
         (w.maxElevationDeg != null ? " - " + w.maxElevationDeg.toFixed(0) + " deg" : "") +
         "</span></button>";
     });
-    return html + "</div></div>";
+    return html + "</div>";
+  }
+
+  function accessHtml(acc, state) {
+    var d = fmt();
+    var live = !state.dirty && isLive(acc, state.simSec);
+    return '<div class="insp-section">' +
+      '<div class="insp-title">' + esc(acc.name) +
+      (live ? ' <span class="tree-live">LIVE</span>' : "") + staleTag(state) + "</div>" +
+      '<div class="insp-subtitle">Access - ' + acc.windows.length +
+      " windows - total " + d.fmtDuration(acc.totalDurationSec) + "</div>" +
+      '<div class="insp-caption">WINDOWS - CLICK TO JUMP</div>' +
+      windowListHtml(acc.windows, state) + "</div>";
+  }
+
+  // An authored access request (spec.accessRequests entry): what was asked
+  // for, whether the last run computed it, and the windows when it did.
+  function accessRequestHtml(sel, state) {
+    var req = sel.request;
+    var isSensor = (req.type == null ? "access" : req.type) === "sensor";
+    var platform = req.platformName != null ? req.platformName : req.sourceName;
+    var dis = state.busy ? " disabled" : "";
+    var pairs = isSensor
+      ? [["Platform", platform || "?"],
+         ["Sensor", req.sensorName || ((platform || "?") + " Sensor")],
+         ["Target", req.targetName || "?"]]
+      : [["Source", req.sourceName || "?"],
+         ["Target", req.targetName || "?"]];
+
+    var html = '<div class="insp-section">' +
+      '<div class="insp-title">' + esc(Orbit.spec.accessRequestLabel(req)) +
+      staleTag(state) + "</div>" +
+      '<div class="insp-subtitle">' +
+      (isSensor ? "Access request - sensor FOR / FOV visibility"
+                : "Access request - line of sight / elevation") + "</div>" +
+      kv(pairs);
+
+    var result = sel.result;
+    if (!result) {
+      html += '<div class="insp-hint">Not computed yet - press Re-run to ' +
+        "propagate this request with MATLAB / Orekit.</div>";
+    } else if (result.access) {
+      html += '<div class="insp-caption">WINDOWS - CLICK TO JUMP' +
+        staleTag(state) + "</div>" +
+        windowListHtml(result.access.windows, state);
+    } else if (result.sensorAccess) {
+      html += '<div class="insp-caption">FOR WINDOWS (SLEW-REACHABLE)' +
+        staleTag(state) + "</div>" +
+        windowListHtml(result.sensorAccess.forWindows, state) +
+        '<div class="insp-caption">FOV WINDOWS (IN BEAM)' +
+        staleTag(state) + "</div>" +
+        windowListHtml(result.sensorAccess.fovWindows, state);
+    }
+
+    return html +
+      '<div class="insp-actions">' +
+      '<button class="btn btn-small btn-danger" data-action="delete" data-name="' +
+      esc(sel.key) + '"' + dis + ">Delete Request</button></div></div>";
   }
 
   // ---- timeline ------------------------------------------------------------------
@@ -545,6 +730,8 @@ window.Orbit = window.Orbit || {};
     buildTimeline: buildTimeline,
     updateTimelineCursor: updateTimelineCursor,
     findSelected: findSelected,
+    findRequestResult: findRequestResult,
+    requestSelectionKey: requestSelectionKey,
     satGroupKey: satGroupKey,
     areaGroupKey: areaGroupKey,
   };
