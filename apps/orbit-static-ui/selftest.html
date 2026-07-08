@@ -215,7 +215,7 @@
           "area group did not fold");
       });
 
-      check("validateSpec accepts preserved sensors, tasks, and access requests", function () {
+      check("validateSpec accepts sensors, tasks, and access requests together", function () {
         var spec = Orbit.spec.deriveSpecFromScenario(raw);
         var sat = Orbit.spec.keplerianSatelliteTemplate("SensorSat");
         sat.sensor = {
@@ -381,6 +381,129 @@
         assert(pair.fovWindows.length === 0, "fov windows should be empty");
       });
 
+      check("task templates and area-scan tasks validate; bad tasks are flagged", function () {
+        var spec = Orbit.spec.deriveSpecFromScenario(raw);
+        var sat = Orbit.spec.keplerianSatelliteTemplate("TaskSat");
+        sat.sensor = Orbit.spec.sensorTemplate();
+        var target = Orbit.spec.targetTemplate("TaskPoint");
+        var area = Orbit.spec.expandAreaGrid({
+          name: "TaskArea", centerLatDeg: 40, centerLonDeg: -105,
+          altitudeM: 0, widthKm: 100, heightKm: 100, spacingKm: 50, priority: 5,
+        });
+        spec.objects = [sat, target].concat(area);
+        var task = Orbit.spec.taskTemplate(spec);
+        assert(task.id === "task-1", "task id");
+        assert(task.targetName === "TaskPoint", "default target");
+        task.satelliteName = "TaskSat";
+        spec.tasks = [task];
+        var scan = Orbit.spec.taskTemplate(spec);
+        assert(scan.id === "task-2", "next task id");
+        scan.targetName = "TaskArea";
+        scan.taskType = Orbit.spec.taskTypeForTarget(spec, "TaskArea");
+        assert(scan.taskType === "ScanAreaTarget", "area task type");
+        scan.requiredCoveragePercent = 70;
+        spec.tasks = [task, scan];
+        var errors = Orbit.spec.validateSpec(Orbit.spec.stripEmptyFields(spec));
+        assert(errors.length === 0, errors[0]);
+        spec.tasks = [{ id: "bad-1", taskType: "ScanAreaTarget", targetName: "TaskPoint" }];
+        assert(Orbit.spec.validateSpec(spec).some(function (e) {
+          return e.indexOf("area target") >= 0;
+        }), "area scan of a point not flagged");
+        spec.tasks = [{ id: "bad-2", targetName: "TaskPoint", dwellSeconds: 5 }];
+        assert(Orbit.spec.validateSpec(spec).some(function (e) {
+          return e.indexOf("dwell") >= 0;
+        }), "bad dwell not flagged");
+      });
+
+      check("taskTargetOptions folds areas in as whole-area scan entries", function () {
+        var points = Orbit.spec.expandAreaGrid({
+          name: "OptArea", centerLatDeg: 40, centerLonDeg: -105,
+          altitudeM: 0, widthKm: 100, heightKm: 50, spacingKm: 50, priority: 5,
+        });
+        var spec = { objects: [Orbit.spec.targetTemplate("OptPoint")].concat(points) };
+        var options = Orbit.spec.taskTargetOptions(spec);
+        assert(options.length === 2 + points.length,
+          "expected " + (2 + points.length) + " options, got " + options.length);
+        assert(options[0].value === "OptPoint" && options[0].area === false,
+          "point option first");
+        var areaOpt = null;
+        options.forEach(function (o) { if (o.area) areaOpt = o; });
+        assert(areaOpt && areaOpt.value === "OptArea", "whole-area option missing");
+        assert(Orbit.spec.taskTypeForTarget(spec, "OptArea") === "ScanAreaTarget",
+          "area target type");
+        assert(Orbit.spec.taskTypeForTarget(spec, "OptPoint") === "TrackPointTarget",
+          "point target type");
+      });
+
+      check("maneuver template validates; SGP4 and bad burns are flagged", function () {
+        var spec = Orbit.spec.deriveSpecFromScenario(raw);
+        var sat = Orbit.spec.keplerianSatelliteTemplate("BurnSat");
+        sat.maneuvers = [Orbit.spec.maneuverTemplate()];
+        spec.objects = [sat];
+        var errors = Orbit.spec.validateSpec(Orbit.spec.stripEmptyFields(spec));
+        assert(errors.length === 0, errors[0]);
+        sat.maneuvers = [{ timeOffsetSec: 60, frame: "TNW", deltaVmps: [0, 0, 0] }];
+        assert(Orbit.spec.validateSpec(spec).some(function (e) {
+          return e.indexOf("delta-V") >= 0;
+        }), "zero delta-V not flagged");
+        sat.maneuvers = [{ timeOffsetSec: spec.meta.durationSeconds + 10,
+          frame: "TNW", deltaVmps: [1, 0, 0] }];
+        assert(Orbit.spec.validateSpec(spec).some(function (e) {
+          return e.indexOf("time offset") >= 0;
+        }), "out-of-span offset not flagged");
+        var tle = Orbit.spec.tleSatelliteTemplate("BurnTle");
+        tle.maneuvers = [Orbit.spec.maneuverTemplate()];
+        spec.objects = [tle];
+        assert(Orbit.spec.validateSpec(spec).some(function (e) {
+          return e.indexOf("SGP4") >= 0;
+        }), "SGP4 maneuver not flagged");
+      });
+
+      check("parseScenario normalizes schedule entries with slew windows", function () {
+        var scn2 = Orbit.data.parseScenario({
+          meta: { epochUtc: "2026-01-01T00:00:00Z", durationSeconds: 7200,
+            stepSeconds: 60 },
+          schedule: [{
+            taskId: "task-1", taskName: "Image", taskType: "TrackPointTarget",
+            sensorName: "S Sensor", platformName: "S", targetName: "T",
+            startUtc: "2026-01-01T00:20:00Z", stopUtc: "2026-01-01T00:21:00Z",
+            durationSeconds: 60, slewTimeSeconds: 30,
+          }],
+        });
+        assert(scn2.hasSchedule, "hasSchedule flag");
+        assert(scn2.schedule.length === 1, "schedule entry missing");
+        var e = scn2.schedule[0];
+        near(e.startSec, 1200, 1e-6, "startSec");
+        near(e.stopSec, 1260, 1e-6, "stopSec");
+        near(e.slewStartSec, 1170, 1e-6, "slewStartSec");
+        near(e.returnEndSec, 1290, 1e-6, "returnEndSec");
+        assert(e.platform === "S" && e.target === "T" && e.taskId === "task-1",
+          "entry fields wrong");
+        var none = Orbit.data.parseScenario({
+          meta: { epochUtc: "2026-01-01T00:00:00Z" } });
+        assert(!none.hasSchedule && none.schedule.length === 0,
+          "payload without a schedule field should not claim one");
+      });
+
+      check("pointingStateAt walks idle / slew / track / return phases", function () {
+        var entries = [{
+          platform: "S", target: "T", startSec: 1200, stopSec: 1260,
+          slewStartSec: 1170, returnEndSec: 1290,
+        }];
+        assert(Orbit.data.pointingStateAt(entries, 100).phase === "idle", "idle before");
+        var slew = Orbit.data.pointingStateAt(entries, 1185);
+        assert(slew.phase === "slew", "slew phase");
+        near(slew.progress, 0.5, 1e-6, "slew progress");
+        assert(slew.fromTarget === null, "first slew starts from home");
+        assert(Orbit.data.pointingStateAt(entries, 1230).phase === "track", "track");
+        var ret = Orbit.data.pointingStateAt(entries, 1275);
+        assert(ret.phase === "return" && ret.fromTarget === "T", "return phase");
+        assert(Orbit.data.pointingStateAt(entries, 2000).phase === "idle", "idle after");
+        assert(Orbit.data.scheduleForPlatform(entries, "S").length === 1 &&
+          Orbit.data.scheduleForPlatform(entries, "X").length === 0,
+          "scheduleForPlatform filter");
+      });
+
       check("stripEmptyFields drops null/empty values deeply", function () {
         var out = Orbit.spec.stripEmptyFields({
           a: 1, b: "", c: null, d: undefined,
@@ -425,6 +548,17 @@
         var fixed = Orbit.spec.normalizeSpecShape(collapsed);
         assert(Array.isArray(fixed.objects) && fixed.objects.length === 1,
           "objects not re-wrapped");
+        var burn = Orbit.spec.maneuverTemplate();
+        var withManeuver = Orbit.spec.normalizeSpecShape({
+          version: 1, meta: {},
+          objects: [{ kind: "satellite", name: "S", maneuvers: burn }],
+          tasks: { id: "task-1", targetName: "T" },
+        });
+        assert(Array.isArray(withManeuver.objects[0].maneuvers) &&
+          withManeuver.objects[0].maneuvers.length === 1,
+          "single maneuver not re-wrapped");
+        assert(Array.isArray(withManeuver.tasks) && withManeuver.tasks.length === 1,
+          "single task not re-wrapped");
       });
 
       check("world land polygons hold valid coordinates", function () {

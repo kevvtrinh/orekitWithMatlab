@@ -6,10 +6,13 @@ bridge. There is no `npm install`, Vite server, or Node bridge.
 
 The console edits a scenario spec (scenario settings, Keplerian and TLE
 satellites, Walker constellations, ground stations, point targets, area
-target grids, satellite sensors, and access requests), saves it through the
-bridge, and re-runs it in MATLAB. Access/visibility windows are computed by
-MATLAB on Re-run; requested pairs show as pending until then, and everything
-propagated is flagged stale while the spec has unpropagated edits. See
+target grids, satellite sensors, access requests, sensor tasks incl. area
+scans, and impulsive maneuvers), saves it through the bridge, and re-runs it
+in MATLAB. Access/visibility windows and the sensor-task schedule are
+computed by MATLAB on Re-run; requested pairs and tasks show as pending
+until then, and everything propagated is flagged stale while the spec has
+unpropagated edits. Scheduled tasks appear as tree/inspector rows and
+per-platform timeline lanes (slew lead-in, dwell, return-home). See
 `FEATURE_PARITY.md` for the parity roadmap against the React console in
 `apps/orbit-ui`.
 
@@ -95,5 +98,6 @@ front-side coastlines, city lights, an atmosphere rim, and a visible sun-vector
 source outside the globe.
 
 `selftest.html` is a browser-only sanity check for the pure JavaScript data
-and spec helpers, including Walker/TLE/area-grid authoring and the
-sensor/access-request workflows. It can be opened directly from disk.
+and spec helpers, including Walker/TLE/area-grid authoring, the
+sensor/access-request workflows, sensor task and maneuver validation, and
+schedule/pointing normalization. It can be opened directly from disk.

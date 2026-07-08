@@ -1,12 +1,10 @@
 // Orbit.spec - the editable scenario spec: templates, validation, cleanup,
-// and derivation from a propagated payload. Level 3 subset of
+// and derivation from a propagated payload. Level 4 subset of
 // apps/orbit-ui/src/lib/spec.js: meta, Keplerian and TLE satellites, Walker
 // constellations, ground stations, point targets, area targets (grouped
-// grids), satellite sensors, and access requests. Maneuvers and tasks are
-// not authored here yet (Level 4+), but specs containing them are accepted,
-// validated, and preserved through edits so nothing is silently dropped.
-// Validation must agree with the MATLAB side
-// (src/ui/buildScenarioFromSpec.m), which stays authoritative.
+// grids), satellite sensors, access requests, sensor tasks (point tracking
+// and area scans), and impulsive maneuvers. Validation must agree with the
+// MATLAB side (src/ui/buildScenarioFromSpec.m), which stays authoritative.
 window.Orbit = window.Orbit || {};
 
 (function () {
@@ -21,7 +19,6 @@ window.Orbit = window.Orbit || {};
   var EARTH_RADIUS_KM = 6378.137;
 
   var SENSOR_POINTING_MODES = ["Nadir", "VelocityVector", "SunPointing", "FixedVector"];
-  // Preserved Level 4+ content (validated, not authored here yet).
   var TASK_TYPES = ["TrackPointTarget", "ScanAreaTarget"];
   var MAX_TASKS = 24;
   var MAX_ACCESS_REQUESTS = 80;
@@ -346,6 +343,83 @@ window.Orbit = window.Orbit || {};
       if (groups[i].name === groupName) return groups[i];
     }
     return null;
+  }
+
+  // ---- sensor tasks & maneuvers -------------------------------------------------
+
+  function nextTaskId(spec) {
+    var ids = {};
+    asArray(spec && spec.tasks).forEach(function (t) { if (t) ids[t.id] = true; });
+    for (var i = 1; ; i++) {
+      var candidate = "task-" + i;
+      if (!ids[candidate]) return candidate;
+    }
+  }
+
+  // Point-target imaging task for the sensor scheduler. satelliteName ""
+  // means any satellite sensor may perform it. Defaults mirror
+  // apps/orbit-ui/src/lib/spec.js taskTemplate.
+  function taskTemplate(spec) {
+    var target = null;
+    ((spec && spec.objects) || []).forEach(function (o) {
+      if (!target && o && o.kind === "target") target = o;
+    });
+    return {
+      id: nextTaskId(spec),
+      name: "",
+      satelliteName: "",
+      taskType: "TrackPointTarget",
+      targetName: target ? target.name : "",
+      priority: 5,
+      dwellSeconds: 60,
+    };
+  }
+
+  // Impulsive delta-V applied to a satellite during propagation
+  // (src/objects/ImpulsiveManeuver.m). timeOffsetSec is seconds after the
+  // scenario epoch; deltaVmps is a 3-vector in `frame` (TNW components are
+  // [along-track, in-plane normal, cross-track] m/s; Inertial is GCRF).
+  function maneuverTemplate() {
+    return {
+      name: "",
+      timeOffsetSec: 1800,
+      frame: "TNW",
+      deltaVmps: [10, 0, 0],
+    };
+  }
+
+  // Display label for a task row: the explicit name, else the id.
+  function taskLabel(task) {
+    return (task && (task.name || task.id)) || "?";
+  }
+
+  // Every target a task could image: standalone point targets and grid
+  // points individually, plus each area group as a whole (a ScanAreaTarget
+  // against the group name). Returns [{ value, label, area }].
+  function taskTargetOptions(spec) {
+    var grouped = groupTargets((spec && spec.objects) || []);
+    var options = [];
+    grouped.points.forEach(function (t) {
+      options.push({ value: t.name, label: t.name, area: false });
+    });
+    grouped.areas.forEach(function (g) {
+      options.push({
+        value: g.name,
+        label: g.name + " - scan whole area (" + g.points.length + " pts)",
+        area: true,
+      });
+      g.points.forEach(function (t) {
+        options.push({ value: t.name, label: t.name, area: false });
+      });
+    });
+    return options;
+  }
+
+  // Task type implied by a target selection: an area group name means a
+  // whole-area scan, anything else tracks a point target. Mirrors the React
+  // console, where an area group wins a name collision.
+  function taskTypeForTarget(spec, targetName) {
+    return areaGroup(spec, targetName) ? "ScanAreaTarget" : "TrackPointTarget";
   }
 
   // ---- task / access-request references ---------------------------------------
@@ -1025,7 +1099,17 @@ window.Orbit = window.Orbit || {};
     if (!spec || typeof spec !== "object") return spec;
     var out = {};
     Object.keys(spec).forEach(function (k) { out[k] = spec[k]; });
-    out.objects = asArray(spec.objects);
+    out.objects = asArray(spec.objects).map(function (o) {
+      // A satellite's 1-element maneuver list collapses too.
+      if (o && typeof o === "object" && o.maneuvers !== undefined &&
+          !Array.isArray(o.maneuvers)) {
+        var copy = {};
+        Object.keys(o).forEach(function (k) { copy[k] = o[k]; });
+        copy.maneuvers = asArray(o.maneuvers);
+        return copy;
+      }
+      return o;
+    });
     if (spec.tasks !== undefined) out.tasks = asArray(spec.tasks);
     if (spec.accessRequests !== undefined) out.accessRequests = asArray(spec.accessRequests);
     return out;
@@ -1152,6 +1236,11 @@ window.Orbit = window.Orbit || {};
     MAX_DURATION_SECONDS: MAX_DURATION_SECONDS,
     MAX_AREA_GRID_POINTS: MAX_AREA_GRID_POINTS,
     MAX_ACCESS_REQUESTS: MAX_ACCESS_REQUESTS,
+    MAX_TASKS: MAX_TASKS,
+    TASK_TYPES: TASK_TYPES,
+    MANEUVER_FRAMES: MANEUVER_FRAMES,
+    MAX_MANEUVERS_PER_SATELLITE: MAX_MANEUVERS_PER_SATELLITE,
+    MAX_MANEUVER_DELTA_V_MPS: MAX_MANEUVER_DELTA_V_MPS,
     SENSOR_POINTING_MODES: SENSOR_POINTING_MODES,
     EARTH_RADIUS_KM: EARTH_RADIUS_KM,
     keplerianSatelliteTemplate: keplerianSatelliteTemplate,
@@ -1166,6 +1255,12 @@ window.Orbit = window.Orbit || {};
     areaGroup: areaGroup,
     sensorTemplate: sensorTemplate,
     sensorDisplayName: sensorDisplayName,
+    nextTaskId: nextTaskId,
+    taskTemplate: taskTemplate,
+    maneuverTemplate: maneuverTemplate,
+    taskLabel: taskLabel,
+    taskTargetOptions: taskTargetOptions,
+    taskTypeForTarget: taskTypeForTarget,
     accessRequestKey: accessRequestKey,
     accessRequestLabel: accessRequestLabel,
     accessRequestOptions: accessRequestOptions,

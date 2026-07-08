@@ -37,6 +37,7 @@
     "menu-export-spec", "menu-export-scenario", "import-spec-input",
     "btn-add-sat", "btn-add-tle", "btn-add-walker", "btn-add-station",
     "btn-add-target", "btn-add-area", "btn-add-sensor", "btn-add-access",
+    "btn-add-task", "btn-add-maneuver",
     "btn-rewind", "btn-play", "speed-select", "sim-offset", "timeline-lanes",
     "status-message", "status-counts", "status-source", "status-bridge",
   ].forEach(function (id) { els[id.replace(/-([a-z0-9])/g, function (_, c) { return c.toUpperCase(); })] = document.getElementById(id); });
@@ -66,9 +67,13 @@
       var reqCount = state.spec && state.spec.accessRequests !== undefined
         ? Orbit.spec.asArray(state.spec.accessRequests).length
         : null;
+      var taskCount = state.spec && state.spec.tasks !== undefined
+        ? Orbit.spec.asArray(state.spec.tasks).length
+        : null;
       els.statusCounts.textContent = counts.sats + " sat - " + counts.grounds +
         " ground - " + (state.scn ? state.scn.accesses.length : 0) + " access" +
-        (reqCount == null ? "" : " - " + reqCount + " req");
+        (reqCount == null ? "" : " - " + reqCount + " req") +
+        (taskCount == null ? "" : " - " + taskCount + " task");
     }
     if (state.source) {
       els.statusSource.textContent = "data: " + state.source +
@@ -108,7 +113,7 @@
     var disabled = state.busy || !state.spec;
     [els.btnSettings, els.btnAddSat, els.btnAddTle, els.btnAddWalker,
      els.btnAddStation, els.btnAddTarget, els.btnAddArea,
-     els.btnAddSensor, els.btnAddAccess]
+     els.btnAddSensor, els.btnAddAccess, els.btnAddTask, els.btnAddManeuver]
       .forEach(function (btn) { btn.disabled = disabled; });
     els.menuImportSpec.disabled = state.busy;
   }
@@ -912,6 +917,262 @@
     });
   }
 
+  // ---- sensor tasks --------------------------------------------------------------
+
+  // initial pins the dialog to an existing task (inspector Edit); null
+  // inserts a new one (toolbar + Task). The target select folds each area
+  // group in as a whole-area entry; picking one makes the task a
+  // ScanAreaTarget, anything else a TrackPointTarget.
+  function openTaskDialog(initial) {
+    var editing = !!initial;
+    var options = Orbit.spec.taskTargetOptions(state.spec);
+    if (options.length === 0) {
+      setMessage("Insert a point or area target first - tasks image targets.", "error");
+      return;
+    }
+    var tasks = Orbit.spec.asArray(state.spec.tasks);
+    if (!editing && tasks.length >= Orbit.spec.MAX_TASKS) {
+      setMessage("At most " + Orbit.spec.MAX_TASKS +
+        " sensor tasks are supported.", "error");
+      return;
+    }
+    var sensorSats = state.spec.objects.filter(function (o) {
+      return o.kind === "satellite" && o.sensor;
+    });
+    var tpl = initial || Orbit.spec.taskTemplate(state.spec);
+    var isAreaTarget = function (name) {
+      return Orbit.spec.taskTypeForTarget(state.spec, name) === "ScanAreaTarget";
+    };
+    Orbit.modal.form({
+      title: editing ? "Edit Sensor Task - " + tpl.id : "Insert Sensor Task",
+      submitLabel: editing ? "Apply" : "Insert",
+      fields: [
+        { key: "name", label: "Name", type: "text", value: tpl.name || "",
+          placeholder: tpl.id,
+          hint: "Shown on schedule rows; blank uses the task id" },
+        { key: "targetName", label: "Target", type: "select",
+          value: tpl.targetName || options[0].value,
+          options: options.map(function (o) { return [o.value, o.label]; }),
+          hint: "Whole-area entries schedule a grid scan (ScanAreaTarget)" },
+        { key: "satelliteName", label: "Satellite", type: "select",
+          value: tpl.satelliteName || "",
+          options: [["", "Any (scheduler picks)"]].concat(
+            sensorSats.map(function (s) { return [s.name, s.name]; })),
+          hint: "Which satellite's sensor must perform the task" },
+        { key: "dwellSeconds", label: "Dwell (s)", type: "number",
+          value: tpl.dwellSeconds == null ? 60 : tpl.dwellSeconds,
+          min: 10, max: 86400,
+          hint: "Point: required time on target; area: minimum time per covered grid point" },
+        { key: "requiredCoveragePercent", label: "Coverage (%)", type: "number",
+          value: tpl.requiredCoveragePercent == null ? 70 : tpl.requiredCoveragePercent,
+          min: 0, max: 100,
+          visibleWhen: function (v) { return isAreaTarget(v.targetName); },
+          hint: "Minimum grid-point coverage to accept a scan window" },
+        { key: "priority", label: "Priority", type: "number",
+          value: tpl.priority == null ? 5 : tpl.priority, min: 0,
+          hint: "Higher wins scheduling conflicts" },
+      ],
+      preview: function (v) {
+        if (sensorSats.length === 0) {
+          return "No satellite has a sensor yet - add one (+ Sensor) or the " +
+            "scheduler has nothing to task.";
+        }
+        return isAreaTarget(v.targetName)
+          ? "Area scan: MATLAB schedules passes that cover the grid."
+          : "Point imaging: MATLAB picks a window inside the sensor's field of regard.";
+      },
+      onSubmit: function (v) {
+        var isArea = isAreaTarget(v.targetName);
+        var task = copyWith(tpl, {
+          id: tpl.id,
+          name: v.name,
+          targetName: v.targetName,
+          taskType: isArea ? "ScanAreaTarget" : "TrackPointTarget",
+          satelliteName: v.satelliteName,
+          dwellSeconds: v.dwellSeconds,
+          priority: v.priority,
+        });
+        if (!v.name) delete task.name;
+        if (!v.satelliteName) delete task.satelliteName;
+        if (isArea) task.requiredCoveragePercent = v.requiredCoveragePercent;
+        else delete task.requiredCoveragePercent;
+        var next = editing
+          ? tasks.map(function (t) { return t && t.id === tpl.id ? task : t; })
+          : tasks.concat([task]);
+        return applySpec(specWith({ tasks: next })).then(function (result) {
+          if (result.ok) {
+            state.selection = Orbit.panels.taskSelectionKey(task);
+            renderPanels();
+            setMessage((editing ? "Updated" : "Added") + " task '" +
+              Orbit.spec.taskLabel(task) + "' - press Re-run to schedule it.", "ok");
+          }
+          return result;
+        });
+      },
+    });
+  }
+
+  function deleteTask(selectionKey) {
+    var id = selectionKey.slice("task:".length);
+    var target = null;
+    var remaining = Orbit.spec.asArray(state.spec.tasks).filter(function (t) {
+      var hit = !!t && t.id === id;
+      if (hit && !target) target = t;
+      return !hit;
+    });
+    if (!target) return;
+    if (!window.confirm("Delete the sensor task '" +
+        Orbit.spec.taskLabel(target) + "'?")) {
+      return;
+    }
+    applySpec(specWith({ tasks: remaining })).then(function (result) {
+      if (result.errors) setMessage(result.errors.join(" "), "error");
+      else setMessage("Deleted task '" + Orbit.spec.taskLabel(target) + "'.", "ok");
+    });
+  }
+
+  // ---- impulsive maneuvers --------------------------------------------------------
+
+  var FRAME_OPTIONS = [
+    ["TNW", "TNW (along-track, normal, cross-track)"],
+    ["Inertial", "Inertial (GCRF)"],
+  ];
+
+  // Replace a satellite's maneuver list wholesale; an empty list removes the
+  // field so the spec stays clean.
+  function applyManeuverList(satName, maneuvers, note) {
+    var sat = satelliteByName(satName);
+    if (!sat) return Promise.resolve({ errors: ["Satellite no longer exists."] });
+    var next = copyWith(sat, {});
+    if (maneuvers.length > 0) next.maneuvers = maneuvers;
+    else delete next.maneuvers;
+    return applySpec(specWith({
+      objects: state.spec.objects.map(function (o) {
+        return o.name === satName ? next : o;
+      }),
+    })).then(function (result) {
+      if (result.ok) {
+        state.selection = satName;
+        renderPanels();
+        setMessage(note, "ok");
+      }
+      return result;
+    });
+  }
+
+  // satName + index edits one existing burn (inspector Edit); satName alone
+  // adds one to that satellite (inspector Add Maneuver); null shows a
+  // satellite picker (toolbar + Mnvr).
+  function openManeuverDialog(satName, index) {
+    var sats = state.spec.objects.filter(function (o) {
+      return o.kind === "satellite";
+    });
+    if (sats.length === 0) {
+      setMessage("Insert a satellite first - maneuvers apply to satellites.", "error");
+      return;
+    }
+    var pinned = satName ? satelliteByName(satName) : null;
+    if (satName && !pinned) return;
+    var editing = !!pinned && index != null &&
+      Orbit.spec.asArray(pinned.maneuvers)[index] != null;
+    var tpl = editing
+      ? Orbit.spec.asArray(pinned.maneuvers)[index]
+      : Orbit.spec.maneuverTemplate();
+    var dv = Array.isArray(tpl.deltaVmps) ? tpl.deltaVmps : [10, 0, 0];
+    var initialSat = pinned;
+    if (!initialSat) {
+      // Prefer a satellite that can actually maneuver (not SGP4).
+      sats.forEach(function (s) {
+        if (!initialSat && s.propagator !== "TLE") initialSat = s;
+      });
+      if (!initialSat) initialSat = sats[0];
+    }
+
+    var fields = [];
+    if (!pinned) {
+      fields.push({ key: "satellite", label: "Satellite", type: "select",
+        value: initialSat.name,
+        options: sats.map(function (s) {
+          var count = Orbit.spec.asArray(s.maneuvers).length;
+          var suffix = s.propagator === "TLE" ? " (SGP4 - cannot maneuver)"
+            : count > 0 ? " (" + count + ")" : "";
+          return [s.name, s.name + suffix];
+        }),
+        hint: "The satellite performing the burn" });
+    }
+    fields.push(
+      { key: "name", label: "Name", type: "text", value: tpl.name || "",
+        hint: "Optional label for the burn" },
+      { key: "timeOffsetSec", label: "Time offset (s)", type: "number",
+        value: tpl.timeOffsetSec == null ? 1800 : tpl.timeOffsetSec,
+        min: 0, max: state.spec.meta.durationSeconds,
+        hint: "Seconds after the scenario epoch" },
+      { key: "frame", label: "Frame", type: "select",
+        value: tpl.frame || "TNW", options: FRAME_OPTIONS,
+        hint: "TNW: [along-track, in-plane normal, cross-track]; Inertial: GCRF" },
+      { key: "dvX", label: "Delta-V X (m/s)", type: "number", value: dv[0],
+        hint: "TNW: along-track - a prograde burn ([dV, 0, 0]) raises the orbit" },
+      { key: "dvY", label: "Delta-V Y (m/s)", type: "number", value: dv[1] },
+      { key: "dvZ", label: "Delta-V Z (m/s)", type: "number", value: dv[2] });
+
+    Orbit.modal.form({
+      title: editing ? "Edit Maneuver - " + pinned.name
+        : pinned ? "Add Maneuver - " + pinned.name : "Impulsive Maneuver",
+      submitLabel: editing ? "Apply" : "Add",
+      fields: fields,
+      preview: function (v) {
+        var target = pinned || satelliteByName(v.satellite);
+        if (!target) return "";
+        if (target.propagator === "TLE") {
+          return "'" + target.name + "' uses SGP4, which cannot maneuver - " +
+            "switch its propagator to Numerical first.";
+        }
+        var count = Orbit.spec.asArray(target.maneuvers).length;
+        if (!editing && count >= Orbit.spec.MAX_MANEUVERS_PER_SATELLITE) {
+          return "'" + target.name + "' already has the maximum of " +
+            Orbit.spec.MAX_MANEUVERS_PER_SATELLITE + " maneuvers.";
+        }
+        var magnitude = Math.sqrt(v.dvX * v.dvX + v.dvY * v.dvY + v.dvZ * v.dvZ);
+        return isFinite(magnitude)
+          ? "Burn magnitude " + magnitude.toFixed(1) +
+            " m/s; propagation is piecewise across burns."
+          : "";
+      },
+      onSubmit: function (v) {
+        var target = pinned || satelliteByName(v.satellite);
+        if (!target) return { errors: ["Satellite no longer exists."] };
+        var maneuver = copyWith(tpl, {
+          name: v.name,
+          timeOffsetSec: v.timeOffsetSec,
+          frame: v.frame,
+          deltaVmps: [v.dvX, v.dvY, v.dvZ],
+        });
+        if (!v.name) delete maneuver.name;
+        var maneuvers = Orbit.spec.asArray(target.maneuvers).slice();
+        if (editing) maneuvers[index] = maneuver;
+        else maneuvers.push(maneuver);
+        return applyManeuverList(target.name, maneuvers,
+          (editing ? "Updated" : "Added") + " maneuver on '" + target.name +
+          "' - press Re-run to propagate the burn.");
+      },
+    });
+  }
+
+  function deleteManeuver(satName, index) {
+    var sat = satelliteByName(satName);
+    var maneuvers = sat ? Orbit.spec.asArray(sat.maneuvers) : [];
+    var target = maneuvers[index];
+    if (!target) return;
+    var label = target.name || "Maneuver " + (index + 1);
+    if (!window.confirm("Remove '" + label + "' from '" + satName + "'?")) return;
+    applyManeuverList(satName,
+      maneuvers.filter(function (_, i) { return i !== index; }),
+      "Removed maneuver '" + label + "' from '" + satName + "'."
+    ).then(function (result) {
+      if (result.errors) setMessage(result.errors.join(" "), "error");
+    });
+  }
+
   function openSettingsDialog() {
     var meta = state.spec.meta;
     Orbit.modal.form({
@@ -945,6 +1206,16 @@
   }
 
   function editObject(name) {
+    if (name.indexOf("task:") === 0) {
+      // The inspector's edit button on a sensor task row.
+      var taskId = name.slice("task:".length);
+      var task = null;
+      Orbit.spec.asArray(state.spec.tasks).forEach(function (t) {
+        if (t && t.id === taskId) task = t;
+      });
+      if (task) openTaskDialog(task);
+      return;
+    }
     var obj = null;
     state.spec.objects.forEach(function (o) { if (o.name === name) obj = o; });
     if (!obj) {
@@ -972,6 +1243,10 @@
     if (name.indexOf("req:") === 0) {
       // The inspector's delete button on an access request row.
       deleteAccessRequest(name);
+      return;
+    }
+    if (name.indexOf("task:") === 0) {
+      deleteTask(name);
       return;
     }
     var exists = state.spec.objects.some(function (o) { return o.name === name; });
@@ -1133,6 +1408,8 @@
       onDelete: deleteObject,
       onSensor: openSensorDialog,
       onRemoveSensor: removeSensor,
+      onManeuver: openManeuverDialog,
+      onRemoveManeuver: deleteManeuver,
     });
   }
 
@@ -1232,6 +1509,12 @@
   });
   els.btnAddAccess.addEventListener("click", function () {
     if (state.spec) openAccessDialog();
+  });
+  els.btnAddTask.addEventListener("click", function () {
+    if (state.spec) openTaskDialog(null);
+  });
+  els.btnAddManeuver.addEventListener("click", function () {
+    if (state.spec) openManeuverDialog(null, null);
   });
 
   els.btnRefresh.addEventListener("click", function () {

@@ -14,16 +14,22 @@ HTML/CSS/classic JavaScript with the MATLAB bridge
   Walker constellations, TLE satellites, area targets as grouped grids,
   object tree grouping/collapse, and edit/delete flows that preserve task
   references.
-- [x] **Level 3 - Sensors and access workflows** *(this step)*
+- [x] **Level 3 - Sensors and access workflows**
   Add/edit/remove sensors, sensor pointing modes (incl. FixedVector
   boresight), selected access-pair requests via `spec.accessRequests`
   (satellite/ground, satellite/satellite line of sight, sensor FOR/FOV
   visibility), request rows in the tree/inspector with computed-vs-pending
   status, and clear display of stale access results. Sensor removal prunes
   its visibility requests and unpins tasks; renames carry requests along.
-- [ ] **Level 4 - Tasking and maneuvers**
-  Sensor task manager, area scan tasks, scheduling results/timeline rows,
-  impulsive maneuver editor, and task-aware inspector details.
+- [x] **Level 4 - Tasking and maneuvers** *(this step)*
+  Sensor tasks via `spec.tasks` (+ Task): point tracking and whole-area
+  scan tasks (dwell, coverage, priority, optional pinned satellite), task
+  rows in the tree with scheduled/unscheduled/pending state, schedule
+  results from the payload (`schedule` entries with slew lead-in and
+  return-home windows) as timeline lanes per platform, task/satellite/
+  target inspector details incl. live sensor pointing phase, and an
+  impulsive maneuver editor (+ Mnvr and per-satellite inspector rows;
+  TNW/Inertial burns, blocked for SGP4).
 - [ ] **Level 5 - High-fidelity viewport parity**
   View toggles, labels/ground tracks/access lines/sun/FOV/FOR controls,
   richer 3D interaction, lighting/eclipse state, area outlines, and sensor

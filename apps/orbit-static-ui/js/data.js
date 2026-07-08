@@ -35,6 +35,10 @@ window.Orbit = window.Orbit || {};
       grounds: [],
       accesses: [],
       sensorAccesses: [],
+      schedule: [],
+      // Distinguishes "the last run scheduled nothing" (schedule present but
+      // empty) from "the payload predates tasking" (no schedule field).
+      hasSchedule: raw.schedule !== undefined && raw.schedule !== null,
     };
 
     function parseWindows(list) {
@@ -106,7 +110,101 @@ window.Orbit = window.Orbit || {};
       });
     });
 
+    // Scheduled sensor tasks (exportScheduleViz.m): dwell windows the MATLAB
+    // scheduler assigned. The slew lead-in runs slewStartSec..startSec and
+    // the return-home slew runs stopSec..returnEndSec (falling back to the
+    // lead-in duration when the export has no explicit return slew).
+    (raw.schedule || []).forEach(function (e) {
+      var startMs = Date.parse(e.startUtc);
+      var stopMs = Date.parse(e.stopUtc);
+      var startSec = (startMs - scn.epochMs) / 1000;
+      var stopSec = (stopMs - scn.epochMs) / 1000;
+      var slewSec = Math.max(num(e.slewTimeSeconds, 0), 0);
+      var returnSlewSec = Math.max(
+        num(e.returnSlewTimeSeconds, num(e.slewTimeSeconds, 0)), 0);
+      scn.schedule.push({
+        kind: "scheduleEntry",
+        taskId: e.taskId || "",
+        taskName: e.taskName || e.taskId || "",
+        taskType: e.taskType || "TrackPointTarget",
+        sensor: e.sensorName || "",
+        platform: e.platformName || "",
+        target: e.targetName || "",
+        startMs: startMs,
+        stopMs: stopMs,
+        startSec: startSec,
+        stopSec: stopSec,
+        durationSec: num(e.durationSeconds, (stopMs - startMs) / 1000),
+        slewSec: slewSec,
+        slewStartSec: startSec - slewSec,
+        returnEndSec: stopSec + returnSlewSec,
+        priority: num(e.priority, null),
+        qualityScore: num(e.qualityScore, null),
+      });
+    });
+    scn.schedule.sort(function (a, b) { return a.startSec - b.startSec; });
+
     return scn;
+  }
+
+  // ---- sensor schedule -------------------------------------------------------
+
+  function scheduleForPlatform(schedule, platformName) {
+    return (schedule || []).filter(function (e) {
+      return e.platform === platformName;
+    });
+  }
+
+  // Schedule entries touching an object, as performer or as target.
+  function scheduleForObject(schedule, name) {
+    return (schedule || []).filter(function (e) {
+      return e.platform === name || e.target === name;
+    });
+  }
+
+  // Pointing state of one platform's sensor at tSec, given that platform's
+  // schedule entries (sorted by startSec). Port of apps/orbit-ui
+  // lib/schedule.js pointingStateAt:
+  //   idle   - home (nadir) pointing, no task in progress
+  //   slew   - slewing toward entry's target; progress in [0, 1]
+  //   track  - boresight locked on entry's target
+  //   return - slewing back to the home boresight; progress in [0, 1]
+  // fromTarget is the pointing the phase starts from (a target name, or null
+  // for home): a lead-in that begins during the previous entry's return slew
+  // starts from that entry's target, keeping the transition continuous.
+  function pointingStateAt(entries, tSec) {
+    var prev = null;
+    for (var i = 0; i < entries.length; i++) {
+      var entry = entries[i];
+      if (tSec > entry.stopSec) {
+        prev = entry;
+        continue;
+      }
+      if (tSec >= entry.startSec) {
+        return { phase: "track", entry: entry, fromTarget: null, progress: 1 };
+      }
+      if (tSec >= entry.slewStartSec) {
+        var span = entry.startSec - entry.slewStartSec;
+        var fromPrev = prev && entry.slewStartSec <= prev.returnEndSec;
+        return {
+          phase: "slew",
+          entry: entry,
+          fromTarget: fromPrev ? prev.target : null,
+          progress: span > 0 ? (tSec - entry.slewStartSec) / span : 1,
+        };
+      }
+      break;
+    }
+    if (prev && tSec <= prev.returnEndSec) {
+      var returnSpan = prev.returnEndSec - prev.stopSec;
+      return {
+        phase: "return",
+        entry: prev,
+        fromTarget: prev.target,
+        progress: returnSpan > 0 ? (tSec - prev.stopSec) / returnSpan : 1,
+      };
+    }
+    return { phase: "idle", entry: null, fromTarget: null, progress: 0 };
   }
 
   // ---- ephemeris sampling --------------------------------------------------
@@ -209,6 +307,9 @@ window.Orbit = window.Orbit || {};
   Orbit.data = {
     EARTH_RADIUS_KM: EARTH_RADIUS_KM,
     parseScenario: parseScenario,
+    scheduleForPlatform: scheduleForPlatform,
+    scheduleForObject: scheduleForObject,
+    pointingStateAt: pointingStateAt,
     samplePosition: samplePosition,
     llaToEcef: llaToEcef,
     subsolarPoint: subsolarPoint,

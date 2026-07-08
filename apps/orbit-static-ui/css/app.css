@@ -599,6 +599,15 @@ body {
 .window-row .win-time { flex: 1; }
 .window-row .win-meta { color: var(--text-faint); }
 
+/* Maneuver list rows: a seekable window-row plus per-row edit/remove. */
+.maneuver-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 2px;
+}
+.maneuver-row .window-row { flex: 1; min-width: 0; }
+
 /* ---------- Timeline ---------- */
 
 .timeline {
