@@ -65,6 +65,25 @@ window.Orbit = window.Orbit || {};
       });
   }
 
+  // Resolves to the stored editable spec; rejects when none is stored yet
+  // (404 until the first PUT or run).
+  function fetchSpec() {
+    return fetchJson(base + "/api/spec").then(function (res) {
+      return res && res.spec ? res.spec : null;
+    });
+  }
+
+  // The body is the bare spec document (no {"spec": ...} wrapper): the MATLAB
+  // bridge stores bare documents verbatim, so the JSON survives without a
+  // jsondecode/jsonencode round trip reshaping arrays.
+  function saveSpec(spec) {
+    return fetchJson(base + "/api/spec", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(spec),
+    });
+  }
+
   // Synchronous MATLAB jobs: the response arrives when propagation finishes,
   // so give these calls a generous timeout (Orekit init can take a while).
   var RUN_TIMEOUT_MS = 10 * 60 * 1000;
@@ -81,11 +100,26 @@ window.Orbit = window.Orbit || {};
     }, RUN_TIMEOUT_MS);
   }
 
+  // Browser-side file download of a JSON-able value (works over file:// too).
+  function downloadJson(filename, value) {
+    var blob = new Blob([JSON.stringify(value, null, 2)],
+      { type: "application/json" });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   Orbit.api = {
     base: base,
     detectBridge: detectBridge,
     loadScenario: loadScenario,
+    fetchSpec: fetchSpec,
+    saveSpec: saveSpec,
     runDemo: runDemo,
     runScenario: runScenario,
+    downloadJson: downloadJson,
   };
 })();

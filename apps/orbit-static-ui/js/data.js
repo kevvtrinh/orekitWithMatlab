@@ -1,7 +1,7 @@
 // Orbit.data - pure scenario/time math shared by the renderers and panels.
 // Parses the payload written by exportScenarioJson.m (or the bundled sample)
-// into a normalized shape, interpolates ephemerides, and derives the editable
-// spec that /api/run-scenario -> orbitUiRunScenario.m expects.
+// into a normalized shape and interpolates ephemerides. The editable spec
+// side of the world lives in Orbit.spec (js/spec.js).
 window.Orbit = window.Orbit || {};
 
 (function () {
@@ -158,77 +158,6 @@ window.Orbit = window.Orbit || {};
     return { latDeg: dec / DEG, lonDeg: lon };
   }
 
-  // ---- spec derivation (mirrors apps/orbit-ui src/lib/spec.js) --------------
-
-  // Rebuild an editable spec from a propagated payload so Re-run can hand the
-  // same objects back to orbitUiRunScenario.m. Only Keplerian satellites can
-  // be reconstructed; others are skipped (matches the React app's derivation).
-  function deriveSpec(raw) {
-    var objects = [];
-    (raw.satellites || []).forEach(function (sat) {
-      var el = sat.elements;
-      if (!el) return;
-      objects.push({
-        kind: "satellite",
-        name: sat.name,
-        color: sat.color || "#e8a33d",
-        propagator: sat.propagatorType || "Keplerian",
-        massKg: 1000,
-        orbit: {
-          type: "keplerian",
-          semiMajorAxisKm: el.semiMajorAxisKm,
-          eccentricity: el.eccentricity,
-          inclinationDeg: el.inclinationDeg,
-          raanDeg: el.raanDeg,
-          argPerigeeDeg: el.argPerigeeDeg,
-          trueAnomalyDeg: el.trueAnomalyDeg,
-        },
-      });
-    });
-    (raw.groundPoints || []).forEach(function (gp) {
-      if (gp.type === "Target") {
-        objects.push({
-          kind: "target",
-          name: gp.name,
-          color: gp.color || "#4f6fd1",
-          latitudeDeg: gp.latitudeDeg,
-          longitudeDeg: gp.longitudeDeg,
-          altitudeM: gp.altitudeM || 0,
-          priority: gp.priority == null ? 1 : gp.priority,
-        });
-      } else {
-        objects.push({
-          kind: "groundStation",
-          name: gp.name,
-          color: gp.color || "#4f6fd1",
-          latitudeDeg: gp.latitudeDeg,
-          longitudeDeg: gp.longitudeDeg,
-          altitudeM: gp.altitudeM || 0,
-          minElevationDeg: gp.minElevationDeg == null ? 5 : gp.minElevationDeg,
-        });
-      }
-    });
-    var meta = raw.meta || {};
-    return {
-      version: 1,
-      rev: 0,
-      meta: {
-        name: meta.name || "Untitled Scenario",
-        epochUtc: normalizeEpochUtc(meta.epochUtc) || "2026-01-01T00:00:00Z",
-        durationSeconds: num(meta.durationSeconds, 86400),
-        stepSeconds: num(meta.stepSeconds, 60),
-      },
-      objects: objects,
-    };
-  }
-
-  function normalizeEpochUtc(epochUtc) {
-    var ms = Date.parse(epochUtc || "");
-    if (!isFinite(ms)) return null;
-    var iso = new Date(ms).toISOString();
-    return iso.slice(-5) === ".000Z" ? iso.slice(0, 19) + "Z" : iso;
-  }
-
   // ---- formatting ------------------------------------------------------------
 
   function pad2(n) { return (n < 10 ? "0" : "") + n; }
@@ -265,8 +194,6 @@ window.Orbit = window.Orbit || {};
     samplePosition: samplePosition,
     llaToEcef: llaToEcef,
     subsolarPoint: subsolarPoint,
-    deriveSpec: deriveSpec,
-    normalizeEpochUtc: normalizeEpochUtc,
     fmtUtc: fmtUtc,
     fmtHms: fmtHms,
     fmtDuration: fmtDuration,

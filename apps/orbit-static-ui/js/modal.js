@@ -1,0 +1,146 @@
+// Orbit.modal - one modal form at a time, built from a field list. app.js
+// describes each dialog declaratively; this module owns the DOM, keyboard
+// handling (Escape closes, Enter submits), and the error line in the footer.
+window.Orbit = window.Orbit || {};
+
+(function () {
+  "use strict";
+
+  var current = null; // { overlay, keyHandler }
+
+  function esc(text) {
+    return String(text).replace(/[&<>"']/g, function (ch) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch];
+    });
+  }
+
+  function close() {
+    if (!current) return;
+    document.removeEventListener("keydown", current.keyHandler, true);
+    current.overlay.remove();
+    current = null;
+  }
+
+  function isOpen() {
+    return current !== null;
+  }
+
+  function fieldHtml(field) {
+    var id = "modal-field-" + field.key;
+    var attrs = ' class="input' + (field.mono ? " input-mono" : "") +
+      '" id="' + id + '" name="' + esc(field.key) + '"';
+    var html;
+    if (field.type === "select") {
+      html = "<select" + attrs + ">" + (field.options || []).map(function (opt) {
+        return '<option value="' + esc(opt[0]) + '"' +
+          (String(field.value) === String(opt[0]) ? " selected" : "") + ">" +
+          esc(opt[1]) + "</option>";
+      }).join("") + "</select>";
+    } else if (field.type === "number") {
+      html = "<input" + attrs + ' type="number" step="' +
+        (field.step != null ? field.step : "any") + '"' +
+        (field.min != null ? ' min="' + field.min + '"' : "") +
+        (field.max != null ? ' max="' + field.max + '"' : "") +
+        ' value="' + esc(field.value == null ? "" : field.value) + '">';
+    } else if (field.type === "datetime") {
+      html = "<input" + attrs + ' type="datetime-local" step="1" value="' +
+        esc(field.value == null ? "" : field.value) + '">';
+    } else {
+      html = "<input" + attrs + ' type="text" value="' +
+        esc(field.value == null ? "" : field.value) + '"' +
+        (field.placeholder ? ' placeholder="' + esc(field.placeholder) + '"' : "") + ">";
+    }
+    return '<label class="form-row"><span class="form-label"' +
+      (field.hint ? ' title="' + esc(field.hint) + '"' : "") + ">" +
+      esc(field.label) + "</span>" + html + "</label>";
+  }
+
+  function readValues(overlay, fields) {
+    var values = {};
+    fields.forEach(function (field) {
+      var el = overlay.querySelector("#modal-field-" + field.key);
+      if (field.type === "number") {
+        var num = parseFloat(el.value);
+        values[field.key] = isFinite(num) ? num : NaN;
+      } else if (field.type === "text") {
+        values[field.key] = el.value.trim();
+      } else {
+        values[field.key] = el.value;
+      }
+    });
+    return values;
+  }
+
+  // options: { title, submitLabel, fields: [...], onSubmit(values) }
+  // onSubmit returns { errors: [...] } to keep the modal open with the errors
+  // shown, anything else (or a promise of it) to close. Field spec:
+  // { key, label, type: "text"|"number"|"select"|"datetime",
+  //   value, options: [[value, label]], min, max, step, mono, hint, placeholder }
+  function form(options) {
+    close();
+    var overlay = document.createElement("div");
+    overlay.className = "modal-overlay";
+    overlay.innerHTML =
+      '<div class="modal" role="dialog" aria-modal="true">' +
+      '<header class="modal-header"><span>' + esc(options.title) + "</span>" +
+      '<button class="modal-close" title="Close (Esc)">&#10005;</button></header>' +
+      '<div class="modal-body">' + options.fields.map(fieldHtml).join("") + "</div>" +
+      '<footer class="modal-footer">' +
+      '<div class="modal-error" id="modal-error"></div>' +
+      '<div class="modal-actions">' +
+      '<button class="btn" id="modal-cancel">Cancel</button>' +
+      '<button class="btn btn-accent" id="modal-submit">' +
+      esc(options.submitLabel || "Apply") + "</button></div></footer></div>";
+
+    var errorEl = overlay.querySelector("#modal-error");
+    var submitBtn = overlay.querySelector("#modal-submit");
+
+    function submit() {
+      errorEl.textContent = "";
+      submitBtn.disabled = true;
+      Promise.resolve(options.onSubmit(readValues(overlay, options.fields)))
+        .then(function (result) {
+          if (result && result.errors && result.errors.length > 0) {
+            submitBtn.disabled = false;
+            errorEl.textContent = result.errors.join(" ");
+          } else {
+            close();
+          }
+        })
+        .catch(function (err) {
+          submitBtn.disabled = false;
+          errorEl.textContent = err.message || String(err);
+        });
+    }
+
+    overlay.addEventListener("mousedown", function (ev) {
+      if (ev.target === overlay) close();
+    });
+    overlay.querySelector(".modal-close").addEventListener("click", close);
+    overlay.querySelector("#modal-cancel").addEventListener("click", close);
+    submitBtn.addEventListener("click", submit);
+
+    var keyHandler = function (ev) {
+      if (ev.key === "Escape") {
+        ev.stopPropagation();
+        close();
+      } else if (ev.key === "Enter" && ev.target.tagName !== "SELECT" &&
+                 ev.target.tagName !== "BUTTON") {
+        ev.preventDefault();
+        submit();
+      }
+    };
+    document.addEventListener("keydown", keyHandler, true);
+
+    current = { overlay: overlay, keyHandler: keyHandler };
+    document.body.appendChild(overlay);
+    var first = overlay.querySelector(".input");
+    if (first) first.focus();
+  }
+
+  Orbit.modal = {
+    form: form,
+    close: close,
+    isOpen: isOpen,
+  };
+})();

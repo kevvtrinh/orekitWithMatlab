@@ -4,6 +4,11 @@ This is a no-Node prototype of the Orbit Console. It uses plain HTML, CSS,
 classic JavaScript, canvas rendering, and a small MATLAB-hosted localhost
 bridge. There is no `npm install`, Vite server, or Node bridge.
 
+The console edits a scenario spec (scenario settings, Keplerian satellites,
+ground stations, point targets), saves it through the bridge, and re-runs it
+in MATLAB. See `FEATURE_PARITY.md` for the parity roadmap against the React
+console in `apps/orbit-ui`.
+
 ## Run With MATLAB
 
 From this repository root in MATLAB:
@@ -27,7 +32,7 @@ in MATLAB to stop it.
 You can also open `apps/orbit-static-ui/index.html` directly in a browser.
 In that mode the console uses the embedded sample scenario and disables the
 MATLAB run buttons because browsers cannot safely launch MATLAB from a local
-file.
+file. Editing, import, and export still work; edits stay in memory.
 
 ## Bridge Endpoints
 
@@ -55,6 +60,7 @@ is ignored by Git.
 ```text
 apps/orbit-static-ui/
   index.html
+  FEATURE_PARITY.md
   css/app.css
   js/*.js
   data/sample-scenario.json

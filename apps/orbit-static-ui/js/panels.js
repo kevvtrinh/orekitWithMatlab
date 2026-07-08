@@ -1,5 +1,8 @@
 // Orbit.panels - DOM rendering for the object tree, inspector, and timeline.
-// Pure functions of the app state; app.js decides when to re-render.
+// Pure functions of the app state; app.js decides when to re-render. The
+// tree and inspector are spec-driven (the editable spec says what exists);
+// the propagated payload only contributes ephemerides and access windows,
+// which are flagged stale while the spec has unpropagated edits.
 window.Orbit = window.Orbit || {};
 
 (function () {
@@ -19,38 +22,106 @@ window.Orbit = window.Orbit || {};
     });
   }
 
+  function staleTag(state) {
+    return state.dirty ? '<span class="stale-tag">STALE</span>' : "";
+  }
+
+  function findByName(list, name) {
+    for (var i = 0; i < (list || []).length; i++) {
+      if (list[i].name === name) return list[i];
+    }
+    return null;
+  }
+
+  function specSatellites(spec) {
+    return ((spec && spec.objects) || []).filter(function (o) {
+      return o.kind === "satellite";
+    });
+  }
+
+  // ---- selection -------------------------------------------------------------
+
+  // Resolve a selected name against the spec first, then the payload (an
+  // access pair, or a satellite from the last run that is no longer in the
+  // spec but still drawn in the viewport). Returns a descriptor or null.
+  function findSelected(state, name) {
+    var scn = state.scn;
+    var sats = specSatellites(state.spec);
+    for (var i = 0; i < sats.length; i++) {
+      if (sats[i].name === name) {
+        return {
+          type: "satellite",
+          spec: sats[i],
+          color: Orbit.spec.satColor(sats[i], i),
+          scnSat: scn ? findByName(scn.sats, name) : null,
+        };
+      }
+    }
+    var grounds = state.spec
+      ? Orbit.spec.displayGrounds(state.spec)
+      : (scn ? scn.grounds : []);
+    var ground = findByName(grounds, name);
+    if (ground) {
+      return {
+        type: "ground",
+        spec: state.spec ? findByName(state.spec.objects, name) : null,
+        ground: ground,
+      };
+    }
+    if (scn) {
+      var acc = findByName(scn.accesses, name);
+      if (acc) return { type: "access", access: acc };
+      var scnSat = findByName(scn.sats, name);
+      if (scnSat) return { type: "payload-satellite", scnSat: scnSat };
+    }
+    return null;
+  }
+
   // ---- object tree -----------------------------------------------------------
 
   function renderTree(el, state, onSelect) {
     var scn = state.scn;
-    if (!scn) {
+    var spec = state.spec;
+    if (!scn && !spec) {
       el.innerHTML = '<div class="tree-empty">No scenario loaded.</div>';
       return;
     }
+    var d = fmt();
     var html = "";
 
-    html += '<div class="tree-group-label">SATELLITES (' + scn.sats.length + ")</div>";
-    scn.sats.forEach(function (sat) {
-      var altKm = sat.elements ?
-        Math.round(sat.elements.semiMajorAxisKm - Orbit.data.EARTH_RADIUS_KM) : null;
-      var meta = sat.elements ?
-        sat.elements.inclinationDeg.toFixed(1) + " deg - " + altKm + " km" :
-        sat.propagatorType;
-      html += row(sat.name, state.selection, sat.color, false, meta, "");
+    var sats = spec ? specSatellites(spec) : scn.sats;
+    html += '<div class="tree-group-label">SATELLITES (' + sats.length + ")</div>";
+    sats.forEach(function (sat, i) {
+      var meta, color;
+      if (spec) {
+        color = Orbit.spec.satColor(sat, i);
+        meta = sat.orbit.inclinationDeg.toFixed(1) + " deg - " +
+          Math.round(sat.orbit.semiMajorAxisKm - d.EARTH_RADIUS_KM) + " km";
+      } else {
+        color = sat.color;
+        meta = sat.elements
+          ? sat.elements.inclinationDeg.toFixed(1) + " deg - " +
+            Math.round(sat.elements.semiMajorAxisKm - d.EARTH_RADIUS_KM) + " km"
+          : sat.propagatorType;
+      }
+      html += row(sat.name, state.selection, color, false, meta, "");
     });
 
-    html += '<div class="tree-group-label">GROUND (' + scn.grounds.length + ")</div>";
-    scn.grounds.forEach(function (gp) {
+    var grounds = spec ? Orbit.spec.displayGrounds(spec) : scn.grounds;
+    html += '<div class="tree-group-label">GROUND (' + grounds.length + ")</div>";
+    grounds.forEach(function (gp) {
       var meta = gp.latDeg.toFixed(1) + " deg, " + gp.lonDeg.toFixed(1) + " deg";
       html += row(gp.name, state.selection, gp.color, gp.kind === "target", meta, "");
     });
 
-    html += '<div class="tree-group-label">ACCESS (' + scn.accesses.length + ")</div>";
-    if (scn.accesses.length === 0) {
+    var accesses = scn ? scn.accesses : [];
+    html += '<div class="tree-group-label">ACCESS (' + accesses.length + ")" +
+      staleTag(state) + "</div>";
+    if (accesses.length === 0) {
       html += '<div class="tree-empty">No access pairs computed.</div>';
     }
-    scn.accesses.forEach(function (acc) {
-      var live = isLive(acc, state.simSec);
+    accesses.forEach(function (acc) {
+      var live = !state.dirty && isLive(acc, state.simSec);
       var meta = acc.windows.length + " win";
       html += row(acc.name, state.selection, "#5fc98f", true, meta,
         live ? '<span class="tree-live">LIVE</span>' : "");
@@ -73,34 +144,37 @@ window.Orbit = window.Orbit || {};
 
   // ---- inspector ---------------------------------------------------------------
 
-  function findSelected(scn, name) {
-    var pools = [scn.sats, scn.grounds, scn.accesses];
-    for (var i = 0; i < pools.length; i++) {
-      for (var j = 0; j < pools[i].length; j++) {
-        if (pools[i][j].name === name) return pools[i][j];
-      }
-    }
-    return null;
-  }
-
-  function renderInspector(el, state, onSeek) {
-    var scn = state.scn;
-    var obj = scn && state.selection ? findSelected(scn, state.selection) : null;
-    if (!scn || !obj) {
+  // handlers: { onSeek(sec), onEdit(name), onDelete(name) }
+  function renderInspector(el, state, handlers) {
+    var sel = state.selection ? findSelected(state, state.selection) : null;
+    if (!sel) {
       el.innerHTML = '<div class="insp-hint">Select a satellite, ground object, ' +
         "or access pair to see its details.<br><br>Click objects in the tree or " +
         "directly in the mission view.</div>";
       return;
     }
-    if (obj.kind === "satellite") el.innerHTML = satelliteHtml(obj, state);
-    else if (obj.kind === "access") el.innerHTML = accessHtml(obj, state);
-    else el.innerHTML = groundHtml(obj);
+    if (sel.type === "satellite") el.innerHTML = specSatelliteHtml(sel, state);
+    else if (sel.type === "ground") el.innerHTML = groundHtml(sel, state);
+    else if (sel.type === "access") el.innerHTML = accessHtml(sel.access, state);
+    else el.innerHTML = payloadSatelliteHtml(sel.scnSat, state);
 
     el.querySelectorAll(".window-row").forEach(function (btn) {
       btn.addEventListener("click", function () {
-        onSeek(parseFloat(btn.dataset.seek));
+        handlers.onSeek(parseFloat(btn.dataset.seek));
       });
     });
+    var editBtn = el.querySelector('[data-action="edit"]');
+    if (editBtn) {
+      editBtn.addEventListener("click", function () {
+        handlers.onEdit(editBtn.dataset.name);
+      });
+    }
+    var deleteBtn = el.querySelector('[data-action="delete"]');
+    if (deleteBtn) {
+      deleteBtn.addEventListener("click", function () {
+        handlers.onDelete(deleteBtn.dataset.name);
+      });
+    }
   }
 
   function kv(pairs) {
@@ -111,43 +185,86 @@ window.Orbit = window.Orbit || {};
     return html + "</dl>";
   }
 
-  function satelliteHtml(sat, state) {
+  function actionsHtml(name, disabled) {
+    var dis = disabled ? " disabled" : "";
+    return '<div class="insp-actions">' +
+      '<button class="btn btn-small" data-action="edit" data-name="' +
+      esc(name) + '"' + dis + ">Edit</button>" +
+      '<button class="btn btn-small btn-danger" data-action="delete" data-name="' +
+      esc(name) + '"' + dis + ">Delete</button></div>";
+  }
+
+  function elementsKv(d, orbit) {
+    return kv([
+      ["Semi-major axis", orbit.semiMajorAxisKm.toFixed(1) + " km"],
+      ["Eccentricity", orbit.eccentricity.toFixed(5)],
+      ["Inclination", d.fmtDeg(orbit.inclinationDeg)],
+      ["RAAN", d.fmtDeg(orbit.raanDeg)],
+      ["Arg. of perigee", d.fmtDeg(orbit.argPerigeeDeg)],
+      ["True anomaly", d.fmtDeg(orbit.trueAnomalyDeg)],
+    ]);
+  }
+
+  function liveStateHtml(d, scnSat, state) {
+    var pos = d.samplePosition(scnSat, state.simSec);
+    if (!pos) return "";
+    return '<div class="insp-caption">LIVE STATE (T+' + d.fmtHms(state.simSec) +
+      ")" + staleTag(state) + "</div>" +
+      kv([
+        ["Latitude", d.fmtDeg(pos.latDeg, 3)],
+        ["Longitude", d.fmtDeg(pos.lonDeg, 3)],
+        ["Altitude", pos.altKm.toFixed(1) + " km"],
+      ]);
+  }
+
+  function specSatelliteHtml(sel, state) {
+    var d = fmt();
+    var sat = sel.spec;
+    var html = '<div class="insp-section">' +
+      '<div class="insp-title"><span class="tree-dot" style="background:' +
+      esc(sel.color) + '"></span>' + esc(sat.name) + "</div>" +
+      '<div class="insp-subtitle">Satellite - Keplerian - ' +
+      esc(sat.propagator || "?") + "</div>";
+
+    if (sel.scnSat) html += liveStateHtml(d, sel.scnSat, state);
+
+    html += '<hr class="insp-divider"><div class="insp-caption">KEPLERIAN ELEMENTS</div>' +
+      elementsKv(d, sat.orbit);
+    if (sat.massKg != null) html += kv([["Mass", sat.massKg + " kg"]]);
+
+    html += '<hr class="insp-divider"><div class="insp-caption">EPHEMERIS' +
+      staleTag(state) + "</div>";
+    if (sel.scnSat && sel.scnSat.t.length > 0) {
+      html += kv([
+        ["Samples", String(sel.scnSat.t.length)],
+        ["Span", d.fmtDuration(sel.scnSat.t[sel.scnSat.t.length - 1] - sel.scnSat.t[0])],
+      ]);
+    } else {
+      html += '<div class="insp-hint">Not propagated yet - run the spec in MATLAB.</div>';
+    }
+    return html + actionsHtml(sat.name, state.busy) + "</div>";
+  }
+
+  // A satellite from the last MATLAB run that the spec no longer contains
+  // (deleted or renamed since); read-only leftovers of the payload.
+  function payloadSatelliteHtml(sat, state) {
     var d = fmt();
     var html = '<div class="insp-section">' +
       '<div class="insp-title"><span class="tree-dot" style="background:' +
       esc(sat.color) + '"></span>' + esc(sat.name) + "</div>" +
       '<div class="insp-subtitle">Satellite - ' + esc(sat.propagatorType || "?") +
-      " - " + esc(sat.orbitDefinitionType || "?") + "</div>";
-
-    var pos = d.samplePosition(sat, state.simSec);
-    if (pos) {
-      html += '<div class="insp-caption">LIVE STATE (T+' + d.fmtHms(state.simSec) + ")</div>" +
-        kv([
-          ["Latitude", d.fmtDeg(pos.latDeg, 3)],
-          ["Longitude", d.fmtDeg(pos.lonDeg, 3)],
-          ["Altitude", pos.altKm.toFixed(1) + " km"],
-        ]);
-    }
+      " - not in the current spec</div>" +
+      liveStateHtml(d, sat, state);
     if (sat.elements) {
-      var el = sat.elements;
-      html += '<hr class="insp-divider"><div class="insp-caption">KEPLERIAN ELEMENTS</div>' +
-        kv([
-          ["Semi-major axis", el.semiMajorAxisKm.toFixed(1) + " km"],
-          ["Eccentricity", el.eccentricity.toFixed(5)],
-          ["Inclination", d.fmtDeg(el.inclinationDeg)],
-          ["RAAN", d.fmtDeg(el.raanDeg)],
-          ["Arg. of perigee", d.fmtDeg(el.argPerigeeDeg)],
-          ["True anomaly", d.fmtDeg(el.trueAnomalyDeg)],
-        ]);
+      html += '<hr class="insp-divider"><div class="insp-caption">KEPLERIAN ELEMENTS' +
+        staleTag(state) + "</div>" + elementsKv(d, sat.elements);
     }
-    html += '<hr class="insp-divider"><div class="insp-caption">EPHEMERIS</div>' +
-      kv([["Samples", String(sat.t.length)],
-          ["Span", d.fmtDuration(sat.t.length ? sat.t[sat.t.length - 1] - sat.t[0] : 0)]]);
     return html + "</div>";
   }
 
-  function groundHtml(gp) {
+  function groundHtml(sel, state) {
     var d = fmt();
+    var gp = sel.ground;
     var pairs = [
       ["Latitude", d.fmtDeg(gp.latDeg, 4)],
       ["Longitude", d.fmtDeg(gp.lonDeg, 4)],
@@ -160,15 +277,16 @@ window.Orbit = window.Orbit || {};
       esc(gp.color) + '"></span>' + esc(gp.name) + "</div>" +
       '<div class="insp-subtitle">' +
       (gp.kind === "target" ? "Point target" : "Ground station") + "</div>" +
-      kv(pairs) + "</div>";
+      kv(pairs) +
+      (sel.spec ? actionsHtml(gp.name, state.busy) : "") + "</div>";
   }
 
   function accessHtml(acc, state) {
     var d = fmt();
-    var live = isLive(acc, state.simSec);
+    var live = !state.dirty && isLive(acc, state.simSec);
     var html = '<div class="insp-section">' +
       '<div class="insp-title">' + esc(acc.name) +
-      (live ? ' <span class="tree-live">LIVE</span>' : "") + "</div>" +
+      (live ? ' <span class="tree-live">LIVE</span>' : "") + staleTag(state) + "</div>" +
       '<div class="insp-subtitle">Access - ' + acc.windows.length +
       " windows - total " + d.fmtDuration(acc.totalDurationSec) + "</div>" +
       '<div class="insp-caption">WINDOWS - CLICK TO JUMP</div>' +

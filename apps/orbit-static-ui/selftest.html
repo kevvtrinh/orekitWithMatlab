@@ -22,6 +22,7 @@
   <script src="data/sample-scenario.js"></script>
   <script src="js/world.js"></script>
   <script src="js/data.js"></script>
+  <script src="js/spec.js"></script>
   <script>
     (function () {
       "use strict";
@@ -114,14 +115,115 @@
         near(sun.lonDeg, 0, 5, "noon longitude");
       });
 
-      check("deriveSpec rebuilds a runnable spec from the payload", function () {
-        var spec = Orbit.data.deriveSpec(raw);
+      check("deriveSpecFromScenario rebuilds a runnable spec from the payload", function () {
+        var spec = Orbit.spec.deriveSpecFromScenario(raw);
         assert(spec.version === 1, "spec version");
         assert(spec.objects.length >= scn.grounds.length, "objects missing");
         var sat = spec.objects.filter(function (o) { return o.kind === "satellite"; })[0];
         assert(sat && sat.orbit.type === "keplerian", "keplerian satellite missing");
         assert(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/.test(spec.meta.epochUtc),
           "epoch not ISO UTC: " + spec.meta.epochUtc);
+        assert(Orbit.spec.validateSpec(spec).length === 0,
+          "derived spec invalid: " + Orbit.spec.validateSpec(spec)[0]);
+      });
+
+      check("spec templates validate cleanly", function () {
+        var spec = Orbit.spec.deriveSpecFromScenario(raw);
+        spec.objects = spec.objects.concat([
+          Orbit.spec.keplerianSatelliteTemplate(Orbit.spec.nextObjectName(spec, "Satellite")),
+          Orbit.spec.groundStationTemplate(Orbit.spec.nextObjectName(spec, "Place")),
+          Orbit.spec.targetTemplate(Orbit.spec.nextObjectName(spec, "Target")),
+        ]);
+        var errors = Orbit.spec.validateSpec(Orbit.spec.stripEmptyFields(spec));
+        assert(errors.length === 0, errors[0]);
+      });
+
+      check("validateSpec catches bad values", function () {
+        var spec = Orbit.spec.deriveSpecFromScenario(raw);
+        var sat = Orbit.spec.keplerianSatelliteTemplate("Bad-1");
+        sat.orbit.eccentricity = 2;
+        spec.objects = [sat, Orbit.spec.targetTemplate("")];
+        var errors = Orbit.spec.validateSpec(spec);
+        assert(errors.some(function (e) { return e.indexOf("eccentricity") >= 0; }),
+          "eccentricity not flagged");
+        assert(errors.some(function (e) { return e.indexOf("name cannot be empty") >= 0; }),
+          "empty name not flagged");
+        spec.objects = [Orbit.spec.targetTemplate("Dup"), Orbit.spec.targetTemplate("Dup")];
+        assert(Orbit.spec.validateSpec(spec).some(function (e) {
+          return e.indexOf("duplicate") >= 0;
+        }), "duplicate name not flagged");
+        spec.objects = [];
+        spec.meta.epochUtc = "yesterday";
+        assert(Orbit.spec.validateSpec(spec).some(function (e) {
+          return e.indexOf("Epoch") >= 0;
+        }), "bad epoch not flagged");
+      });
+
+      check("validateSpec rejects Level 2+ content with a clear message", function () {
+        var spec = Orbit.spec.deriveSpecFromScenario(raw);
+        var sat = Orbit.spec.keplerianSatelliteTemplate("Tle-1");
+        sat.orbit = { type: "tle", line1: "1 ...", line2: "2 ..." };
+        spec.objects = [sat];
+        assert(Orbit.spec.validateSpec(spec).some(function (e) {
+          return e.indexOf("TLE") >= 0;
+        }), "TLE orbit not rejected");
+        var sensed = Orbit.spec.keplerianSatelliteTemplate("Sensor-1");
+        sensed.sensor = { coneHalfAngleDeg: 20 };
+        spec.objects = [sensed];
+        assert(Orbit.spec.validateSpec(spec).some(function (e) {
+          return e.indexOf("sensors") >= 0;
+        }), "sensor not rejected");
+        spec.objects = [];
+        spec.tasks = [{ id: "task-1" }];
+        assert(Orbit.spec.validateSpec(spec).some(function (e) {
+          return e.indexOf("tasks") >= 0;
+        }), "tasks not rejected");
+      });
+
+      check("stripEmptyFields drops null/empty values deeply", function () {
+        var out = Orbit.spec.stripEmptyFields({
+          a: 1, b: "", c: null, d: undefined,
+          e: { f: "", g: 0 }, h: [{ i: null, j: 2 }],
+        });
+        assert(!("b" in out) && !("c" in out) && !("d" in out), "empty kept");
+        assert(!("f" in out.e) && out.e.g === 0, "nested empty kept");
+        assert(!("i" in out.h[0]) && out.h[0].j === 2, "array element not cleaned");
+      });
+
+      check("nextObjectName skips taken names", function () {
+        var spec = { objects: [{ name: "Sat-1" }, { name: "Sat-2" }] };
+        assert(Orbit.spec.nextObjectName(spec, "Sat") === "Sat-3",
+          "got " + Orbit.spec.nextObjectName(spec, "Sat"));
+      });
+
+      check("matchesScenario tracks spec freshness", function () {
+        var spec = Orbit.spec.deriveSpecFromScenario(raw);
+        assert(Orbit.spec.matchesScenario(spec, raw), "derived spec should match");
+        var edited = JSON.parse(JSON.stringify(spec));
+        edited.objects.push(Orbit.spec.targetTemplate("New-Target"));
+        assert(!Orbit.spec.matchesScenario(edited, raw), "edited spec should not match");
+        var renamed = JSON.parse(JSON.stringify(spec));
+        renamed.meta.name = "Renamed";
+        assert(!Orbit.spec.matchesScenario(renamed, raw), "meta change should not match");
+      });
+
+      check("displayGrounds projects spec grounds for the renderers", function () {
+        var spec = Orbit.spec.deriveSpecFromScenario(raw);
+        var grounds = Orbit.spec.displayGrounds(spec);
+        assert(grounds.length === scn.grounds.length, "ground count mismatch");
+        grounds.forEach(function (gp) {
+          assert(typeof gp.latDeg === "number" && typeof gp.lonDeg === "number",
+            "missing coordinates");
+          assert(gp.kind === "target" || gp.kind === "groundStation", "bad kind");
+          assert(typeof gp.color === "string" && gp.color.length > 0, "missing color");
+        });
+      });
+
+      check("normalizeSpecShape re-wraps MATLAB scalar collapse", function () {
+        var collapsed = { version: 1, meta: {}, objects: { kind: "target", name: "T" } };
+        var fixed = Orbit.spec.normalizeSpecShape(collapsed);
+        assert(Array.isArray(fixed.objects) && fixed.objects.length === 1,
+          "objects not re-wrapped");
       });
 
       check("world land polygons hold valid coordinates", function () {
