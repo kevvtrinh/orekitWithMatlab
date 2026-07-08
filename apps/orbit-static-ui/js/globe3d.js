@@ -1,7 +1,10 @@
-// Orbit.globe3d - orthographic Earth-fixed globe on a 2D canvas: starfield,
-// wireframe graticule, land outlines, orbit tracks with altitude, markers.
-// Drag to rotate, scroll to zoom. No WebGL so it works everywhere MATLAB's
-// help browser or any desktop browser does.
+// Orbit.globe3d - orthographic Earth-fixed globe on a 2D canvas, no WebGL.
+// The sphere is shaded per pixel from the procedural Orbit.earthtex raster:
+// texture lookup, sun-driven Lambert lighting aligned with the subsolar
+// point (soft twilight across the terminator), ocean sun glint, a light
+// cloud layer, night-side city lights, and an atmosphere rim. Orbit tracks,
+// markers, drag-to-rotate, wheel zoom, and hit-testing keep the original
+// ECEF camera math.
 window.Orbit = window.Orbit || {};
 
 (function () {
@@ -9,8 +12,16 @@ window.Orbit = window.Orbit || {};
 
   var DEG = Math.PI / 180;
   var R = 6371.0; // km, display sphere
+  var FALLBACK_MS = Date.parse("2026-01-01T12:00:00Z"); // no-scenario sun
 
   var view = { lonDeg: -95, latDeg: 28, zoom: 1 };
+
+  function clamp01(v) { return v < 0 ? 0 : v > 1 ? 1 : v; }
+
+  function smoothstep(a, b, v) {
+    var t = clamp01((v - a) / (b - a));
+    return t * t * (3 - 2 * t);
+  }
 
   // Deterministic starfield in unit viewport coordinates.
   var stars = (function () {
@@ -22,7 +33,8 @@ window.Orbit = window.Orbit || {};
     return out;
   })();
 
-  // Camera basis for the current view; returns projector closures.
+  // Camera basis for the current view; returns projector closures plus the
+  // basis vectors so the surface shader can invert the projection.
   function makeCamera(w, h) {
     var lat0 = view.latDeg * DEG, lon0 = view.lonDeg * DEG;
     var east = [-Math.sin(lon0), Math.cos(lon0), 0];
@@ -34,6 +46,9 @@ window.Orbit = window.Orbit || {};
       radiusPx: R * scale,
       cx: cx,
       cy: cy,
+      east: east,
+      north: north,
+      fwd: fwd,
       // p: {x, y, z} km ECEF -> {x, y, depth} screen px; depth > 0 faces us.
       project: function (p) {
         return {
@@ -58,17 +73,17 @@ window.Orbit = window.Orbit || {};
     ctx.clearRect(0, 0, w, h);
 
     var cam = makeCamera(w, h);
-
     var scn = state.scn;
-    var dateMs = scn ? scn.epochMs + state.simSec * 1000 : null;
+    var dateMs = scn ? scn.epochMs + state.simSec * 1000 : FALLBACK_MS;
+    var sun = sunVector(dateMs);
 
     drawSpace(ctx, w, h);
-    drawDisc(ctx, cam);
-    drawLand(ctx, cam);
-    drawNightShade(ctx, cam, dateMs);
+    drawAtmosphereHalo(ctx, cam, sun);
+    drawSurface(ctx, cam, sun, dpr);
+    drawCoastlines(ctx, cam);
     drawGraticule(ctx, cam);
-    drawAtmosphere(ctx, cam);
-    drawSun(ctx, cam, dateMs);
+    drawCityLights(ctx, cam, sun);
+    drawSunIndicator(ctx, cam, sun);
 
     if (!scn) return;
 
@@ -83,11 +98,18 @@ window.Orbit = window.Orbit || {};
     });
   }
 
+  // Unit ECEF vector toward the sun (from the subsolar point).
+  function sunVector(dateMs) {
+    var sp = Orbit.data.subsolarPoint(dateMs);
+    var v = Orbit.data.llaToEcef(sp.latDeg, sp.lonDeg, 0);
+    return { x: v.x / R, y: v.y / R, z: v.z / R, latDeg: sp.latDeg, lonDeg: sp.lonDeg };
+  }
+
   function drawSpace(ctx, w, h) {
     var bg = ctx.createLinearGradient(0, 0, 0, h);
-    bg.addColorStop(0, "#05080d");
-    bg.addColorStop(0.55, "#080d15");
-    bg.addColorStop(1, "#03060a");
+    bg.addColorStop(0, "#04070c");
+    bg.addColorStop(0.55, "#070c13");
+    bg.addColorStop(1, "#030509");
     ctx.fillStyle = bg;
     ctx.fillRect(0, 0, w, h);
 
@@ -99,32 +121,133 @@ window.Orbit = window.Orbit || {};
     ctx.globalAlpha = 1;
   }
 
-  function drawDisc(ctx, cam) {
-    var grad = ctx.createRadialGradient(
-      cam.cx - cam.radiusPx * 0.35, cam.cy - cam.radiusPx * 0.35, cam.radiusPx * 0.1,
-      cam.cx, cam.cy, cam.radiusPx);
-    grad.addColorStop(0, "#17415a");
-    grad.addColorStop(0.45, "#0c3144");
-    grad.addColorStop(0.82, "#0a1d2c");
-    grad.addColorStop(1, "#06101a");
-    ctx.fillStyle = grad;
-    ctx.beginPath();
-    ctx.arc(cam.cx, cam.cy, cam.radiusPx, 0, 2 * Math.PI);
-    ctx.fill();
+  // Soft scattered-light ring just outside the limb, brighter sunward.
+  function drawAtmosphereHalo(ctx, cam, sun) {
+    var sp = cam.project({ x: sun.x * R, y: sun.y * R, z: sun.z * R });
+    var dx = sp.x - cam.cx, dy = sp.y - cam.cy;
+    var len = Math.hypot(dx, dy) || 1;
+    var offX = (dx / len) * cam.radiusPx * 0.18;
+    var offY = (dy / len) * cam.radiusPx * 0.18;
+    var sunFront = sp.depth >= 0 ? 1 : 0.45;
 
-    ctx.save();
+    var halo = ctx.createRadialGradient(
+      cam.cx + offX, cam.cy + offY, cam.radiusPx * 0.92,
+      cam.cx + offX, cam.cy + offY, cam.radiusPx * 1.16);
+    halo.addColorStop(0, "rgba(88, 150, 210, " + (0.30 * sunFront) + ")");
+    halo.addColorStop(0.55, "rgba(70, 120, 185, " + (0.12 * sunFront) + ")");
+    halo.addColorStop(1, "rgba(60, 105, 170, 0)");
+    ctx.fillStyle = halo;
     ctx.beginPath();
-    ctx.arc(cam.cx, cam.cy, cam.radiusPx, 0, 2 * Math.PI);
-    ctx.clip();
-    ctx.strokeStyle = "rgba(125, 190, 204, 0.065)";
-    ctx.lineWidth = 1;
-    for (var y = cam.cy - cam.radiusPx; y <= cam.cy + cam.radiusPx; y += 15) {
-      ctx.beginPath();
-      ctx.moveTo(cam.cx - cam.radiusPx, y);
-      ctx.bezierCurveTo(cam.cx - cam.radiusPx * 0.35, y - 6,
-        cam.cx + cam.radiusPx * 0.35, y + 6, cam.cx + cam.radiusPx, y);
-      ctx.stroke();
+    ctx.arc(cam.cx + offX, cam.cy + offY, cam.radiusPx * 1.2, 0, 2 * Math.PI);
+    ctx.fill();
+  }
+
+  // ---- per-pixel sphere shading -----------------------------------------------
+
+  var surf = { size: 0, canvas: null, ctx: null, img: null, buf: null };
+
+  function drawSurface(ctx, cam, sun, dpr) {
+    var tex = Orbit.earthtex.build();
+    var S = Math.max(64, Math.min(900, Math.round(cam.radiusPx * 2 * dpr)));
+    if (surf.size !== S) {
+      surf.size = S;
+      surf.canvas = surf.canvas || document.createElement("canvas");
+      surf.canvas.width = S;
+      surf.canvas.height = S;
+      surf.ctx = surf.canvas.getContext("2d");
+      surf.img = surf.ctx.createImageData(S, S);
+      surf.buf = new Uint32Array(surf.img.data.buffer);
     }
+
+    var buf = surf.buf;
+    var e = cam.east, n = cam.north, f = cam.fwd;
+    var sx = sun.x, sy = sun.y, sz = sun.z;
+    // Half vector for the ocean glint (viewer direction is +fwd, constant
+    // under orthographic projection).
+    var hx = sx + f[0], hy = sy + f[1], hz = sz + f[2];
+    var hl = Math.sqrt(hx * hx + hy * hy + hz * hz) || 1;
+    hx /= hl; hy /= hl; hz /= hl;
+
+    var TW = tex.width, TH = tex.height;
+    var tp = tex.pixels, landM = tex.land, cloudM = tex.cloud;
+    var INV_2PI = 1 / (2 * Math.PI), INV_PI = 1 / Math.PI;
+    var inv = 2 / S;
+
+    for (var py = 0; py < S; py++) {
+      var ny = 1 - (py + 0.5) * inv;
+      var row = py * S;
+      var ny2 = ny * ny;
+      for (var px = 0; px < S; px++) {
+        var nx = (px + 0.5) * inv - 1;
+        var d2 = nx * nx + ny2;
+        if (d2 >= 1) { buf[row + px] = 0; continue; }
+        var nz = Math.sqrt(1 - d2);
+
+        // Screen pixel -> unit ECEF surface normal.
+        var ex = nx * e[0] + ny * n[0] + nz * f[0];
+        var ey = nx * e[1] + ny * n[1] + nz * f[1];
+        var ez = ny * n[2] + nz * f[2]; // east has no z component
+
+        var lat = Math.asin(ez > 1 ? 1 : ez < -1 ? -1 : ez);
+        var lon = Math.atan2(ey, ex);
+        var tx = ((lon * INV_2PI + 0.5) * TW) | 0;
+        if (tx < 0) tx = 0; else if (tx >= TW) tx = TW - 1;
+        var ty = ((0.5 - lat * INV_PI) * TH) | 0;
+        if (ty < 0) ty = 0; else if (ty >= TH) ty = TH - 1;
+        var ti = ty * TW + tx;
+
+        var c = tp[ti];
+        var r = c & 255, g = (c >>> 8) & 255, b = (c >>> 16) & 255;
+
+        // Thin cloud deck, slightly stronger toward the limb.
+        var cl = cloudM[ti] * 0.0010 * (0.65 + 0.5 * (1 - nz));
+        r += (255 - r) * cl; g += (255 - g) * cl; b += (255 - b) * cl;
+
+        // Sun-driven Lambert shading with a soft twilight ramp.
+        var d = ex * sx + ey * sy + ez * sz;
+        var t = smoothstep(-0.10, 0.18, d);
+        var direct = Math.sqrt(d > 0 ? d : 0);
+        var light = 0.10 + t * (0.46 + 0.48 * direct);
+        if (light > 1) light = 1;
+        r *= light; g *= light; b *= light;
+
+        // Faint blue ambience keeps the night side from becoming a hole.
+        var nightF = 1 - t;
+        r += 5 * nightF; g += 9 * nightF; b += 22 * nightF;
+
+        // Ocean sun glint (day side only).
+        if (!landM[ti] && t > 0.2) {
+          var hdot = ex * hx + ey * hy + ez * hz;
+          if (hdot > 0) {
+            var v2 = hdot * hdot;      // ^2
+            v2 *= v2; v2 *= v2; v2 *= v2; v2 *= v2; v2 *= v2; // ^64
+            var glint = v2 * 105 * t;
+            r += glint; g += glint * 0.95; b += glint * 0.8;
+          }
+        }
+
+        // Atmospheric scattering toward the limb.
+        var fr = (1 - nz) * (1 - nz);
+        var atm = fr * (0.20 + 0.80 * t);
+        r += 60 * atm; g += 95 * atm; b += 150 * atm;
+
+        // Anti-aliased limb.
+        var aa = (1 - d2) * S * 0.25;
+        if (aa > 1) aa = 1;
+
+        if (r > 255) r = 255;
+        if (g > 255) g = 255;
+        if (b > 255) b = 255;
+        buf[row + px] = ((aa * 255) << 24) | ((b | 0) << 16) | ((g | 0) << 8) | (r | 0);
+      }
+    }
+
+    surf.ctx.putImageData(surf.img, 0, 0);
+    ctx.save();
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(surf.canvas,
+      cam.cx - cam.radiusPx, cam.cy - cam.radiusPx,
+      cam.radiusPx * 2, cam.radiusPx * 2);
     ctx.restore();
   }
 
@@ -144,177 +267,168 @@ window.Orbit = window.Orbit || {};
     ctx.stroke();
   }
 
+  var coastEcef = null;
+
+  function coastlineRings() {
+    if (!coastEcef) {
+      coastEcef = Orbit.world.landPolygons.map(function (ring) {
+        return ring.map(function (pt) {
+          return Orbit.data.llaToEcef(pt[1], pt[0], 0.8);
+        });
+      });
+    }
+    return coastEcef;
+  }
+
+  function drawCoastlines(ctx, cam) {
+    ctx.save();
+    ctx.lineJoin = "round";
+    coastlineRings().forEach(function (ring) {
+      strokeFront(ctx, cam, ring, "rgba(3, 7, 10, 0.45)", 1.2);
+      strokeFront(ctx, cam, ring, "rgba(200, 226, 232, 0.18)", 0.55);
+    });
+    ctx.restore();
+  }
+
   function drawGraticule(ctx, cam) {
-    var style = "rgba(141, 148, 160, 0.16)";
+    var style = "rgba(190, 205, 220, 0.10)";
+    var strong = "rgba(190, 205, 220, 0.18)";
     var lat, lon, pts;
     for (lat = -60; lat <= 60; lat += 30) {
       pts = [];
       for (lon = -180; lon <= 180; lon += 6) pts.push(Orbit.data.llaToEcef(lat, lon, 0));
-      strokeFront(ctx, cam, pts, lat === 0 ? "rgba(141, 148, 160, 0.28)" : style, 1);
+      strokeFront(ctx, cam, pts, lat === 0 ? strong : style, 1);
     }
     for (lon = -180; lon < 180; lon += 30) {
       pts = [];
       for (lat = -90; lat <= 90; lat += 6) pts.push(Orbit.data.llaToEcef(lat, lon, 0));
-      strokeFront(ctx, cam, pts, lon === 0 ? "rgba(141, 148, 160, 0.28)" : style, 1);
+      strokeFront(ctx, cam, pts, lon === 0 ? strong : style, 1);
     }
   }
 
-  function drawLand(ctx, cam) {
-    ctx.save();
-    ctx.beginPath();
-    ctx.arc(cam.cx, cam.cy, cam.radiusPx, 0, 2 * Math.PI);
-    ctx.clip();
+  // Warm glows where cities sit on the visible night side.
+  var citySprite = null;
 
-    var land = ctx.createLinearGradient(
-      cam.cx - cam.radiusPx * 0.5, cam.cy - cam.radiusPx * 0.6,
-      cam.cx + cam.radiusPx * 0.45, cam.cy + cam.radiusPx * 0.65);
-    land.addColorStop(0, "#d8e1d7");
-    land.addColorStop(0.2, "#7a865e");
-    land.addColorStop(0.43, "#b0905a");
-    land.addColorStop(0.62, "#4f7e5c");
-    land.addColorStop(0.82, "#8a8057");
-    land.addColorStop(1, "#d7dddc");
-
-    Orbit.world.landPolygons.forEach(function (ring) {
-      drawFrontLandSegments(ctx, cam, ring, land);
-    });
-    ctx.restore();
-
-    Orbit.world.landPolygons.forEach(function (ring) {
-      var pts = ring.map(function (pt) { return Orbit.data.llaToEcef(pt[1], pt[0], 0.5); });
-      pts.push(pts[0]);
-      strokeFront(ctx, cam, pts, "rgba(14, 25, 20, 0.65)", 2.4);
-      strokeFront(ctx, cam, pts, "rgba(169, 212, 193, 0.58)", 0.9);
-    });
+  function ensureCitySprite() {
+    if (citySprite) return citySprite;
+    citySprite = document.createElement("canvas");
+    citySprite.width = 16;
+    citySprite.height = 16;
+    var c = citySprite.getContext("2d");
+    var g = c.createRadialGradient(8, 8, 0.5, 8, 8, 7);
+    g.addColorStop(0, "rgba(255, 226, 168, 0.95)");
+    g.addColorStop(0.3, "rgba(255, 196, 120, 0.4)");
+    g.addColorStop(1, "rgba(255, 180, 90, 0)");
+    c.fillStyle = g;
+    c.fillRect(0, 0, 16, 16);
+    return citySprite;
   }
 
-  function drawFrontLandSegments(ctx, cam, ring, fillStyle) {
-    var segment = [];
-    for (var i = 0; i <= ring.length; i++) {
-      var pt = ring[i % ring.length];
-      var p = cam.project(Orbit.data.llaToEcef(pt[1], pt[0], 0.8));
-      if (p.depth > 0) {
-        segment.push(p);
-      } else {
-        flushLandSegment(ctx, segment, fillStyle);
-        segment = [];
-      }
+  function drawCityLights(ctx, cam, sun) {
+    var sprite = ensureCitySprite();
+    var size = Math.max(4, Math.min(10, cam.radiusPx * 0.032));
+    Orbit.world.cities.forEach(function (city) {
+      var v = Orbit.data.llaToEcef(city[1], city[0], 0);
+      var d = (v.x * sun.x + v.y * sun.y + v.z * sun.z) / R;
+      if (d >= -0.05) return; // in daylight or twilight
+      var p = cam.project(v);
+      if (p.depth <= 0) return;
+      var dark = Math.min(1, (-d - 0.05) / 0.15);
+      var limbFade = Math.min(1, (p.depth / R) * 3);
+      ctx.globalAlpha = dark * limbFade * (0.35 + 0.65 * city[2]);
+      ctx.drawImage(sprite, p.x - size / 2, p.y - size / 2, size, size);
+    });
+    ctx.globalAlpha = 1;
+  }
+
+  // Sun cue: a real source glyph outside the globe plus a subsolar surface
+  // marker when the lit point faces the camera.
+  function drawSunIndicator(ctx, cam, sun) {
+    var sp = cam.project({ x: sun.x * R, y: sun.y * R, z: sun.z * R });
+    var sx = sun.x * cam.east[0] + sun.y * cam.east[1] + sun.z * cam.east[2];
+    var sy = -(sun.x * cam.north[0] + sun.y * cam.north[1] + sun.z * cam.north[2]);
+    var len = Math.hypot(sx, sy);
+    var frontDot = sun.x * cam.fwd[0] + sun.y * cam.fwd[1] + sun.z * cam.fwd[2];
+    if (len < 0.08) {
+      sx = frontDot >= 0 ? -0.82 : 0.82;
+      sy = frontDot >= 0 ? -0.48 : 0.48;
+      len = Math.hypot(sx, sy);
     }
-    flushLandSegment(ctx, segment, fillStyle);
-  }
-
-  function flushLandSegment(ctx, segment, fillStyle) {
-    if (segment.length < 2) return;
-    ctx.beginPath();
-    segment.forEach(function (p, i) {
-      if (i === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y);
-    });
-    if (segment.length >= 3) {
-      ctx.closePath();
-      ctx.fillStyle = fillStyle;
-      ctx.fill();
-    }
-  }
-
-  function drawNightShade(ctx, cam, dateMs) {
-    if (!dateMs) return;
-    var sun = Orbit.data.subsolarPoint(dateMs);
-    var sunVec = Orbit.data.llaToEcef(sun.latDeg, sun.lonDeg, 0);
-    var sunProj = cam.project(sunVec);
-    var dx = sunProj.x - cam.cx;
-    var dy = sunProj.y - cam.cy;
-    var len = Math.hypot(dx, dy);
-    if (len < 1) { dx = -0.6; dy = -0.4; len = 1; }
-    var ux = dx / len, uy = dy / len;
-    var dark = sunProj.depth >= 0 ? 0.5 : 0.68;
+    var ux = sx / len, uy = sy / len;
+    var outer = Math.max(42, Math.min(76, cam.radiusPx * 0.18));
+    var sunX = cam.cx + ux * (cam.radiusPx + outer);
+    var sunY = cam.cy + uy * (cam.radiusPx + outer);
+    var w = ctx.canvas.clientWidth || ctx.canvas.width;
+    var h = ctx.canvas.clientHeight || ctx.canvas.height;
+    var margin = 24;
+    sunX = Math.max(margin, Math.min(w - margin, sunX));
+    sunY = Math.max(margin, Math.min(h - margin, sunY));
+    var rayAlpha = frontDot >= 0 ? 0.24 : 0.11;
+    var diskAlpha = frontDot >= 0 ? 1 : 0.58;
 
     ctx.save();
-    ctx.beginPath();
-    ctx.arc(cam.cx, cam.cy, cam.radiusPx, 0, 2 * Math.PI);
-    ctx.clip();
-    var shade = ctx.createLinearGradient(
-      cam.cx + ux * cam.radiusPx, cam.cy + uy * cam.radiusPx,
-      cam.cx - ux * cam.radiusPx, cam.cy - uy * cam.radiusPx);
-    shade.addColorStop(0, "rgba(0, 0, 0, 0)");
-    shade.addColorStop(0.55, "rgba(0, 0, 0, 0.08)");
-    shade.addColorStop(1, "rgba(0, 0, 0, " + dark + ")");
-    ctx.fillStyle = shade;
-    ctx.fillRect(cam.cx - cam.radiusPx, cam.cy - cam.radiusPx,
-      cam.radiusPx * 2, cam.radiusPx * 2);
-
-    var limb = ctx.createRadialGradient(cam.cx, cam.cy, cam.radiusPx * 0.62,
-      cam.cx, cam.cy, cam.radiusPx);
-    limb.addColorStop(0, "rgba(0, 0, 0, 0)");
-    limb.addColorStop(1, "rgba(0, 0, 0, 0.35)");
-    ctx.fillStyle = limb;
-    ctx.fillRect(cam.cx - cam.radiusPx, cam.cy - cam.radiusPx,
-      cam.radiusPx * 2, cam.radiusPx * 2);
-    ctx.restore();
-  }
-
-  function drawAtmosphere(ctx, cam) {
-    ctx.strokeStyle = "rgba(117, 207, 232, 0.32)";
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.arc(cam.cx, cam.cy, cam.radiusPx + 0.5, 0, 2 * Math.PI);
-    ctx.stroke();
-
-    ctx.strokeStyle = "rgba(117, 207, 232, 0.11)";
-    ctx.lineWidth = 7;
-    ctx.beginPath();
-    ctx.arc(cam.cx, cam.cy, cam.radiusPx + 1.5, 0, 2 * Math.PI);
-    ctx.stroke();
-  }
-
-  function drawSun(ctx, cam, dateMs) {
-    if (!dateMs) return;
-    var sun = Orbit.data.subsolarPoint(dateMs);
-    var sunProj = cam.project(Orbit.data.llaToEcef(sun.latDeg, sun.lonDeg, 0));
-    var dx = sunProj.x - cam.cx;
-    var dy = sunProj.y - cam.cy;
-    var len = Math.hypot(dx, dy);
-    if (len < 1) { dx = -0.6; dy = -0.4; len = 1; }
-    var ux = dx / len, uy = dy / len;
-    var limbX = cam.cx + ux * (cam.radiusPx + 5);
-    var limbY = cam.cy + uy * (cam.radiusPx + 5);
-    var sx = cam.cx + ux * (cam.radiusPx + 42);
-    var sy = cam.cy + uy * (cam.radiusPx + 42);
-    var alpha = sunProj.depth >= 0 ? 1 : 0.55;
-
-    ctx.save();
-    ctx.globalAlpha = alpha;
-    ctx.strokeStyle = "rgba(244, 203, 95, 0.42)";
+    ctx.lineCap = "round";
+    ctx.strokeStyle = "rgba(255, 218, 135, " + rayAlpha + ")";
     ctx.lineWidth = 1;
-    ctx.setLineDash([4, 4]);
-    ctx.beginPath();
-    ctx.moveTo(limbX, limbY);
-    ctx.lineTo(sx, sy);
-    ctx.stroke();
-    ctx.setLineDash([]);
+    var tx = -uy, ty = ux;
+    for (var r = -1; r <= 1; r++) {
+      var off = r * 9;
+      ctx.beginPath();
+      ctx.moveTo(sunX - ux * 16 + tx * off, sunY - uy * 16 + ty * off);
+      ctx.lineTo(cam.cx + ux * cam.radiusPx * 0.90 + tx * off,
+        cam.cy + uy * cam.radiusPx * 0.90 + ty * off);
+      ctx.stroke();
+    }
 
-    var glow = ctx.createRadialGradient(sx, sy, 2, sx, sy, 22);
-    glow.addColorStop(0, "rgba(244, 203, 95, 0.42)");
-    glow.addColorStop(1, "rgba(244, 203, 95, 0)");
+    var glow = ctx.createRadialGradient(sunX, sunY, 3, sunX, sunY, 44);
+    glow.addColorStop(0, "rgba(255, 232, 165, " + (0.46 * diskAlpha) + ")");
+    glow.addColorStop(0.38, "rgba(255, 181, 74, " + (0.22 * diskAlpha) + ")");
+    glow.addColorStop(1, "rgba(255, 181, 74, 0)");
     ctx.fillStyle = glow;
     ctx.beginPath();
-    ctx.arc(sx, sy, 22, 0, 2 * Math.PI);
+    ctx.arc(sunX, sunY, 44, 0, 2 * Math.PI);
     ctx.fill();
 
-    ctx.fillStyle = "#f4cb5f";
-    ctx.strokeStyle = "rgba(24, 18, 6, 0.8)";
-    ctx.lineWidth = 1.2;
+    var disk = ctx.createRadialGradient(sunX - 3, sunY - 3, 1, sunX, sunY, 11);
+    disk.addColorStop(0, "rgba(255, 248, 208, " + diskAlpha + ")");
+    disk.addColorStop(0.7, "rgba(255, 204, 105, " + diskAlpha + ")");
+    disk.addColorStop(1, "rgba(224, 126, 47, " + (0.95 * diskAlpha) + ")");
+    ctx.fillStyle = disk;
     ctx.beginPath();
-    ctx.arc(sx, sy, 6, 0, 2 * Math.PI);
+    ctx.arc(sunX, sunY, 11, 0, 2 * Math.PI);
     ctx.fill();
-    ctx.stroke();
-    ctx.fillStyle = "rgba(10, 12, 16, 0.72)";
-    ctx.fillRect(sx + 10, sy - 7, 26, 14);
-    ctx.fillStyle = "#f4cb5f";
-    ctx.font = "10px Consolas, monospace";
-    ctx.textAlign = "left";
+
+    ctx.fillStyle = "rgba(255, 224, 150, " + (0.85 * diskAlpha) + ")";
+    ctx.font = "9px Consolas, monospace";
+    ctx.textAlign = ux >= 0 ? "left" : "right";
     ctx.textBaseline = "middle";
-    ctx.fillText("SUN", sx + 13, sy);
+    ctx.fillText("SUN", sunX + (ux >= 0 ? 16 : -16), sunY);
     ctx.restore();
+
+    if (sp.depth > 0) {
+      // Subsolar point is on the visible hemisphere: mark it on the surface.
+      var sub = ctx.createRadialGradient(sp.x, sp.y, 1, sp.x, sp.y, 24);
+      sub.addColorStop(0, "rgba(255, 224, 150, 0.30)");
+      sub.addColorStop(1, "rgba(255, 224, 150, 0)");
+      ctx.fillStyle = sub;
+      ctx.beginPath();
+      ctx.arc(sp.x, sp.y, 24, 0, 2 * Math.PI);
+      ctx.fill();
+
+      ctx.strokeStyle = "rgba(255, 224, 150, 0.86)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(sp.x, sp.y, 5, 0, 2 * Math.PI);
+      ctx.moveTo(sp.x - 12, sp.y);
+      ctx.lineTo(sp.x - 7, sp.y);
+      ctx.moveTo(sp.x + 7, sp.y);
+      ctx.lineTo(sp.x + 12, sp.y);
+      ctx.moveTo(sp.x, sp.y - 12);
+      ctx.lineTo(sp.x, sp.y - 7);
+      ctx.moveTo(sp.x, sp.y + 7);
+      ctx.lineTo(sp.x, sp.y + 12);
+      ctx.stroke();
+    }
   }
 
   function drawOrbitTrack(ctx, cam, sat) {

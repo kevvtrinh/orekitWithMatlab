@@ -21,6 +21,7 @@
 
   <script src="data/sample-scenario.js"></script>
   <script src="js/world.js"></script>
+  <script src="js/earthtex.js"></script>
   <script src="js/data.js"></script>
   <script src="js/spec.js"></script>
   <script>
@@ -434,6 +435,41 @@
             assert(pt[1] >= -90 && pt[1] <= 90, "lat out of range: " + pt[1]);
           });
         });
+      });
+
+      check("world lakes and city lights hold valid coordinates", function () {
+        assert(Orbit.world.waterPolygons.length >= 4, "too few lakes");
+        Orbit.world.waterPolygons.forEach(function (ring) {
+          ring.forEach(function (pt) {
+            assert(pt[0] >= -180 && pt[0] <= 180, "lake lon out of range: " + pt[0]);
+            assert(pt[1] >= -90 && pt[1] <= 90, "lake lat out of range: " + pt[1]);
+          });
+        });
+        assert(Orbit.world.cities.length >= 40, "too few cities");
+        Orbit.world.cities.forEach(function (c) {
+          assert(c[0] >= -180 && c[0] <= 180, "city lon out of range: " + c[0]);
+          assert(c[1] >= -90 && c[1] <= 90, "city lat out of range: " + c[1]);
+          assert(c[2] > 0 && c[2] <= 1, "city intensity out of range: " + c[2]);
+        });
+      });
+
+      check("earthtex builds a deterministic basemap with coherent masks", function () {
+        var tex = Orbit.earthtex.build();
+        assert(tex.width > 0 && tex.height === tex.width / 2, "bad dimensions");
+        assert(tex.canvas.width === tex.width, "canvas size mismatch");
+        assert(tex.pixels.length === tex.width * tex.height, "pixel buffer size");
+        assert(tex.land.length === tex.width * tex.height, "land mask size");
+        assert(Orbit.earthtex.build() === tex, "build not cached/deterministic");
+        function maskAt(latDeg, lonDeg) {
+          var x = Math.floor(((lonDeg + 180) / 360) * tex.width);
+          var y = Math.floor(((90 - latDeg) / 180) * tex.height);
+          return tex.land[y * tex.width + x];
+        }
+        assert(maskAt(40, -100) > 0, "central North America should be land");
+        assert(maskAt(55, 60) > 0, "central Russia should be land");
+        assert(maskAt(0, -30) === 0, "mid-Atlantic should be ocean");
+        assert(maskAt(-40, 90) === 0, "southern Indian Ocean should be ocean");
+        assert(maskAt(42, 50.5) === 0, "Caspian Sea should be punched out");
       });
 
       var summary = document.getElementById("summary");

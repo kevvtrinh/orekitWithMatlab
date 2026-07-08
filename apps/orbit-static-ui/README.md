@@ -65,12 +65,34 @@ is ignored by Git.
 apps/orbit-static-ui/
   index.html
   FEATURE_PARITY.md
+  assets/earth-natural-2048.jpg
   css/app.css
   js/*.js
   data/sample-scenario.json
   data/sample-scenario.js
   selftest.html
 ```
+
+## Basemap Rendering
+
+The 2D map and 3D globe share a local 2048x1024 Natural Earth shaded-relief
+texture (`assets/earth-natural-2048.jpg`) loaded by `js/earthtex.js`. The
+image is color-graded at runtime for the dark mission-console view and paired
+with vector coastlines/lakes/city-light points from `js/world.js`. A
+deterministic procedural fallback is built immediately, so the viewport still
+renders before the image finishes decoding or if the file is opened in a
+restricted browser context.
+
+The Natural Earth source is public domain map data from
+`https://www.naturalearthdata.com/`. The runtime UI does not fetch from the
+network or need Node.
+
+The 2D map layers a solar-altitude day/night raster
+(civil/nautical/astronomical twilight bands), terminator lines, night city
+lights, and a subsolar marker over the basemap. The 3D globe shades the sphere
+per pixel with sun-aligned lighting, ocean glint, a subtle cloud deck,
+front-side coastlines, city lights, an atmosphere rim, and a visible sun-vector
+source outside the globe.
 
 `selftest.html` is a browser-only sanity check for the pure JavaScript data
 and spec helpers, including Walker/TLE/area-grid authoring and the
