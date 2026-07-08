@@ -3,6 +3,11 @@
 // tree and inspector are spec-driven (the editable spec says what exists);
 // the propagated payload only contributes ephemerides and access windows,
 // which are flagged stale while the spec has unpropagated edits.
+//
+// Grouping: constellation members (spec `group` on satellites) and area
+// target grids (spec `group` on targets) fold into collapsible tree nodes.
+// Collapse state lives in app state (state.treeOpen); an area group row is
+// selectable (selection key is the group name, which is not an object name).
 window.Orbit = window.Orbit || {};
 
 (function () {
@@ -39,11 +44,25 @@ window.Orbit = window.Orbit || {};
     });
   }
 
+  // ---- collapse state ---------------------------------------------------------
+
+  // Group keys are namespaced so a constellation and an area can share a name.
+  function satGroupKey(group) { return "sat:" + group; }
+  function areaGroupKey(group) { return "area:" + group; }
+
+  // Constellations start open, area grids start collapsed (grids can be 100
+  // points); an explicit toggle always wins.
+  function isOpen(state, key, defaultOpen) {
+    var stored = (state.treeOpen || {})[key];
+    return stored === undefined ? defaultOpen : stored;
+  }
+
   // ---- selection -------------------------------------------------------------
 
-  // Resolve a selected name against the spec first, then the payload (an
-  // access pair, or a satellite from the last run that is no longer in the
-  // spec but still drawn in the viewport). Returns a descriptor or null.
+  // Resolve a selected name against the spec first (objects, then area target
+  // groups), then the payload (an access pair, or a satellite from the last
+  // run that is no longer in the spec but still drawn in the viewport).
+  // Returns a descriptor or null.
   function findSelected(state, name) {
     var scn = state.scn;
     var sats = specSatellites(state.spec);
@@ -68,6 +87,10 @@ window.Orbit = window.Orbit || {};
         ground: ground,
       };
     }
+    if (state.spec) {
+      var group = Orbit.spec.areaGroup(state.spec, name);
+      if (group) return { type: "areaGroup", name: name, points: group.points };
+    }
     if (scn) {
       var acc = findByName(scn.accesses, name);
       if (acc) return { type: "access", access: acc };
@@ -79,7 +102,45 @@ window.Orbit = window.Orbit || {};
 
   // ---- object tree -----------------------------------------------------------
 
-  function renderTree(el, state, onSelect) {
+  function satMeta(sat, d) {
+    if (sat.orbit && sat.orbit.type === "tle") return "TLE";
+    if (sat.orbit && sat.orbit.type === "keplerian") {
+      return sat.orbit.inclinationDeg.toFixed(1) + " deg - " +
+        Math.round(sat.orbit.semiMajorAxisKm - d.EARTH_RADIUS_KM) + " km";
+    }
+    return sat.propagator || "?";
+  }
+
+  function satRows(entries, state, d, child) {
+    var html = "";
+    entries.forEach(function (entry) {
+      html += row(entry.sat.name, state.selection,
+        Orbit.spec.satColor(entry.sat, entry.index), false,
+        satMeta(entry.sat, d), "", child);
+    });
+    return html;
+  }
+
+  // groupRow: collapsible header line (chevron + label). `selectable` rows
+  // (area groups) also select the group in the inspector. data-open carries
+  // the effective rendered state so the toggle handler can flip it even when
+  // a selected member forced the group open.
+  function groupRow(key, label, open, meta, selection, selectable) {
+    var toggleAttrs = ' data-toggle="' + esc(key) + '" data-open="' +
+      (open ? "1" : "0") + '"';
+    return '<div class="tree-subrow">' +
+      '<button class="tree-disclosure"' + toggleAttrs +
+      ' aria-expanded="' + (open ? "true" : "false") + '" title="' +
+      (open ? "Collapse" : "Expand") + " " + esc(label) + '">' +
+      (open ? "v" : "&gt;") + "</button>" +
+      '<button class="tree-row tree-row-group' +
+      (selection === label && selectable ? " is-selected" : "") + '"' +
+      (selectable ? ' data-name="' + esc(label) + '"' : toggleAttrs) +
+      '><span class="tree-name">' + esc(label) + "</span>" +
+      '<span class="tree-meta">' + esc(meta) + "</span></button></div>";
+  }
+
+  function renderTree(el, state, onSelect, onToggle) {
     var scn = state.scn;
     var spec = state.spec;
     if (!scn && !spec) {
@@ -89,29 +150,88 @@ window.Orbit = window.Orbit || {};
     var d = fmt();
     var html = "";
 
-    var sats = spec ? specSatellites(spec) : scn.sats;
-    html += '<div class="tree-group-label">SATELLITES (' + sats.length + ")</div>";
-    sats.forEach(function (sat, i) {
-      var meta, color;
-      if (spec) {
-        color = Orbit.spec.satColor(sat, i);
-        meta = sat.orbit.inclinationDeg.toFixed(1) + " deg - " +
-          Math.round(sat.orbit.semiMajorAxisKm - d.EARTH_RADIUS_KM) + " km";
-      } else {
-        color = sat.color;
-        meta = sat.elements
+    // Satellites: ungrouped first, then one collapsible node per
+    // constellation group (spec `group` tag from expandWalker).
+    if (spec) {
+      var sats = specSatellites(spec);
+      var ungrouped = [];
+      var groups = [];
+      var groupsByName = {};
+      sats.forEach(function (sat, i) {
+        var entry = { sat: sat, index: i };
+        if (sat.group) {
+          if (!groupsByName[sat.group]) {
+            groupsByName[sat.group] = { name: sat.group, members: [] };
+            groups.push(groupsByName[sat.group]);
+          }
+          groupsByName[sat.group].members.push(entry);
+        } else {
+          ungrouped.push(entry);
+        }
+      });
+      html += '<div class="tree-group-label">SATELLITES (' + sats.length + ")</div>";
+      html += satRows(ungrouped, state, d, false);
+      groups.forEach(function (g) {
+        var key = satGroupKey(g.name);
+        var open = isOpen(state, key, true) ||
+          g.members.some(function (m) { return m.sat.name === state.selection; });
+        html += groupRow(key, g.name, open, g.members.length + " sats",
+          state.selection, false);
+        if (open) html += satRows(g.members, state, d, true);
+      });
+    } else {
+      html += '<div class="tree-group-label">SATELLITES (' + scn.sats.length + ")</div>";
+      scn.sats.forEach(function (sat) {
+        var meta = sat.elements
           ? sat.elements.inclinationDeg.toFixed(1) + " deg - " +
             Math.round(sat.elements.semiMajorAxisKm - d.EARTH_RADIUS_KM) + " km"
           : sat.propagatorType;
+        html += row(sat.name, state.selection, sat.color, false, meta, "", false);
+      });
+    }
+
+    // Ground stations and targets; area grids fold into their groups.
+    var grounds = spec ? Orbit.spec.displayGrounds(spec) : scn.grounds;
+    var stations = grounds.filter(function (gp) { return gp.kind !== "target"; });
+    var targets = grounds.filter(function (gp) { return gp.kind === "target"; });
+    var pointTargets = targets.filter(function (gp) { return !gp.group; });
+    var areaGroups = [];
+    var areasByName = {};
+    targets.forEach(function (gp) {
+      if (!gp.group) return;
+      if (!areasByName[gp.group]) {
+        areasByName[gp.group] = { name: gp.group, points: [] };
+        areaGroups.push(areasByName[gp.group]);
       }
-      html += row(sat.name, state.selection, color, false, meta, "");
+      areasByName[gp.group].points.push(gp);
     });
 
-    var grounds = spec ? Orbit.spec.displayGrounds(spec) : scn.grounds;
-    html += '<div class="tree-group-label">GROUND (' + grounds.length + ")</div>";
-    grounds.forEach(function (gp) {
+    html += '<div class="tree-group-label">GROUND STATIONS (' + stations.length + ")</div>";
+    stations.forEach(function (gp) {
       var meta = gp.latDeg.toFixed(1) + " deg, " + gp.lonDeg.toFixed(1) + " deg";
-      html += row(gp.name, state.selection, gp.color, gp.kind === "target", meta, "");
+      html += row(gp.name, state.selection, gp.color, false, meta, "", false);
+    });
+
+    // Each area counts as one target in the section header; its grid points
+    // are implementation detail.
+    html += '<div class="tree-group-label">TARGETS (' +
+      (pointTargets.length + areaGroups.length) + ")</div>";
+    pointTargets.forEach(function (gp) {
+      var meta = gp.latDeg.toFixed(1) + " deg, " + gp.lonDeg.toFixed(1) + " deg";
+      html += row(gp.name, state.selection, gp.color, true, meta, "", false);
+    });
+    areaGroups.forEach(function (g) {
+      var key = areaGroupKey(g.name);
+      var open = isOpen(state, key, false) ||
+        g.points.some(function (p) { return p.name === state.selection; });
+      html += groupRow(key, g.name, open, g.points.length + " pts",
+        state.selection, true);
+      if (open) {
+        g.points.forEach(function (gp) {
+          var meta = gp.latDeg.toFixed(1) + " deg, " + gp.lonDeg.toFixed(1) + " deg";
+          html += row(gp.name, state.selection, gp.color, true, meta, "", true);
+        });
+      }
     });
 
     var accesses = scn ? scn.accesses : [];
@@ -124,17 +244,23 @@ window.Orbit = window.Orbit || {};
       var live = !state.dirty && isLive(acc, state.simSec);
       var meta = acc.windows.length + " win";
       html += row(acc.name, state.selection, "#5fc98f", true, meta,
-        live ? '<span class="tree-live">LIVE</span>' : "");
+        live ? '<span class="tree-live">LIVE</span>' : "", false);
     });
 
     el.innerHTML = html;
-    el.querySelectorAll(".tree-row").forEach(function (btn) {
+    el.querySelectorAll("[data-name]").forEach(function (btn) {
       btn.addEventListener("click", function () { onSelect(btn.dataset.name); });
+    });
+    el.querySelectorAll("[data-toggle]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        onToggle(btn.dataset.toggle, btn.dataset.open === "1");
+      });
     });
   }
 
-  function row(name, selection, color, square, meta, extra) {
-    return '<button class="tree-row' + (selection === name ? " is-selected" : "") +
+  function row(name, selection, color, square, meta, extra, child) {
+    return '<button class="tree-row' + (child ? " tree-row-child" : "") +
+      (selection === name ? " is-selected" : "") +
       '" data-name="' + esc(name) + '">' +
       '<span class="tree-dot' + (square ? " dot-square" : "") +
       '" style="background:' + esc(color) + '"></span>' +
@@ -149,12 +275,13 @@ window.Orbit = window.Orbit || {};
     var sel = state.selection ? findSelected(state, state.selection) : null;
     if (!sel) {
       el.innerHTML = '<div class="insp-hint">Select a satellite, ground object, ' +
-        "or access pair to see its details.<br><br>Click objects in the tree or " +
-        "directly in the mission view.</div>";
+        "area target, or access pair to see its details.<br><br>Click objects in " +
+        "the tree or directly in the mission view.</div>";
       return;
     }
     if (sel.type === "satellite") el.innerHTML = specSatelliteHtml(sel, state);
     else if (sel.type === "ground") el.innerHTML = groundHtml(sel, state);
+    else if (sel.type === "areaGroup") el.innerHTML = areaGroupHtml(sel, state);
     else if (sel.type === "access") el.innerHTML = accessHtml(sel.access, state);
     else el.innerHTML = payloadSatelliteHtml(sel.scnSat, state);
 
@@ -220,17 +347,34 @@ window.Orbit = window.Orbit || {};
   function specSatelliteHtml(sel, state) {
     var d = fmt();
     var sat = sel.spec;
+    var isTle = sat.orbit && sat.orbit.type === "tle";
     var html = '<div class="insp-section">' +
       '<div class="insp-title"><span class="tree-dot" style="background:' +
       esc(sel.color) + '"></span>' + esc(sat.name) + "</div>" +
-      '<div class="insp-subtitle">Satellite - Keplerian - ' +
-      esc(sat.propagator || "?") + "</div>";
+      '<div class="insp-subtitle">Satellite - ' + (isTle ? "TLE" : "Keplerian") +
+      " - " + esc(sat.propagator || "?") +
+      (sat.group ? " - " + esc(sat.group) : "") + "</div>";
 
     if (sel.scnSat) html += liveStateHtml(d, sel.scnSat, state);
 
-    html += '<hr class="insp-divider"><div class="insp-caption">KEPLERIAN ELEMENTS</div>' +
-      elementsKv(d, sat.orbit);
-    if (sat.massKg != null) html += kv([["Mass", sat.massKg + " kg"]]);
+    if (isTle) {
+      html += '<hr class="insp-divider"><div class="insp-caption">TWO-LINE ELEMENTS</div>' +
+        '<div class="insp-tle">' + esc(sat.orbit.line1 || "") + "\n" +
+        esc(sat.orbit.line2 || "") + "</div>";
+    } else {
+      html += '<hr class="insp-divider"><div class="insp-caption">KEPLERIAN ELEMENTS</div>' +
+        elementsKv(d, sat.orbit);
+    }
+    var extras = [];
+    if (sat.massKg != null) extras.push(["Mass", sat.massKg + " kg"]);
+    // Preserved Level 3+ content this console cannot edit yet.
+    if (sat.sensor) {
+      extras.push(["Sensor", (sat.sensor.name || "conic imager") + " (preserved)"]);
+    }
+    if (sat.maneuvers && sat.maneuvers.length > 0) {
+      extras.push(["Maneuvers", sat.maneuvers.length + " (preserved)"]);
+    }
+    if (extras.length > 0) html += kv(extras);
 
     html += '<hr class="insp-divider"><div class="insp-caption">EPHEMERIS' +
       staleTag(state) + "</div>";
@@ -272,13 +416,48 @@ window.Orbit = window.Orbit || {};
     ];
     if (gp.minElevationDeg != null) pairs.push(["Min elevation", d.fmtDeg(gp.minElevationDeg, 1)]);
     if (gp.priority != null) pairs.push(["Priority", String(gp.priority)]);
+    var member = sel.spec && sel.spec.group;
     return '<div class="insp-section">' +
       '<div class="insp-title"><span class="tree-dot dot-square" style="background:' +
       esc(gp.color) + '"></span>' + esc(gp.name) + "</div>" +
       '<div class="insp-subtitle">' +
-      (gp.kind === "target" ? "Point target" : "Ground station") + "</div>" +
+      (gp.kind === "target"
+        ? (member ? "Grid point - area " + esc(member) : "Point target")
+        : "Ground station") + "</div>" +
       kv(pairs) +
+      (member
+        ? '<div class="insp-hint">Part of area target \'' + esc(member) +
+          "' - select the area group in the tree to edit or delete the whole grid.</div>"
+        : "") +
       (sel.spec ? actionsHtml(gp.name, state.busy) : "") + "</div>";
+  }
+
+  function areaGroupHtml(sel, state) {
+    var d = fmt();
+    var points = sel.points;
+    var area = null;
+    for (var i = 0; i < points.length; i++) {
+      var specObj = state.spec ? findByName(state.spec.objects, points[i].name) : null;
+      if (specObj && specObj.area) { area = specObj.area; break; }
+    }
+    var pairs = [["Grid points", String(points.length)]];
+    if (area) {
+      pairs.push(
+        ["Center", d.fmtDeg(area.centerLatDeg, 3) + ", " + d.fmtDeg(area.centerLonDeg, 3)],
+        ["Size", area.widthKm + " x " + area.heightKm + " km"],
+        ["Spacing", area.spacingKm + " km"]);
+    }
+    var priority = points.length > 0 ? points[0].priority : null;
+    if (priority != null) pairs.push(["Priority", String(priority)]);
+    return '<div class="insp-section">' +
+      '<div class="insp-title"><span class="tree-dot dot-square" ' +
+      'style="background:#4fd1a3"></span>' + esc(sel.name) + "</div>" +
+      '<div class="insp-subtitle">Area target - sampled as ' + points.length +
+      " grid point" + (points.length === 1 ? "" : "s") + "</div>" +
+      kv(pairs) +
+      '<div class="insp-hint">Editing regenerates the grid from the area ' +
+      "parameters; deleting removes every grid point.</div>" +
+      actionsHtml(sel.name, state.busy) + "</div>";
   }
 
   function accessHtml(acc, state) {
@@ -366,5 +545,7 @@ window.Orbit = window.Orbit || {};
     buildTimeline: buildTimeline,
     updateTimelineCursor: updateTimelineCursor,
     findSelected: findSelected,
+    satGroupKey: satGroupKey,
+    areaGroupKey: areaGroupKey,
   };
 })();

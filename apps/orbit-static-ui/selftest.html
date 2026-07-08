@@ -131,6 +131,7 @@
         var spec = Orbit.spec.deriveSpecFromScenario(raw);
         spec.objects = spec.objects.concat([
           Orbit.spec.keplerianSatelliteTemplate(Orbit.spec.nextObjectName(spec, "Satellite")),
+          Orbit.spec.tleSatelliteTemplate(Orbit.spec.nextObjectName(spec, "TLE-Sat")),
           Orbit.spec.groundStationTemplate(Orbit.spec.nextObjectName(spec, "Place")),
           Orbit.spec.targetTemplate(Orbit.spec.nextObjectName(spec, "Target")),
         ]);
@@ -159,25 +160,111 @@
         }), "bad epoch not flagged");
       });
 
-      check("validateSpec rejects Level 2+ content with a clear message", function () {
+      check("TLE validation accepts complete lines and rejects malformed lines", function () {
         var spec = Orbit.spec.deriveSpecFromScenario(raw);
-        var sat = Orbit.spec.keplerianSatelliteTemplate("Tle-1");
-        sat.orbit = { type: "tle", line1: "1 ...", line2: "2 ..." };
+        var sat = Orbit.spec.tleSatelliteTemplate("Tle-1");
         spec.objects = [sat];
+        assert(Orbit.spec.validateSpec(spec).length === 0,
+          "valid TLE rejected");
+        sat.orbit.line1 = "bad";
         assert(Orbit.spec.validateSpec(spec).some(function (e) {
-          return e.indexOf("TLE") >= 0;
-        }), "TLE orbit not rejected");
-        var sensed = Orbit.spec.keplerianSatelliteTemplate("Sensor-1");
-        sensed.sensor = { coneHalfAngleDeg: 20 };
-        spec.objects = [sensed];
-        assert(Orbit.spec.validateSpec(spec).some(function (e) {
-          return e.indexOf("sensors") >= 0;
-        }), "sensor not rejected");
-        spec.objects = [];
-        spec.tasks = [{ id: "task-1" }];
-        assert(Orbit.spec.validateSpec(spec).some(function (e) {
-          return e.indexOf("tasks") >= 0;
-        }), "tasks not rejected");
+          return e.indexOf("TLE line 1") >= 0;
+        }), "bad line 1 not flagged");
+      });
+
+      check("Walker expansion creates grouped satellite members", function () {
+        var sats = Orbit.spec.expandWalker({
+          pattern: "delta",
+          prefix: "TestWalker",
+          totalSatellites: 6,
+          planes: 3,
+          phasing: 1,
+          semiMajorAxisKm: 7000,
+          eccentricity: 0.001,
+          inclinationDeg: 53,
+          raanOffsetDeg: 10,
+          argPerigeeDeg: 0,
+          trueAnomalyOffsetDeg: 5,
+          propagator: "Keplerian",
+        });
+        assert(sats.length === 6, "wrong satellite count");
+        assert(sats[0].name === "TestWalker-P01-S01", "wrong first name");
+        assert(sats[0].group === "Walker Delta 6/3/1", "missing group");
+        near(sats[1].orbit.trueAnomalyDeg, 185, 1e-9, "in-plane anomaly");
+        near(sats[2].orbit.raanDeg, 130, 1e-9, "plane RAAN");
+      });
+
+      check("area target expansion creates grouped grid points", function () {
+        var points = Orbit.spec.expandAreaGrid({
+          name: "Survey",
+          centerLatDeg: 40,
+          centerLonDeg: -105,
+          altitudeM: 10,
+          widthKm: 100,
+          heightKm: 50,
+          spacingKm: 50,
+          priority: 7,
+        });
+        assert(points.length === 2, "wrong grid count");
+        assert(points[0].name === "Survey-R01C01", "wrong point name");
+        assert(points[0].group === "Survey", "missing group");
+        assert(points[0].area.name === "Survey", "missing area metadata");
+        var groups = Orbit.spec.groupTargets(points).areas;
+        assert(groups.length === 1 && groups[0].points.length === 2,
+          "area group did not fold");
+      });
+
+      check("validateSpec accepts preserved sensors, tasks, and access requests", function () {
+        var spec = Orbit.spec.deriveSpecFromScenario(raw);
+        var sat = Orbit.spec.keplerianSatelliteTemplate("SensorSat");
+        sat.sensor = {
+          name: "SensorSat Sensor",
+          coneHalfAngleDeg: 15,
+          fieldOfRegardDeg: 45,
+          slewRateDegPerSec: 2,
+          pointing: "Nadir",
+        };
+        var target = Orbit.spec.targetTemplate("TaskTarget");
+        spec.objects = [sat, target];
+        spec.tasks = [{
+          id: "task-1",
+          taskType: "TrackPointTarget",
+          satelliteName: "SensorSat",
+          targetName: "TaskTarget",
+          priority: 1,
+          dwellSeconds: 30,
+        }];
+        spec.accessRequests = [{
+          type: "sensor",
+          platformName: "SensorSat",
+          sensorName: "SensorSat Sensor",
+          targetName: "TaskTarget",
+        }];
+        var errors = Orbit.spec.validateSpec(spec);
+        assert(errors.length === 0, errors[0]);
+      });
+
+      check("reference helpers rename and prune task/access references", function () {
+        var spec = {
+          objects: [],
+          tasks: [
+            { id: "task-1", satelliteName: "OldSat", targetName: "TargetA" },
+            { id: "task-2", satelliteName: "", targetName: "Keep" },
+          ],
+          accessRequests: [
+            { type: "access", sourceName: "OldSat", targetName: "GroundA" },
+            { type: "sensor", platformName: "Keep", targetName: "TargetA" },
+          ],
+        };
+        var renamed = Orbit.spec.renameReferences(spec, "OldSat", "NewSat");
+        assert(renamed.count === 2, "rename count");
+        assert(renamed.changes.tasks[0].satelliteName === "NewSat", "task not renamed");
+        assert(renamed.changes.accessRequests[0].sourceName === "NewSat",
+          "access not renamed");
+        var pruned = Orbit.spec.pruneReferences(spec, ["TargetA"]);
+        assert(pruned.removed.tasks === 1, "task prune count");
+        assert(pruned.removed.accessRequests === 1, "access prune count");
+        assert(pruned.changes.tasks.length === 1, "task not pruned");
       });
 
       check("stripEmptyFields drops null/empty values deeply", function () {

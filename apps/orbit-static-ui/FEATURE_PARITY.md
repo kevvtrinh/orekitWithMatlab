@@ -5,12 +5,12 @@ parity with the React console in `apps/orbit-ui`. The app stays plain
 HTML/CSS/classic JavaScript with the MATLAB bridge
 (`src/ui/orbitStaticUiServe.m` / `orbitStaticUiRequest.m`) as its only backend.
 
-- [x] **Level 1 - Core scenario authoring and spec lifecycle** *(this step)*
+- [x] **Level 1 - Core scenario authoring and spec lifecycle**
   Load/save the editable spec through the MATLAB bridge, import/export
   spec/scenario JSON, scenario settings, add/edit/delete basic satellites,
   ground stations, and point targets, local validation, dirty marking of
   propagated data, and re-running the current spec.
-- [ ] **Level 2 - Expanded object creation**
+- [x] **Level 2 - Expanded object creation** *(this step)*
   Walker constellations, TLE satellites, area targets as grouped grids,
   object tree grouping/collapse, and edit/delete flows that preserve task
   references.

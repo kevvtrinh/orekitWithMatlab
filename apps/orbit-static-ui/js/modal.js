@@ -71,7 +71,9 @@ window.Orbit = window.Orbit || {};
     return values;
   }
 
-  // options: { title, submitLabel, fields: [...], onSubmit(values) }
+  // options: { title, submitLabel, fields: [...], onSubmit(values),
+  //   preview(values) } - `preview` (optional) returns a live footer line
+  // recomputed as the user types (e.g. "12 satellites will be inserted").
   // onSubmit returns { errors: [...] } to keep the modal open with the errors
   // shown, anything else (or a promise of it) to close. Field spec:
   // { key, label, type: "text"|"number"|"select"|"datetime",
@@ -87,13 +89,26 @@ window.Orbit = window.Orbit || {};
       '<div class="modal-body">' + options.fields.map(fieldHtml).join("") + "</div>" +
       '<footer class="modal-footer">' +
       '<div class="modal-error" id="modal-error"></div>' +
+      '<div class="modal-note" id="modal-note"></div>' +
       '<div class="modal-actions">' +
       '<button class="btn" id="modal-cancel">Cancel</button>' +
       '<button class="btn btn-accent" id="modal-submit">' +
       esc(options.submitLabel || "Apply") + "</button></div></footer></div>";
 
     var errorEl = overlay.querySelector("#modal-error");
+    var noteEl = overlay.querySelector("#modal-note");
     var submitBtn = overlay.querySelector("#modal-submit");
+
+    function refreshPreview() {
+      if (!options.preview) return;
+      var text = "";
+      try {
+        text = options.preview(readValues(overlay, options.fields)) || "";
+      } catch (err) {
+        text = err.message || String(err);
+      }
+      noteEl.textContent = text;
+    }
 
     function submit() {
       errorEl.textContent = "";
@@ -119,6 +134,11 @@ window.Orbit = window.Orbit || {};
     overlay.querySelector(".modal-close").addEventListener("click", close);
     overlay.querySelector("#modal-cancel").addEventListener("click", close);
     submitBtn.addEventListener("click", submit);
+    if (options.preview) {
+      overlay.querySelector(".modal-body").addEventListener("input", refreshPreview);
+      overlay.querySelector(".modal-body").addEventListener("change", refreshPreview);
+      refreshPreview();
+    }
 
     var keyHandler = function (ev) {
       if (ev.key === "Escape") {
