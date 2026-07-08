@@ -11,11 +11,11 @@ cfg.TimeStep = seconds(60);
 
 scenario = MissionScenario(cfg);
 
-sat = SatelliteObject.fromKeplerian("Sat-1", 7000e3, 0.001, 51.6, 0, 0, 0);
+sat = SatelliteObject.fromKeplerian("Sat-1", 11000, 0.001, 51.6, 0, 0, 0);
 
 sensor = SensorObject.simpleConic("NadirCam", "Sat-1", 20.0);
 sensor.PointingMode = "Nadir";
-sensor.MaxRangeKm = 2500;
+sensor.MaxRangeKm = 11000;
 sat = sat.addSensor(sensor);
 
 target = PlaceObject("Denver Target", 39.7392, -104.9903, 1609.0);

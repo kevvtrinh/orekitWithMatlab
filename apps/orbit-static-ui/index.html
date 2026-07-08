@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Orbit Console &mdash; Static</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='5' fill='none' stroke='%23e0a43c' stroke-width='1.5'/%3E%3Ccircle cx='12.5' cy='4' r='1.6' fill='%234fb8d1'/%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="css/app.css" />
+</head>
+<body>
+  <div class="app" id="app">
+
+    <header class="topbar">
+      <div class="brand">
+        <svg class="brand-mark" viewBox="0 0 20 20" aria-hidden="true">
+          <circle cx="10" cy="10" r="6" fill="none" stroke="currentColor" stroke-width="1.4" />
+          <ellipse cx="10" cy="10" rx="9" ry="3.4" fill="none" stroke="currentColor"
+                   stroke-width="1" transform="rotate(-18 10 10)" opacity="0.7" />
+          <circle cx="17.4" cy="6.6" r="1.7" fill="var(--sel)" stroke="none" />
+        </svg>
+        <span class="brand-name">ORBIT CONSOLE</span>
+        <span class="brand-sub">static &middot; MATLAB bridge</span>
+      </div>
+      <div class="scenario-chip" id="scenario-chip" title="Active scenario">&mdash;</div>
+      <div class="topbar-spacer"></div>
+      <div class="view-toggle" role="tablist" aria-label="Mission view">
+        <button class="toggle-btn is-active" id="btn-view-2d" role="tab">2D MAP</button>
+        <button class="toggle-btn" id="btn-view-3d" role="tab">3D GLOBE</button>
+      </div>
+      <div class="utc-readout" id="utc-readout">&ndash;&ndash;&ndash;&ndash;&#8209;&ndash;&ndash;&#8209;&ndash;&ndash; &ndash;&ndash;:&ndash;&ndash;:&ndash;&ndash; UTC</div>
+      <div class="topbar-group">
+        <button class="btn" id="btn-refresh" title="Reload scenario data">&#10227; Refresh</button>
+        <button class="btn btn-accent" id="btn-run-demo"
+                title="Propagate the demo scenario with MATLAB / Orekit">Run Demo</button>
+        <button class="btn btn-accent" id="btn-run-scenario"
+                title="Re-propagate the current objects with MATLAB / Orekit">Re-run</button>
+        <span class="pill pill-wait" id="bridge-pill">checking&hellip;</span>
+      </div>
+    </header>
+
+    <main class="main">
+      <aside class="panel tree-panel">
+        <header class="panel-header">MISSION OBJECTS</header>
+        <div class="panel-body" id="object-tree"></div>
+      </aside>
+
+      <section class="viewport" id="viewport">
+        <canvas id="canvas-2d"></canvas>
+        <canvas id="canvas-3d" hidden></canvas>
+        <div class="viewport-hud" id="viewport-hud"></div>
+        <div class="viewport-frame-tag" id="viewport-frame-tag">EARTH FIXED &middot; EQUIRECTANGULAR</div>
+      </section>
+
+      <aside class="panel inspector-panel">
+        <header class="panel-header">INSPECTOR</header>
+        <div class="panel-body" id="inspector"></div>
+      </aside>
+    </main>
+
+    <section class="timeline">
+      <div class="transport">
+        <button class="icon-btn" id="btn-rewind" title="Jump to scenario start">&#9198;</button>
+        <button class="icon-btn" id="btn-play" title="Play / pause (Space)">&#9654;</button>
+        <label class="speed-label">SPEED
+          <select id="speed-select" class="speed-select">
+            <option value="1">1&times;</option>
+            <option value="10">10&times;</option>
+            <option value="60" selected>60&times;</option>
+            <option value="300">300&times;</option>
+            <option value="1000">1000&times;</option>
+          </select>
+        </label>
+        <span class="transport-readout" id="sim-offset">T+00:00:00</span>
+      </div>
+      <div class="lanes-scroll">
+        <div class="lanes" id="timeline-lanes"></div>
+      </div>
+    </section>
+
+    <footer class="statusbar">
+      <span class="status-item" id="status-message">Initializing&hellip;</span>
+      <span class="status-spacer"></span>
+      <span class="status-item" id="status-counts"></span>
+      <span class="status-item" id="status-source"></span>
+      <span class="status-item" id="status-bridge"></span>
+    </footer>
+
+  </div>
+
+  <!-- Classic (non-module) scripts so the console also works over file://,
+       where browsers block ES-module and fetch() access to local files.
+       Each file attaches one namespace onto window.Orbit; load order matters. -->
+  <script src="data/sample-scenario.js" defer></script>
+  <script src="js/world.js" defer></script>
+  <script src="js/data.js" defer></script>
+  <script src="js/api.js" defer></script>
+  <script src="js/map2d.js" defer></script>
+  <script src="js/globe3d.js" defer></script>
+  <script src="js/panels.js" defer></script>
+  <script src="js/app.js" defer></script>
+</body>
+</html>

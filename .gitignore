@@ -11,3 +11,6 @@ vendor/orekit/
 
 # Vite dev-server cache
 apps/orbit-ui/.vite/
+
+# MATLAB-hosted static UI live output
+apps/orbit-static-ui/data/live/
