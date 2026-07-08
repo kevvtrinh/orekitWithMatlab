@@ -12,6 +12,14 @@ window.Orbit = window.Orbit || {};
 
   var DEG = Math.PI / 180;
   var TRAIL_SEC = 45 * 60; // bright "recent history" portion of each track
+  var R = Orbit.data.EARTH_RADIUS_KM;
+
+  // View toggles (Orbit.app keeps the authoritative copy on state.viewOptions
+  // and defaults every key true except sensorFor); missing keys read as "on".
+  function optOn(state, key) {
+    var opts = state.viewOptions;
+    return !opts || opts[key] !== false;
+  }
 
   // Map rectangle: largest 2:1 area that fits the canvas with a margin.
   function mapRect(w, h) {
@@ -51,17 +59,21 @@ window.Orbit = window.Orbit || {};
       drawNightOverlay(ctx, rect, sun);
       drawCityLights(ctx, rect, sun);
       drawTerminatorLine(ctx, rect, sun);
-      drawSunMarker(ctx, rect, sun);
+      if (optOn(state, "sun")) drawSunMarker(ctx, rect, sun);
     }
     if (!scn) return;
 
-    scn.sats.forEach(function (sat) { drawGroundTrack(ctx, rect, sat, state.simSec); });
-    drawAccessLines(ctx, rect, scn, state.simSec);
+    drawAreaOutlines(ctx, rect, state);
+    if (optOn(state, "groundTracks")) {
+      scn.sats.forEach(function (sat) { drawGroundTrack(ctx, rect, sat, state.simSec); });
+    }
+    if (optOn(state, "accessLines")) drawAccessLines(ctx, rect, scn, state.simSec);
+    scn.sats.forEach(function (sat) { drawSensorViz(ctx, rect, sat, state); });
     scn.grounds.forEach(function (gp) {
-      drawGroundMarker(ctx, rect, gp, state.selection === gp.name);
+      drawGroundMarker(ctx, rect, gp, state, state.selection === gp.name);
     });
     scn.sats.forEach(function (sat) {
-      drawSatMarker(ctx, rect, sat, state.simSec, state.selection === sat.name);
+      drawSatMarker(ctx, rect, sat, state, state.selection === sat.name);
     });
   }
 
@@ -389,17 +401,27 @@ window.Orbit = window.Orbit || {};
     ctx.stroke();
   }
 
-  function drawSatMarker(ctx, rect, sat, simSec, selected) {
-    var pos = Orbit.data.samplePosition(sat, simSec);
+  // Sunlit -> 1, Penumbra -> 0.65, Umbra -> 0.3, no eclipse data -> 1 (same
+  // ramp apps/orbit-ui/src/three/viewer.js uses for its satellite markers).
+  function eclipseDim(scn, satName, simSec) {
+    var lighting = Orbit.data.lightingStateAt(scn, satName, simSec);
+    if (lighting === "Umbra") return 0.3;
+    if (lighting === "Penumbra") return 0.65;
+    return 1;
+  }
+
+  function drawSatMarker(ctx, rect, sat, state, selected) {
+    var pos = Orbit.data.samplePosition(sat, state.simSec);
     if (!pos) return;
     var p = project(rect, pos.latDeg, pos.lonDeg);
+    var dim = eclipseDim(state.scn, sat.name, state.simSec);
 
-    ctx.fillStyle = hexA(sat.color, 0.18);
+    ctx.fillStyle = hexA(sat.color, 0.18 * dim);
     ctx.beginPath();
     ctx.arc(p.x, p.y, 9, 0, 2 * Math.PI);
     ctx.fill();
 
-    ctx.fillStyle = sat.color;
+    ctx.fillStyle = hexA(sat.color, dim);
     ctx.beginPath(); // diamond
     ctx.moveTo(p.x, p.y - 5);
     ctx.lineTo(p.x + 5, p.y);
@@ -409,16 +431,25 @@ window.Orbit = window.Orbit || {};
     ctx.fill();
 
     if (selected) selectionRing(ctx, p);
-    label(ctx, p, sat.name, sat.color, -10);
+    if (optOn(state, "labels")) label(ctx, p, sat.name, sat.color, -10);
   }
 
-  function drawGroundMarker(ctx, rect, gp, selected) {
+  function drawGroundMarker(ctx, rect, gp, state, selected) {
     var p = project(rect, gp.latDeg, gp.lonDeg);
+    var specPoint = null;
+    if (state.spec) {
+      state.spec.objects.forEach(function (o) {
+        if (o.kind === "target" && o.name === gp.name) specPoint = o;
+      });
+    }
+    var isAreaPoint = !!(specPoint && specPoint.group);
     ctx.fillStyle = gp.color;
     ctx.strokeStyle = "rgba(16, 18, 21, 0.8)";
     ctx.lineWidth = 1;
     ctx.beginPath();
-    if (gp.kind === "target") { // small square
+    if (isAreaPoint) { // tiny square; the area outline carries the label
+      ctx.rect(p.x - 2, p.y - 2, 4, 4);
+    } else if (gp.kind === "target") { // small square
       ctx.rect(p.x - 3.5, p.y - 3.5, 7, 7);
     } else { // ground station triangle
       ctx.moveTo(p.x, p.y - 5);
@@ -429,7 +460,96 @@ window.Orbit = window.Orbit || {};
     ctx.fill();
     ctx.stroke();
     if (selected) selectionRing(ctx, p);
-    label(ctx, p, gp.name, "#aeb6c2", 9, true);
+    if (!isAreaPoint && optOn(state, "labels")) label(ctx, p, gp.name, "#aeb6c2", 9, true);
+  }
+
+  // Area target rectangles: a dashed outline plus a centroid label, so the
+  // whole footprint reads as one object instead of only its grid points.
+  function drawAreaOutlines(ctx, rect, state) {
+    if (!state.spec) return;
+    var areas = Orbit.spec.groupTargets(state.spec.objects).areas;
+    areas.forEach(function (group) {
+      var areaMeta = group.points.length > 0 ? group.points[0].area : null;
+      if (!areaMeta) return;
+      var ring = Orbit.spec.areaRectRing(areaMeta);
+      var selected = state.selection === group.name;
+      ctx.save();
+      ctx.setLineDash([5, 4]);
+      ctx.strokeStyle = selected ? "rgba(79, 184, 209, 0.9)" : "rgba(95, 201, 143, 0.55)";
+      ctx.lineWidth = selected ? 1.6 : 1.1;
+      ctx.beginPath();
+      ring.forEach(function (pt, i) {
+        var p = project(rect, pt[1], pt[0]);
+        if (i === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y);
+      });
+      ctx.stroke();
+      ctx.restore();
+      if (optOn(state, "labels")) {
+        var c = project(rect, areaMeta.centerLatDeg, areaMeta.centerLonDeg);
+        label(ctx, c, group.name, "#5fc98f", 0, false);
+      }
+    });
+  }
+
+  var SENSOR_IDLE = "#7fb4d8";
+  var SENSOR_FOR = "rgba(216, 167, 90, 0.55)";
+  var SENSOR_TRACK = "#5fc98f";
+
+  // Instantaneous FOV footprint and FOR reachable envelope for one
+  // satellite's sensor, ground-projected via Orbit.sensorviz.footprintRing.
+  // Follows the active scheduled pointing when a fresh schedule exists for
+  // this platform, else the sensor's home pointing mode.
+  function drawSensorViz(ctx, rect, sat, state) {
+    if (!state.spec) return;
+    var specSat = null;
+    state.spec.objects.forEach(function (o) {
+      if (o.kind === "satellite" && o.name === sat.name) specSat = o;
+    });
+    if (!specSat || !specSat.sensor) return;
+    var pos = Orbit.data.samplePosition(sat, state.simSec);
+    if (!pos) return;
+    var satPos = Orbit.data.llaToEcef(pos.latDeg, pos.lonDeg, pos.altKm);
+    var entries = state.dirty ? []
+      : Orbit.data.scheduleForPlatform(state.scn.schedule, sat.name);
+    var bore = Orbit.sensorviz.boresightAt({
+      sat: sat, sensor: specSat.sensor, scn: state.scn, tSec: state.simSec,
+      satPosEcef: satPos, entries: entries, spec: state.spec,
+    });
+
+    if (optOn(state, "sensorFor")) {
+      var forRing = Orbit.sensorviz.footprintRing(
+        satPos, bore.dir, specSat.sensor.fieldOfRegardDeg || 60, R, 40);
+      strokeFootprint(ctx, rect, forRing, SENSOR_FOR, 1);
+    }
+    if (optOn(state, "sensorFov")) {
+      var fovRing = Orbit.sensorviz.footprintRing(
+        satPos, bore.dir, specSat.sensor.coneHalfAngleDeg || 20, R, 32);
+      var color = bore.pointing.phase === "track" ? SENSOR_TRACK
+        : bore.pointing.phase === "idle" ? SENSOR_IDLE : SENSOR_FOR;
+      strokeFootprint(ctx, rect, fovRing, color, 1.3);
+    }
+  }
+
+  // Stroke a footprint ring (array of ECEF points or null gaps from
+  // Orbit.sensorviz.footprintRing) on the equirectangular map, breaking
+  // wherever a sample missed the globe or the ring crosses the antimeridian.
+  function strokeFootprint(ctx, rect, ring, style, width) {
+    if (!ring) return;
+    ctx.strokeStyle = style;
+    ctx.lineWidth = width;
+    ctx.beginPath();
+    var started = false, prevLon = null;
+    for (var i = 0; i < ring.length; i++) {
+      var pt = ring[i];
+      if (!pt) { started = false; prevLon = null; continue; }
+      var ll = Orbit.data.ecefToLla(pt.x, pt.y, pt.z);
+      if (started && prevLon != null && Math.abs(ll.lonDeg - prevLon) > 180) started = false;
+      var p = project(rect, ll.latDeg, ll.lonDeg);
+      if (started) ctx.lineTo(p.x, p.y); else ctx.moveTo(p.x, p.y);
+      started = true;
+      prevLon = ll.lonDeg;
+    }
+    ctx.stroke();
   }
 
   // Dashed sat->station lines for accesses active at the current time.

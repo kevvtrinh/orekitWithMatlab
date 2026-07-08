@@ -24,6 +24,7 @@
   <script src="js/earthtex.js"></script>
   <script src="js/data.js"></script>
   <script src="js/spec.js"></script>
+  <script src="js/sensorviz.js"></script>
   <script>
     (function () {
       "use strict";
@@ -604,6 +605,167 @@
         assert(maskAt(0, -30) === 0, "mid-Atlantic should be ocean");
         assert(maskAt(-40, 90) === 0, "southern Indian Ocean should be ocean");
         assert(maskAt(42, 50.5) === 0, "Caspian Sea should be punched out");
+      });
+
+      // ---- Level 5: sun/eclipse parsing, sensor pointing, footprint geometry ----
+
+      check("ecefToLla inverts llaToEcef", function () {
+        [[0, 0], [45, -100], [-30, 170], [89, 10]].forEach(function (pair) {
+          var lat = pair[0], lon = pair[1];
+          var p = Orbit.data.llaToEcef(lat, lon, 500);
+          var back = Orbit.data.ecefToLla(p.x, p.y, p.z);
+          near(back.latDeg, lat, 1e-6, "lat");
+          var dLon = ((back.lonDeg - lon + 540) % 360) - 180;
+          near(dLon, 0, 1e-6, "lon");
+        });
+      });
+
+      check("sunDirEcef is a unit vector matching subsolarPoint", function () {
+        var dateMs = Date.parse("2026-06-21T12:00:00Z");
+        var sun = Orbit.data.sunDirEcef(dateMs);
+        var mag = Math.sqrt(sun.x * sun.x + sun.y * sun.y + sun.z * sun.z);
+        near(mag, 1, 1e-9, "not unit length");
+        var sp = Orbit.data.subsolarPoint(dateMs);
+        near(sun.latDeg, sp.latDeg, 1e-9, "lat mismatch");
+      });
+
+      check("sampleVelocityDirEcef returns a unit vector roughly tangent to the orbit", function () {
+        var sat = scn.sats[0];
+        var mid = sat.t[Math.floor(sat.t.length / 2)];
+        var vel = Orbit.data.sampleVelocityDirEcef(sat, mid, 1);
+        assert(vel, "no velocity direction");
+        var mag = Math.sqrt(vel.x * vel.x + vel.y * vel.y + vel.z * vel.z);
+        near(mag, 1, 1e-6, "not unit length");
+        var pos = Orbit.data.samplePosition(sat, mid);
+        var p = Orbit.data.llaToEcef(pos.latDeg, pos.lonDeg, pos.altKm);
+        var r = Math.sqrt(p.x * p.x + p.y * p.y + p.z * p.z);
+        var radial = (vel.x * p.x + vel.y * p.y + vel.z * p.z) / r;
+        assert(Math.abs(radial) < 0.5, "velocity direction too radial: " + radial);
+      });
+
+      check("lightingStateAt / groundDaylightAt return null without a sun block", function () {
+        assert(scn.sun === null, "sample scenario should have no sun block");
+        assert(Orbit.data.lightingStateAt(scn, scn.sats[0].name, 0) === null,
+          "expected null lighting");
+        assert(Orbit.data.groundDaylightAt(scn, scn.grounds[0].name, 0) === null,
+          "expected null daylight");
+      });
+
+      check("parseScenario normalizes sun eclipses and ground lighting windows", function () {
+        var raw2 = {
+          meta: { epochUtc: "2026-01-01T00:00:00Z", durationSeconds: 3600, stepSeconds: 60 },
+          satellites: [{ name: "Sat-A" }],
+          groundPoints: [{ name: "GS-A", type: "GroundStation", latitudeDeg: 0, longitudeDeg: 0 }],
+          sun: {
+            eclipses: [{
+              satellite: "Sat-A", sunlitFractionPercent: 50,
+              windows: [{ type: "Umbra", startUtc: "2026-01-01T00:10:00Z",
+                stopUtc: "2026-01-01T00:20:00Z", durationSeconds: 600 }],
+            }],
+            groundLighting: [{
+              name: "GS-A",
+              daylightWindows: [{ startUtc: "2026-01-01T00:00:00Z",
+                stopUtc: "2026-01-01T00:30:00Z", durationSeconds: 1800 }],
+            }],
+          },
+        };
+        var scn2 = Orbit.data.parseScenario(raw2);
+        assert(scn2.sun, "sun block missing");
+        assert(Orbit.data.lightingStateAt(scn2, "Sat-A", 900) === "Umbra", "expected umbra at 900s");
+        assert(Orbit.data.lightingStateAt(scn2, "Sat-A", 100) === "Sunlit", "expected sunlit at 100s");
+        assert(Orbit.data.groundDaylightAt(scn2, "GS-A", 100) === true, "expected daylight at 100s");
+        assert(Orbit.data.groundDaylightAt(scn2, "GS-A", 2000) === false, "expected night at 2000s");
+      });
+
+      check("areaRectRing frames the area's width/height around its center", function () {
+        var area = { centerLatDeg: 10, centerLonDeg: 20, widthKm: 111.32, heightKm: 111.32 };
+        var ring = Orbit.spec.areaRectRing(area);
+        assert(ring.length === 5, "expected a closed 5-point ring");
+        var lats = ring.map(function (p) { return p[1]; });
+        var lons = ring.map(function (p) { return p[0]; });
+        near(Math.max.apply(null, lats), 10.5, 0.05, "north edge");
+        near(Math.min.apply(null, lats), 9.5, 0.05, "south edge");
+        var halfWidthDeg = 0.5 / Math.cos(10 * Math.PI / 180);
+        near(Math.max.apply(null, lons), 20 + halfWidthDeg, 0.05, "east edge");
+        near(Math.min.apply(null, lons), 20 - halfWidthDeg, 0.05, "west edge");
+        assert(ring[0][0] === ring[4][0] && ring[0][1] === ring[4][1], "ring not closed");
+      });
+
+      check("sensorviz.raySphere hits a sphere ahead and misses one behind", function () {
+        var origin = { x: 0, y: 0, z: 7000 };
+        var dHit = Orbit.sensorviz.raySphere(origin, { x: 0, y: 0, z: -1 }, 6371);
+        near(dHit, 7000 - 6371, 1e-6, "expected hit at the near pole");
+        var dMiss = Orbit.sensorviz.raySphere(origin, { x: 0, y: 0, z: 1 }, 6371);
+        assert(isNaN(dMiss), "expected a miss pointing away from the sphere");
+      });
+
+      check("sensorviz.homeBoresight resolves each pointing mode", function () {
+        var pos = { x: 0, y: 0, z: 7000 };
+        var vel = { x: 1, y: 0, z: 0 };
+        var sunDir = { x: 0, y: 1, z: 0 };
+        var fixed = { x: 0, y: 0, z: -1 };
+        var nadir = Orbit.sensorviz.homeBoresight("Nadir", pos, vel, sunDir, fixed);
+        near(nadir.z, -1, 1e-9, "nadir should point toward Earth's center");
+        var velDir = Orbit.sensorviz.homeBoresight("VelocityVector", pos, vel, sunDir, fixed);
+        near(velDir.x, 1, 1e-9, "velocity pointing should follow velocity");
+        var sunPointing = Orbit.sensorviz.homeBoresight("SunPointing", pos, vel, sunDir, fixed);
+        near(sunPointing.y, 1, 1e-9, "sun pointing should follow the sun direction");
+        var fixedPointing = Orbit.sensorviz.homeBoresight("FixedVector", pos, vel, sunDir, fixed);
+        near(fixedPointing.z, -1, 1e-9, "fixed vector pointing should follow the configured vector");
+      });
+
+      check("sensorviz.boresightAt uses home pointing when idle; footprintRing frames a nadir cone", function () {
+        var scnMini = { epochMs: Date.parse("2026-01-01T00:00:00Z"), grounds: [] };
+        var sat = { t: [0, 60], lla: [[0, 0, 500], [0, 1, 500]] };
+        var satPos = Orbit.data.llaToEcef(0, 0, 500);
+        var bore = Orbit.sensorviz.boresightAt({
+          sat: sat, sensor: { pointing: "Nadir" }, scn: scnMini, tSec: 0,
+          satPosEcef: satPos, entries: [],
+        });
+        assert(bore.pointing.phase === "idle", "expected idle with no schedule entries");
+        var r = Math.sqrt(satPos.x * satPos.x + satPos.y * satPos.y + satPos.z * satPos.z);
+        near(bore.dir.x * satPos.x + bore.dir.y * satPos.y + bore.dir.z * satPos.z, -r, 1e-6,
+          "idle nadir boresight should point straight down");
+
+        var ring = Orbit.sensorviz.footprintRing(satPos, bore.dir, 20, Orbit.data.EARTH_RADIUS_KM, 24);
+        assert(ring, "expected a footprint ring for a nadir-pointing sensor");
+        ring.forEach(function (pt) { assert(pt, "nadir FOV should not miss the globe"); });
+      });
+
+      check("sensorviz.boresightAt tracks the scheduled entry's target while dwelling", function () {
+        var scnMini = {
+          epochMs: Date.parse("2026-01-01T00:00:00Z"),
+          grounds: [{ name: "GS-A", latDeg: 10, lonDeg: 10, altM: 0 }],
+        };
+        var sat = { t: [0, 600], lla: [[0, 0, 500], [0, 5, 500]] };
+        var satPos = Orbit.data.llaToEcef(0, 0, 500);
+        var entries = [{ target: "GS-A", startSec: 0, stopSec: 100, slewStartSec: -30, returnEndSec: 130 }];
+        var bore = Orbit.sensorviz.boresightAt({
+          sat: sat, sensor: { pointing: "Nadir" }, scn: scnMini, tSec: 50,
+          satPosEcef: satPos, entries: entries,
+        });
+        assert(bore.pointing.phase === "track", "expected track phase mid-dwell");
+        var gs = Orbit.data.llaToEcef(10, 10, 0);
+        var dx = gs.x - satPos.x, dy = gs.y - satPos.y, dz = gs.z - satPos.z;
+        var m = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        near(bore.dir.x, dx / m, 1e-6, "boresight x");
+        near(bore.dir.y, dy / m, 1e-6, "boresight y");
+        near(bore.dir.z, dz / m, 1e-6, "boresight z");
+      });
+
+      check("sensorviz resolves an area-scan target from spec grid metadata", function () {
+        var areaPoints = Orbit.spec.expandAreaGrid({
+          name: "VizArea", centerLatDeg: 40, centerLonDeg: -105,
+          altitudeM: 100, widthKm: 100, heightKm: 100, spacingKm: 50,
+          priority: 5,
+        });
+        var specMini = { objects: areaPoints };
+        var gp = Orbit.sensorviz.findGroundPoint(
+          { grounds: [] }, "VizArea", specMini);
+        assert(gp, "area centroid not found");
+        near(gp.latDeg, 40, 1e-6, "area centroid latitude");
+        near(gp.lonDeg, -105, 1e-6, "area centroid longitude");
+        near(gp.altM, 100, 1e-6, "area centroid altitude");
       });
 
       var summary = document.getElementById("summary");

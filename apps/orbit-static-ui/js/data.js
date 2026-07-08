@@ -144,7 +144,70 @@ window.Orbit = window.Orbit || {};
     });
     scn.schedule.sort(function (a, b) { return a.startSec - b.startSec; });
 
+    // Sun/eclipse block (exportSunViz.m): per-satellite umbra/penumbra
+    // windows and per-site daylight windows. Absent on payloads predating
+    // Level 5 or when the scenario has no satellites/ground points yet.
+    function parseTimeWindow(w) {
+      var startMs = Date.parse(w.startUtc);
+      var stopMs = Date.parse(w.stopUtc);
+      return {
+        type: w.type || null,
+        startMs: startMs,
+        stopMs: stopMs,
+        startSec: (startMs - scn.epochMs) / 1000,
+        stopSec: (stopMs - scn.epochMs) / 1000,
+        durationSec: num(w.durationSeconds, (stopMs - startMs) / 1000),
+      };
+    }
+    scn.sun = raw.sun ? {
+      eclipses: (raw.sun.eclipses || []).map(function (e) {
+        return {
+          satellite: e.satellite || "",
+          sunlitFractionPercent: num(e.sunlitFractionPercent, null),
+          windows: (e.windows || []).map(parseTimeWindow),
+        };
+      }),
+      groundLighting: (raw.sun.groundLighting || []).map(function (g) {
+        return {
+          name: g.name || "",
+          daylightWindows: (g.daylightWindows || []).map(parseTimeWindow),
+        };
+      }),
+    } : null;
+
     return scn;
+  }
+
+  // Satellite lighting state at tSec: "Umbra" | "Penumbra" | "Sunlit", or
+  // null when the payload carries no eclipse data for that satellite (older
+  // payload, or the satellite has not been propagated yet).
+  function lightingStateAt(scn, satelliteName, tSec) {
+    var sun = scn && scn.sun;
+    if (!sun) return null;
+    var entry = null;
+    sun.eclipses.forEach(function (e) { if (e.satellite === satelliteName) entry = e; });
+    if (!entry) return null;
+    var state = "Sunlit";
+    entry.windows.forEach(function (w) {
+      if (tSec >= w.startSec && tSec <= w.stopSec) {
+        if (w.type === "Umbra") state = "Umbra";
+        else if (state !== "Umbra") state = "Penumbra";
+      }
+    });
+    return state;
+  }
+
+  // Ground-site daylight at tSec: true/false, or null when there is no
+  // lighting data for that site.
+  function groundDaylightAt(scn, siteName, tSec) {
+    var sun = scn && scn.sun;
+    if (!sun) return null;
+    var entry = null;
+    sun.groundLighting.forEach(function (g) { if (g.name === siteName) entry = g; });
+    if (!entry) return null;
+    return entry.daylightWindows.some(function (w) {
+      return tSec >= w.startSec && tSec <= w.stopSec;
+    });
   }
 
   // ---- sensor schedule -------------------------------------------------------
@@ -254,6 +317,32 @@ window.Orbit = window.Orbit || {};
     };
   }
 
+  // Inverse of llaToEcef on the same spherical Earth: cartesian -> lat/lon
+  // (altitude is not recovered; callers that need it already have it).
+  function ecefToLla(x, y, z) {
+    var r = Math.sqrt(x * x + y * y + z * z) || 1;
+    var s = z / r;
+    if (s > 1) s = 1; else if (s < -1) s = -1;
+    return { latDeg: Math.asin(s) / DEG, lonDeg: Math.atan2(y, x) / DEG };
+  }
+
+  // Earth-fixed velocity direction (unit vector, ECEF) at tSec, from a
+  // central difference of the sampled ephemeris a second apart either side.
+  // Approximate (ground-track direction in the rotating frame, not the true
+  // inertial velocity) but adequate for orienting a VelocityVector sensor.
+  // Returns null when the satellite has no samples spanning tSec.
+  function sampleVelocityDirEcef(sat, tSec, dtSec) {
+    var dt = dtSec || 1;
+    var a = samplePosition(sat, tSec - dt);
+    var b = samplePosition(sat, tSec + dt);
+    if (!a || !b) return null;
+    var pa = llaToEcef(a.latDeg, a.lonDeg, a.altKm);
+    var pb = llaToEcef(b.latDeg, b.lonDeg, b.altKm);
+    var dx = pb.x - pa.x, dy = pb.y - pa.y, dz = pb.z - pa.z;
+    var m = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    return m > 1e-9 ? { x: dx / m, y: dy / m, z: dz / m } : null;
+  }
+
   // ---- sun geometry ---------------------------------------------------------
 
   // Subsolar point (deg) from a low-precision solar ephemeris (NOAA-style,
@@ -272,6 +361,16 @@ window.Orbit = window.Orbit || {};
     var lon = ra / DEG - gmst;
     lon = ((lon % 360) + 540) % 360 - 180;
     return { latDeg: dec / DEG, lonDeg: lon };
+  }
+
+  // Unit Sun direction in the Earth-fixed (ECEF) display frame at dateMs,
+  // shared by the day/night shading, the 3D sun glyph, and SunPointing
+  // sensors so they all agree on where the sun is.
+  function sunDirEcef(dateMs) {
+    var sp = subsolarPoint(dateMs);
+    var v = llaToEcef(sp.latDeg, sp.lonDeg, 0);
+    var r = Math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z) || 1;
+    return { x: v.x / r, y: v.y / r, z: v.z / r, latDeg: sp.latDeg, lonDeg: sp.lonDeg };
   }
 
   // ---- formatting ------------------------------------------------------------
@@ -311,8 +410,13 @@ window.Orbit = window.Orbit || {};
     scheduleForObject: scheduleForObject,
     pointingStateAt: pointingStateAt,
     samplePosition: samplePosition,
+    sampleVelocityDirEcef: sampleVelocityDirEcef,
     llaToEcef: llaToEcef,
+    ecefToLla: ecefToLla,
     subsolarPoint: subsolarPoint,
+    sunDirEcef: sunDirEcef,
+    lightingStateAt: lightingStateAt,
+    groundDaylightAt: groundDaylightAt,
     fmtUtc: fmtUtc,
     fmtHms: fmtHms,
     fmtDuration: fmtDuration,

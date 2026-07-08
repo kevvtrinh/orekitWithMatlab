@@ -516,13 +516,15 @@ window.Orbit = window.Orbit || {};
   function liveStateHtml(d, scnSat, state) {
     var pos = d.samplePosition(scnSat, state.simSec);
     if (!pos) return "";
+    var pairs = [
+      ["Latitude", d.fmtDeg(pos.latDeg, 3)],
+      ["Longitude", d.fmtDeg(pos.lonDeg, 3)],
+      ["Altitude", pos.altKm.toFixed(1) + " km"],
+    ];
+    var lighting = d.lightingStateAt(state.scn, scnSat.name, state.simSec);
+    if (lighting) pairs.push(["Lighting", lighting]);
     return '<div class="insp-caption">LIVE STATE (T+' + d.fmtHms(state.simSec) +
-      ")" + staleTag(state) + "</div>" +
-      kv([
-        ["Latitude", d.fmtDeg(pos.latDeg, 3)],
-        ["Longitude", d.fmtDeg(pos.lonDeg, 3)],
-        ["Altitude", pos.altKm.toFixed(1) + " km"],
-      ]);
+      ")" + staleTag(state) + "</div>" + kv(pairs);
   }
 
   function specSatelliteHtml(sel, state) {
@@ -603,6 +605,10 @@ window.Orbit = window.Orbit || {};
     ];
     if (gp.minElevationDeg != null) pairs.push(["Min elevation", d.fmtDeg(gp.minElevationDeg, 1)]);
     if (gp.priority != null) pairs.push(["Priority", String(gp.priority)]);
+    if (gp.kind === "groundStation") {
+      var daylight = d.groundDaylightAt(state.scn, gp.name, state.simSec);
+      if (daylight != null) pairs.push(["Daylight", daylight ? "Yes" : "No (night)"]);
+    }
     var member = sel.spec && sel.spec.group;
     if (gp.kind === "target") {
       // Tasks imaging this point directly, or scanning its parent area.

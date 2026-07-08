@@ -21,7 +21,7 @@ HTML/CSS/classic JavaScript with the MATLAB bridge
   visibility), request rows in the tree/inspector with computed-vs-pending
   status, and clear display of stale access results. Sensor removal prunes
   its visibility requests and unpins tasks; renames carry requests along.
-- [x] **Level 4 - Tasking and maneuvers** *(this step)*
+- [x] **Level 4 - Tasking and maneuvers**
   Sensor tasks via `spec.tasks` (+ Task): point tracking and whole-area
   scan tasks (dwell, coverage, priority, optional pinned satellite), task
   rows in the tree with scheduled/unscheduled/pending state, schedule
@@ -30,10 +30,24 @@ HTML/CSS/classic JavaScript with the MATLAB bridge
   target inspector details incl. live sensor pointing phase, and an
   impulsive maneuver editor (+ Mnvr and per-satellite inspector rows;
   TNW/Inertial burns, blocked for SGP4).
-- [ ] **Level 5 - High-fidelity viewport parity**
-  View toggles, labels/ground tracks/access lines/sun/FOV/FOR controls,
-  richer 3D interaction, lighting/eclipse state, area outlines, and sensor
-  beam/track visualization.
+- [x] **Level 5 - High-fidelity viewport parity** *(this step)*
+  A View menu (Labels, Ground tracks, Access lines, Sensor FOV, Sensor FOR,
+  Sun) toggles rendering in both the 2D map and 3D globe, matching
+  `apps/orbit-ui`'s View menu one-for-one. Sensor FOV/FOR render as ground
+  footprints (`js/sensorviz.js`, shared ECEF ray/cone geometry) that follow
+  the satellite's live boresight: the active scheduled slew/track/return
+  phase when a fresh schedule exists for that platform, else the sensor's
+  home pointing mode (Nadir, VelocityVector via finite-difference ground
+  track, SunPointing via the shared subsolar direction, or a fixed ECEF
+  vector). Area targets draw as a dashed rectangle outline plus one
+  centroid label instead of only their grid-point markers. Satellite
+  eclipse state (Umbra/Penumbra/Sunlit, from the payload's `sun.eclipses`)
+  dims the satellite marker and shows in the inspector and viewport HUD;
+  ground-site daylight (`sun.groundLighting`) shows in the inspector. 3D
+  interaction adds double-click-to-recenter and a Reset View control
+  alongside the existing drag-to-rotate/wheel-zoom. 2D/3D access lines and
+  ground-track visibility are both toggle-gated; the Natural Earth
+  map/globe/sun rendering from the prior step is unchanged.
 - [ ] **Level 6 - Operational polish**
   Warm worker/status/log panels, better stale-bridge diagnostics, export
   ephemeris CSV, reset demo spec, keyboard polish, and self-tests for more

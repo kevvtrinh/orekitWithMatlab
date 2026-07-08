@@ -41,6 +41,23 @@
             <button class="menu-item" id="menu-export-scenario">Export Scenario JSON</button>
           </div>
         </div>
+        <div class="menu-wrap">
+          <button class="btn" id="btn-view-menu" aria-haspopup="true">View &#9662;</button>
+          <div class="menu" id="view-menu" hidden>
+            <button class="menu-item menu-item-check" id="menu-toggle-labels"
+                    title="Object name labels">Labels</button>
+            <button class="menu-item menu-item-check" id="menu-toggle-ground-tracks"
+                    title="Satellite orbit / ground tracks">Ground tracks</button>
+            <button class="menu-item menu-item-check" id="menu-toggle-access-lines"
+                    title="Live satellite-to-ground access lines">Access lines</button>
+            <button class="menu-item menu-item-check" id="menu-toggle-sensor-fov"
+                    title="Instantaneous sensor field-of-view footprint">Sensor FOV</button>
+            <button class="menu-item menu-item-check" id="menu-toggle-sensor-for"
+                    title="Sensor field-of-regard (reachable envelope)">Sensor FOR</button>
+            <button class="menu-item menu-item-check" id="menu-toggle-sun"
+                    title="Sun glyph / subsolar marker">Sun</button>
+          </div>
+        </div>
         <button class="btn" id="btn-refresh" title="Reload scenario data">&#10227; Refresh</button>
         <button class="btn btn-accent" id="btn-run-demo"
                 title="Propagate the demo scenario with MATLAB / Orekit">Run Demo</button>
@@ -82,6 +99,10 @@
         <canvas id="canvas-2d"></canvas>
         <canvas id="canvas-3d" hidden></canvas>
         <div class="viewport-hud" id="viewport-hud"></div>
+        <div class="viewport-toolbar" id="viewport-toolbar">
+          <button class="btn btn-small" id="btn-reset-view"
+                  title="Recenter and reset zoom (double-click the globe to look at a point)">Reset View</button>
+        </div>
         <div class="viewport-frame-tag" id="viewport-frame-tag">EARTH FIXED &middot; EQUIRECTANGULAR</div>
       </section>
 
@@ -131,6 +152,7 @@
   <script src="js/earthtex.js" defer></script>
   <script src="js/data.js" defer></script>
   <script src="js/spec.js" defer></script>
+  <script src="js/sensorviz.js" defer></script>
   <script src="js/api.js" defer></script>
   <script src="js/modal.js" defer></script>
   <script src="js/map2d.js" defer></script>

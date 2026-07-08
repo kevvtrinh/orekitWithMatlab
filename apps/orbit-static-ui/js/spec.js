@@ -345,6 +345,22 @@ window.Orbit = window.Orbit || {};
     return null;
   }
 
+  // Lat/lon corners of an area's rectangle as a closed ring of [lonDeg,
+  // latDeg] pairs (NW -> NE -> SE -> SW -> NW), matching the equirectangular
+  // approximation expandAreaGrid used to lay out the grid so the outline
+  // frames exactly the points it was generated from.
+  function areaRectRing(area) {
+    var cosLat = Math.cos((area.centerLatDeg * Math.PI) / 180);
+    if (cosLat < 0.05) cosLat = 0.05;
+    var heightDeg = area.heightKm / KM_PER_DEG_LAT;
+    var widthDeg = area.widthKm / (KM_PER_DEG_LAT * cosLat);
+    var n = Math.min(90, area.centerLatDeg + heightDeg / 2);
+    var s = Math.max(-90, area.centerLatDeg - heightDeg / 2);
+    var w = area.centerLonDeg - widthDeg / 2;
+    var e = area.centerLonDeg + widthDeg / 2;
+    return [[w, n], [e, n], [e, s], [w, s], [w, n]];
+  }
+
   // ---- sensor tasks & maneuvers -------------------------------------------------
 
   function nextTaskId(spec) {
@@ -1253,6 +1269,7 @@ window.Orbit = window.Orbit || {};
     expandAreaGrid: expandAreaGrid,
     groupTargets: groupTargets,
     areaGroup: areaGroup,
+    areaRectRing: areaRectRing,
     sensorTemplate: sensorTemplate,
     sensorDisplayName: sensorDisplayName,
     nextTaskId: nextTaskId,

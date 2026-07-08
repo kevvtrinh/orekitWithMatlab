@@ -27,14 +27,36 @@
     selection: null,
     treeOpen: {},     // collapse state of tree groups ("sat:<g>" / "area:<g>")
     busy: false,
+    // Viewport display toggles (2D map + 3D globe read these every frame);
+    // defaults mirror apps/orbit-ui's View menu.
+    viewOptions: {
+      labels: true,
+      groundTracks: true,
+      accessLines: true,
+      sensorFov: true,
+      sensorFor: false,
+      sun: true,
+    },
   };
+
+  var VIEW_OPTIONS = [
+    ["labels", "menu-toggle-labels"],
+    ["groundTracks", "menu-toggle-ground-tracks"],
+    ["accessLines", "menu-toggle-access-lines"],
+    ["sensorFov", "menu-toggle-sensor-fov"],
+    ["sensorFor", "menu-toggle-sensor-for"],
+    ["sun", "menu-toggle-sun"],
+  ];
 
   var els = {};
   ["scenario-chip", "utc-readout", "btn-refresh", "btn-run-demo", "btn-run-scenario",
     "bridge-pill", "dirty-pill", "btn-view-2d", "btn-view-3d", "canvas-2d", "canvas-3d",
-    "viewport-hud", "viewport-frame-tag", "object-tree", "inspector",
+    "viewport-hud", "viewport-frame-tag", "btn-reset-view", "object-tree", "inspector",
     "btn-settings", "btn-file-menu", "file-menu", "menu-import-spec",
     "menu-export-spec", "menu-export-scenario", "import-spec-input",
+    "btn-view-menu", "view-menu",
+    "menu-toggle-labels", "menu-toggle-ground-tracks", "menu-toggle-access-lines",
+    "menu-toggle-sensor-fov", "menu-toggle-sensor-for", "menu-toggle-sun",
     "btn-add-sat", "btn-add-tle", "btn-add-walker", "btn-add-station",
     "btn-add-target", "btn-add-area", "btn-add-sensor", "btn-add-access",
     "btn-add-task", "btn-add-maneuver",
@@ -1311,9 +1333,47 @@
 
   els.btnFileMenu.addEventListener("click", function (ev) {
     ev.stopPropagation();
+    toggleViewMenu(false);
     toggleFileMenu();
   });
-  document.addEventListener("click", function () { toggleFileMenu(false); });
+  document.addEventListener("click", function () {
+    toggleFileMenu(false);
+    toggleViewMenu(false);
+  });
+
+  // ---- view menu (labels / ground tracks / access lines / sensor FOV+FOR / sun) --
+
+  function toggleViewMenu(open) {
+    els.viewMenu.hidden = open === undefined ? !els.viewMenu.hidden : !open;
+  }
+
+  function refreshViewMenu() {
+    VIEW_OPTIONS.forEach(function (pair) {
+      var el = els[pair[1].replace(/-([a-z0-9])/g, function (_, c) { return c.toUpperCase(); })];
+      el.classList.toggle("is-on", !!state.viewOptions[pair[0]]);
+    });
+  }
+
+  els.btnViewMenu.addEventListener("click", function (ev) {
+    ev.stopPropagation();
+    toggleFileMenu(false);
+    toggleViewMenu();
+  });
+
+  VIEW_OPTIONS.forEach(function (pair) {
+    var key = pair[0];
+    var el = els[pair[1].replace(/-([a-z0-9])/g, function (_, c) { return c.toUpperCase(); })];
+    el.addEventListener("click", function (ev) {
+      ev.stopPropagation(); // stay open - toggling several options in a row is normal
+      state.viewOptions[key] = !state.viewOptions[key];
+      refreshViewMenu();
+    });
+  });
+  refreshViewMenu();
+
+  els.btnResetView.addEventListener("click", function () {
+    Orbit.globe3d.resetView();
+  });
 
   els.menuImportSpec.addEventListener("click", function () {
     toggleFileMenu(false);
@@ -1437,6 +1497,8 @@
           pos.latDeg.toFixed(2) + "  " + pos.lonDeg.toFixed(2) + "  " +
           pos.altKm.toFixed(0) + " KM");
       }
+      var lighting = Orbit.data.lightingStateAt(scn, scnSat.name, state.simSec);
+      if (lighting) lines.push(pad("LIGHTING", 10) + lighting.toUpperCase());
     }
     els.viewportHud.textContent = lines.join("\n");
   }
@@ -1466,7 +1528,8 @@
     els.btnView3d.classList.toggle("is-active", view === "3d");
     els.viewportFrameTag.textContent = view === "2d"
       ? "EARTH FIXED - EQUIRECTANGULAR"
-      : "EARTH FIXED - ORTHOGRAPHIC - DRAG TO ROTATE";
+      : "EARTH FIXED - ORTHOGRAPHIC - DRAG TO ROTATE / DOUBLE-CLICK TO RECENTER";
+    els.btnResetView.hidden = view !== "3d";
   }
 
   function setPlaying(playing) {

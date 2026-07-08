@@ -97,7 +97,24 @@ per pixel with sun-aligned lighting, ocean glint, a subtle cloud deck,
 front-side coastlines, city lights, an atmosphere rim, and a visible sun-vector
 source outside the globe.
 
+## Viewport Controls And Sensor Visualization
+
+The topbar's View menu toggles Labels, Ground tracks, Access lines, Sensor
+FOV, Sensor FOR, and Sun rendering in both the 2D map and 3D globe. Area
+targets draw as a dashed rectangle outline with one label, in addition to
+their grid-point markers. A satellite with a sensor shows its instantaneous
+field-of-view and field-of-regard as ground footprints (`js/sensorviz.js`):
+the boresight follows the active scheduled slew/track/return phase when a
+fresh schedule exists for that platform, otherwise the sensor's home
+pointing mode (Nadir, velocity vector, Sun pointing, or a fixed ECEF
+vector). Satellite eclipse state and ground-site daylight, when the payload
+carries `sun.eclipses` / `sun.groundLighting`, dim the satellite marker and
+show in the inspector and viewport HUD. The 3D globe adds double-click to
+recenter under the clicked point and a Reset View button alongside
+drag-to-rotate and wheel-zoom.
+
 `selftest.html` is a browser-only sanity check for the pure JavaScript data
 and spec helpers, including Walker/TLE/area-grid authoring, the
-sensor/access-request workflows, sensor task and maneuver validation, and
-schedule/pointing normalization. It can be opened directly from disk.
+sensor/access-request workflows, sensor task and maneuver validation,
+schedule/pointing normalization, and the Level 5 sun/eclipse parsing and
+sensor pointing/footprint geometry. It can be opened directly from disk.

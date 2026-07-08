@@ -60,6 +60,14 @@ window.Orbit = window.Orbit || {};
     };
   }
 
+  // View toggles (Orbit.app keeps the authoritative copy on state.viewOptions
+  // and defaults every key true except sensorFor, matching the React
+  // console's View menu); missing keys read as "on".
+  function optOn(state, key) {
+    var opts = state.viewOptions;
+    return !opts || opts[key] !== false;
+  }
+
   function draw(canvas, state) {
     var ctx = canvas.getContext("2d");
     var dpr = window.devicePixelRatio || 1;
@@ -75,7 +83,7 @@ window.Orbit = window.Orbit || {};
     var cam = makeCamera(w, h);
     var scn = state.scn;
     var dateMs = scn ? scn.epochMs + state.simSec * 1000 : FALLBACK_MS;
-    var sun = sunVector(dateMs);
+    var sun = Orbit.data.sunDirEcef(dateMs);
 
     drawSpace(ctx, w, h);
     drawAtmosphereHalo(ctx, cam, sun);
@@ -83,26 +91,24 @@ window.Orbit = window.Orbit || {};
     drawCoastlines(ctx, cam);
     drawGraticule(ctx, cam);
     drawCityLights(ctx, cam, sun);
-    drawSunIndicator(ctx, cam, sun);
+    if (optOn(state, "sun")) drawSunIndicator(ctx, cam, sun);
 
     if (!scn) return;
 
+    drawAreaOutlines(ctx, cam, state);
     scn.grounds.forEach(function (gp) {
-      drawGroundMarker(ctx, cam, gp, state.selection === gp.name);
+      drawGroundMarker(ctx, cam, gp, state, state.selection === gp.name);
+    });
+    if (optOn(state, "groundTracks")) {
+      scn.sats.forEach(function (sat) { drawOrbitTrack(ctx, cam, sat); });
+    }
+    if (optOn(state, "accessLines")) drawAccessLines(ctx, cam, scn, state.simSec);
+    scn.sats.forEach(function (sat) {
+      drawSensorViz(ctx, cam, sat, state);
     });
     scn.sats.forEach(function (sat) {
-      drawOrbitTrack(ctx, cam, sat);
+      drawSatMarker(ctx, cam, sat, state, state.selection === sat.name);
     });
-    scn.sats.forEach(function (sat) {
-      drawSatMarker(ctx, cam, sat, state.simSec, state.selection === sat.name);
-    });
-  }
-
-  // Unit ECEF vector toward the sun (from the subsolar point).
-  function sunVector(dateMs) {
-    var sp = Orbit.data.subsolarPoint(dateMs);
-    var v = Orbit.data.llaToEcef(sp.latDeg, sp.lonDeg, 0);
-    return { x: v.x / R, y: v.y / R, z: v.z / R, latDeg: sp.latDeg, lonDeg: sp.lonDeg };
   }
 
   function drawSpace(ctx, w, h) {
@@ -457,14 +463,24 @@ window.Orbit = window.Orbit || {};
     ctx.stroke();
   }
 
-  function drawSatMarker(ctx, cam, sat, simSec, selected) {
-    var pos = Orbit.data.samplePosition(sat, simSec);
+  // Sunlit -> 1, Penumbra -> 0.65, Umbra -> 0.3, no eclipse data -> 1 (same
+  // ramp apps/orbit-ui/src/three/viewer.js uses for its satellite markers).
+  function eclipseDim(state, satName) {
+    var lighting = Orbit.data.lightingStateAt(state.scn, satName, state.simSec);
+    if (lighting === "Umbra") return 0.3;
+    if (lighting === "Penumbra") return 0.65;
+    return 1;
+  }
+
+  function drawSatMarker(ctx, cam, sat, state, selected) {
+    var pos = Orbit.data.samplePosition(sat, state.simSec);
     if (!pos) return;
     var p = cam.project(Orbit.data.llaToEcef(pos.latDeg, pos.lonDeg, pos.altKm));
     var front = p.depth > 0;
     if (!front && Math.hypot(p.x - cam.cx, p.y - cam.cy) < cam.radiusPx) return;
+    var dim = eclipseDim(state, sat.name);
 
-    ctx.fillStyle = hexA(sat.color, front ? 1 : 0.35);
+    ctx.fillStyle = hexA(sat.color, front ? dim : 0.35 * dim);
     ctx.beginPath();
     ctx.moveTo(p.x, p.y - 5);
     ctx.lineTo(p.x + 5, p.y);
@@ -473,11 +489,11 @@ window.Orbit = window.Orbit || {};
     ctx.closePath();
     ctx.fill();
     if (front) {
-      ctx.fillStyle = hexA(sat.color, 0.18);
+      ctx.fillStyle = hexA(sat.color, 0.18 * dim);
       ctx.beginPath();
       ctx.arc(p.x, p.y, 10, 0, 2 * Math.PI);
       ctx.fill();
-      label(ctx, p, sat.name, sat.color);
+      if (optOn(state, "labels")) label(ctx, p, sat.name, sat.color);
     }
     if (selected) {
       ctx.strokeStyle = "#4fb8d1";
@@ -488,12 +504,21 @@ window.Orbit = window.Orbit || {};
     }
   }
 
-  function drawGroundMarker(ctx, cam, gp, selected) {
+  function drawGroundMarker(ctx, cam, gp, state, selected) {
     var p = cam.project(Orbit.data.llaToEcef(gp.latDeg, gp.lonDeg, gp.altM / 1000));
     if (p.depth <= 0) return;
+    var specPoint = null;
+    if (state.spec) {
+      state.spec.objects.forEach(function (o) {
+        if (o.kind === "target" && o.name === gp.name) specPoint = o;
+      });
+    }
+    var isAreaPoint = !!(specPoint && specPoint.group);
     ctx.fillStyle = gp.color;
     ctx.beginPath();
-    if (gp.kind === "target") {
+    if (isAreaPoint) {
+      ctx.rect(p.x - 1.5, p.y - 1.5, 3, 3);
+    } else if (gp.kind === "target") {
       ctx.rect(p.x - 3, p.y - 3, 6, 6);
     } else {
       ctx.moveTo(p.x, p.y - 4.5);
@@ -509,7 +534,127 @@ window.Orbit = window.Orbit || {};
       ctx.arc(p.x, p.y, 10, 0, 2 * Math.PI);
       ctx.stroke();
     }
-    label(ctx, p, gp.name, "#aeb6c2");
+    // Area grid points are identified by their outline's label, not their
+    // own - one label per point would bury the map.
+    if (!isAreaPoint && optOn(state, "labels")) label(ctx, p, gp.name, "#aeb6c2");
+  }
+
+  // Area target rectangles: a dashed outline plus a centroid label, draped
+  // just above the surface so the whole footprint reads as one object
+  // instead of only its grid-point markers.
+  function drawAreaOutlines(ctx, cam, state) {
+    if (!state.spec) return;
+    var areas = Orbit.spec.groupTargets(state.spec.objects).areas;
+    areas.forEach(function (group) {
+      var areaMeta = group.points.length > 0 ? group.points[0].area : null;
+      if (!areaMeta) return;
+      var ring = Orbit.spec.areaRectRing(areaMeta).map(function (pt) {
+        return Orbit.data.llaToEcef(pt[1], pt[0], 0.4);
+      });
+      var selected = state.selection === group.name;
+      ctx.save();
+      ctx.setLineDash([5, 4]);
+      strokeFront(ctx, cam, ring, selected ? "rgba(79, 184, 209, 0.9)" : "rgba(95, 201, 143, 0.55)",
+        selected ? 1.6 : 1.1);
+      ctx.restore();
+      var c = Orbit.data.llaToEcef(areaMeta.centerLatDeg, areaMeta.centerLonDeg, 0.4);
+      var cp = cam.project(c);
+      if (cp.depth > 0 && optOn(state, "labels")) label(ctx, cp, group.name, "#5fc98f");
+    });
+  }
+
+  var SENSOR_IDLE = "#7fb4d8";
+  var SENSOR_FOR = "rgba(216, 167, 90, 0.5)";
+  var SENSOR_TRACK = "#5fc98f";
+
+  // Instantaneous FOV footprint and FOR reachable envelope for one
+  // satellite's sensor, ground-projected via Orbit.sensorviz.footprintRing.
+  // Follows the active scheduled pointing when a fresh schedule exists for
+  // this platform, else the sensor's home pointing mode.
+  function drawSensorViz(ctx, cam, sat, state) {
+    if (!state.spec) return;
+    var specSat = null;
+    state.spec.objects.forEach(function (o) {
+      if (o.kind === "satellite" && o.name === sat.name) specSat = o;
+    });
+    if (!specSat || !specSat.sensor) return;
+    var pos = Orbit.data.samplePosition(sat, state.simSec);
+    if (!pos) return;
+    var satPos = Orbit.data.llaToEcef(pos.latDeg, pos.lonDeg, pos.altKm);
+    var entries = state.dirty ? []
+      : Orbit.data.scheduleForPlatform(state.scn.schedule, sat.name);
+    var bore = Orbit.sensorviz.boresightAt({
+      sat: sat, sensor: specSat.sensor, scn: state.scn, tSec: state.simSec,
+      satPosEcef: satPos, entries: entries, spec: state.spec,
+    });
+
+    if (optOn(state, "sensorFor")) {
+      var forRing = Orbit.sensorviz.footprintRing(
+        satPos, bore.dir, specSat.sensor.fieldOfRegardDeg || 60, R, 40);
+      strokeRing(ctx, cam, forRing, SENSOR_FOR, 1);
+    }
+    if (optOn(state, "sensorFov")) {
+      var fovRing = Orbit.sensorviz.footprintRing(
+        satPos, bore.dir, specSat.sensor.coneHalfAngleDeg || 20, R, 32);
+      var color = bore.pointing.phase === "track" ? SENSOR_TRACK
+        : bore.pointing.phase === "idle" ? SENSOR_IDLE : SENSOR_FOR;
+      strokeRing(ctx, cam, fovRing, color, 1.3);
+    }
+  }
+
+  // Stroke a footprint ring (array of ECEF points or null gaps from
+  // Orbit.sensorviz.footprintRing), breaking wherever a sample missed the
+  // globe or is on the far side, and closing the loop only when unbroken.
+  function strokeRing(ctx, cam, ring, style, width) {
+    if (!ring) return;
+    ctx.strokeStyle = style;
+    ctx.lineWidth = width;
+    ctx.beginPath();
+    var started = false, firstIdx = -1;
+    for (var i = 0; i < ring.length; i++) {
+      var pt = ring[i];
+      if (!pt) { started = false; continue; }
+      var p = cam.project(pt);
+      if (p.depth <= 0) { started = false; continue; }
+      if (started) ctx.lineTo(p.x, p.y);
+      else { ctx.moveTo(p.x, p.y); firstIdx = i; }
+      started = true;
+    }
+    if (firstIdx === 0 && ring[ring.length - 1]) ctx.closePath();
+    ctx.stroke();
+  }
+
+  // Dashed sat->ground lines for accesses active at the current time.
+  function drawAccessLines(ctx, cam, scn, simSec) {
+    scn.accesses.forEach(function (acc) {
+      var live = acc.windows.some(function (win) {
+        return simSec >= win.startSec && simSec <= win.stopSec;
+      });
+      if (!live) return;
+      var sat = findByName(scn.sats, acc.source) || findByName(scn.sats, acc.target);
+      var gp = findByName(scn.grounds, acc.target) || findByName(scn.grounds, acc.source);
+      if (!sat || !gp) return;
+      var pos = Orbit.data.samplePosition(sat, simSec);
+      if (!pos) return;
+      var a = Orbit.data.llaToEcef(pos.latDeg, pos.lonDeg, pos.altKm);
+      var b = Orbit.data.llaToEcef(gp.latDeg, gp.lonDeg, gp.altM / 1000);
+      var pa = cam.project(a), pb = cam.project(b);
+      if (pa.depth <= 0 || pb.depth <= 0) return;
+      ctx.save();
+      ctx.setLineDash([5, 4]);
+      ctx.strokeStyle = "rgba(95, 201, 143, 0.85)";
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.moveTo(pa.x, pa.y);
+      ctx.lineTo(pb.x, pb.y);
+      ctx.stroke();
+      ctx.restore();
+    });
+  }
+
+  function findByName(list, name) {
+    for (var i = 0; i < list.length; i++) if (list[i].name === name) return list[i];
+    return null;
   }
 
   function label(ctx, p, text, color) {
@@ -528,6 +673,37 @@ window.Orbit = window.Orbit || {};
     if (!m) return "rgba(224, 164, 60, " + alpha + ")";
     var v = parseInt(m[1], 16);
     return "rgba(" + (v >> 16) + ", " + ((v >> 8) & 255) + ", " + (v & 255) + ", " + alpha + ")";
+  }
+
+  // Screen pixel -> lat/lon on the visible sphere surface, or null when the
+  // point falls outside the globe disc. Powers double-click-to-recenter.
+  function screenToLatLon(canvas, x, y) {
+    var cam = makeCamera(canvas.clientWidth, canvas.clientHeight);
+    var nx = (x - cam.cx) / cam.radiusPx;
+    var ny = -(y - cam.cy) / cam.radiusPx;
+    var d2 = nx * nx + ny * ny;
+    if (d2 > 1) return null;
+    var nz = Math.sqrt(1 - d2);
+    var e = cam.east, n = cam.north, f = cam.fwd;
+    var ex = nx * e[0] + ny * n[0] + nz * f[0];
+    var ey = nx * e[1] + ny * n[1] + nz * f[1];
+    var ez = ny * n[2] + nz * f[2];
+    return Orbit.data.ecefToLla(ex, ey, ez);
+  }
+
+  var DEFAULT_VIEW = { lonDeg: -95, latDeg: 28, zoom: 1 };
+
+  function resetView() {
+    view.lonDeg = DEFAULT_VIEW.lonDeg;
+    view.latDeg = DEFAULT_VIEW.latDeg;
+    view.zoom = DEFAULT_VIEW.zoom;
+  }
+
+  // Recenter the view under a lat/lon without changing zoom (double-click
+  // interaction; also used by "look at" from the inspector/tree later).
+  function lookAt(latDeg, lonDeg) {
+    view.lonDeg = lonDeg;
+    view.latDeg = Math.max(-85, Math.min(85, latDeg));
   }
 
   // Nearest front-facing object within 14 px, or null.
@@ -581,8 +757,23 @@ window.Orbit = window.Orbit || {};
       ev.preventDefault();
       view.zoom = Math.max(0.55, Math.min(3.2, view.zoom * Math.exp(-ev.deltaY * 0.0012)));
     }, { passive: false });
+    // Richer 3D interaction: double-click any point on the globe to recenter
+    // the view under it (zoom unchanged), instead of only dragging to rotate.
+    canvas.addEventListener("dblclick", function (ev) {
+      var r = canvas.getBoundingClientRect();
+      var ll = screenToLatLon(canvas, ev.clientX - r.left, ev.clientY - r.top);
+      if (ll) lookAt(ll.latDeg, ll.lonDeg);
+    });
     return { wasDragged: function () { return moved; } };
   }
 
-  Orbit.globe3d = { draw: draw, hitTest: hitTest, attach: attach, view: view };
+  Orbit.globe3d = {
+    draw: draw,
+    hitTest: hitTest,
+    attach: attach,
+    view: view,
+    resetView: resetView,
+    lookAt: lookAt,
+    screenToLatLon: screenToLatLon,
+  };
 })();
