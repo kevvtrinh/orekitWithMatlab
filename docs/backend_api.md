@@ -1,5 +1,18 @@
 # Backend API
 
+## Scenario persistence and STK export
+
+```matlab
+saveInfo = saveScenario(scenario, "mission.mat");
+% saveInfo.NativeFile
+% saveInfo.StkBundle.BundleFolder
+```
+
+The default save is lossless MAT persistence plus a companion STK
+interoperability bundle. Use `ExportStkBundle=false` to suppress the companion,
+or call `exportStkScenario` directly to choose its location. See
+`docs/stk_interoperability.md`.
+
 Minimal headless flow:
 
 ```matlab

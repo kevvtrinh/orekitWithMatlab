@@ -262,6 +262,41 @@ The `View` tab includes 3D frame selection for `ECEF` and `ECI`, plus `Sensor FO
 
 `Save Scenario` and `Load Scenario` call the backend `saveScenario` and `loadScenario` functions, so objects, scenario timing, ephemerides, access results, and metadata round-trip through the same model used by scripts and tests.
 
+Saving also writes a sibling `<scenario>_stk` interoperability bundle by
+default. The MAT file remains the lossless source of truth; the bundle adds
+documented STK external files and reconstruction commands:
+
+```text
+mission.mat
+mission_stk/
+  ephemeris/*.e       STK ICRF position/velocity ephemeris
+  attitude/*.a        synthesized suite body attitude
+  sensors/*.sp        schedule-aware Earth-fixed sensor pointing
+  sensors/*.pattern   custom FOV boundaries, when present
+  masks/*.aem         facility azimuth/elevation masks, when present
+  tables/*.csv        sensor definitions and schedule
+  manifest.json       original-to-STK name and file mapping
+  *_load.connect      scenario/object reconstruction commands
+  loadStkBundle.m     standalone STK Desktop loader
+```
+
+On a Windows machine with STK Desktop 11, 12, or 13 installed:
+
+```matlab
+cd("path/to/mission_stk")
+loadStkBundle(pwd)  % creates an editable .sc and a Viewer-compatible .vdf
+```
+
+The free STK Viewer opens the generated `.vdf`; it cannot directly open the
+raw `.e`, `.a`, or `.sp` interchange files. VDF authoring is performed by STK
+itself through the generated loader. To save only the native MATLAB file:
+
+```matlab
+saveScenario(scenario, "mission.mat", "ExportStkBundle", false);
+```
+
+See `docs/stk_interoperability.md` for format mappings and attitude caveats.
+
 ## Tests
 
 ```matlab

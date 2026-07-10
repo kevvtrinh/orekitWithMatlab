@@ -2,6 +2,10 @@ vendor/orekit/
 *.asv
 *.mat
 
+# STK vendor interface: experimental, not yet run against a real STK
+# install (no license on this machine), kept out of the repo for now.
+stk/
+
 # Local Claude Code tooling: worktrees, codex queue scripts, and personal
 # settings are per-machine state, not project config. .claude/settings.json
 # (the shared allow-list/defaults) is intentionally NOT ignored.

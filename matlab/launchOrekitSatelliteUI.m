@@ -3243,10 +3243,13 @@ refreshAll();
                 return;
             end
             progress = openProgress("Save Scenario", ...
-                "Saving scenario file...", 0.30);
-            saveScenario(scenario, fullfile(folder, file));
+                "Saving MATLAB scenario and STK interchange bundle...", 0.30);
+            saveResult = saveScenario(scenario, fullfile(folder, file));
             updateProgress(progress, 0.90, "Updating scenario status...");
-            setTextArea(objectInfoText, "Saved scenario: " + string(fullfile(folder, file)));
+            setTextArea(objectInfoText, [ ...
+                "Saved scenario: " + string(saveResult.NativeFile); ...
+                "STK bundle: " + string(saveResult.StkBundle.BundleFolder); ...
+                "Run loadStkBundle in that folder on an STK machine to create .sc and .vdf files."]);
             finishProgress(progress, "Scenario saved.");
         catch err
             closeProgress(progress);
