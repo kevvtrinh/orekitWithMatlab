@@ -54,8 +54,11 @@ window.Orbit = window.Orbit || {};
 
     drawBasemap(ctx, rect, w, h, dpr);
     if (scn) {
-      var dateMs = scn.epochMs + state.simSec * 1000;
-      var sun = Orbit.data.subsolarPoint(dateMs);
+      // Subsolar point from the Orekit samples when the payload carries
+      // them (Orbit.data.subsolarAt), else the documented analytic
+      // fallback - the night shading, terminator, city lights, and sun
+      // marker all share this one value.
+      var sun = Orbit.data.subsolarAt(scn, state.simSec);
       drawNightOverlay(ctx, rect, sun);
       drawCityLights(ctx, rect, sun);
       drawTerminatorLine(ctx, rect, sun);
@@ -378,10 +381,12 @@ window.Orbit = window.Orbit || {};
 
   // ---- mission overlays ---------------------------------------------------------
 
-  // Full track faint + recent trail bright, split at the dateline.
+  // Full track faint + recent trail bright, split at the dateline. Preview
+  // satellites (client two-body estimate) draw dimmer than MATLAB results.
   function drawGroundTrack(ctx, rect, sat, simSec) {
-    strokeTrack(ctx, rect, sat, 0, Infinity, hexA(sat.color, 0.28), 1);
-    strokeTrack(ctx, rect, sat, simSec - TRAIL_SEC, simSec, hexA(sat.color, 0.95), 1.6);
+    var dim = sat.source === "preview" ? 0.6 : 1;
+    strokeTrack(ctx, rect, sat, 0, Infinity, hexA(sat.color, 0.28 * dim), 1);
+    strokeTrack(ctx, rect, sat, simSec - TRAIL_SEC, simSec, hexA(sat.color, 0.95 * dim), 1.6);
   }
 
   function strokeTrack(ctx, rect, sat, fromSec, toSec, style, width) {
@@ -415,6 +420,7 @@ window.Orbit = window.Orbit || {};
     if (!pos) return;
     var p = project(rect, pos.latDeg, pos.lonDeg);
     var dim = eclipseDim(state.scn, sat.name, state.simSec);
+    if (sat.source === "preview") dim *= 0.75;
 
     ctx.fillStyle = hexA(sat.color, 0.18 * dim);
     ctx.beginPath();
@@ -492,15 +498,31 @@ window.Orbit = window.Orbit || {};
   }
 
   var SENSOR_IDLE = "#7fb4d8";
-  var SENSOR_FOR = "rgba(216, 167, 90, 0.55)";
+  var SENSOR_FOR = "#d8a75a";
   var SENSOR_TRACK = "#5fc98f";
 
-  // Instantaneous FOV footprint and FOR reachable envelope for one
-  // satellite's sensor, ground-projected via Orbit.sensorviz.footprintRing.
-  // Follows the active scheduled pointing when a fresh schedule exists for
-  // this platform, else the sensor's home pointing mode.
+  // True while the target is inside the instantaneous beam per the backend's
+  // FOV windows (matches the 3D globe and the Node console's cone coloring).
+  function isFovActive(scn, platformName, targetName, tSec) {
+    var hit = false;
+    (scn.sensorAccesses || []).forEach(function (a) {
+      if (hit || a.platform !== platformName || a.target !== targetName) return;
+      hit = (a.fovWindows || []).some(function (w) {
+        return tSec >= w.startSec && tSec <= w.stopSec;
+      });
+    });
+    return hit;
+  }
+
+  // Instantaneous FOV footprint (filled) and home-anchored FOR envelope for
+  // one satellite's sensor. Geometry runs against the true WGS84 ellipsoid
+  // (Orbit.sensorviz); pointing follows the backend's exported samples when
+  // fresh, else the client-side phase model.
   function drawSensorViz(ctx, rect, sat, state) {
     if (!state.spec) return;
+    var wantFov = optOn(state, "sensorFov");
+    var wantFor = state.viewOptions && state.viewOptions.sensorFor === true;
+    if (!wantFov && !wantFor) return;
     var specSat = null;
     state.spec.objects.forEach(function (o) {
       if (o.kind === "satellite" && o.name === sat.name) specSat = o;
@@ -508,51 +530,112 @@ window.Orbit = window.Orbit || {};
     if (!specSat || !specSat.sensor) return;
     var pos = Orbit.data.samplePosition(sat, state.simSec);
     if (!pos) return;
-    var satPos = Orbit.data.llaToEcef(pos.latDeg, pos.lonDeg, pos.altKm);
-    var entries = state.dirty ? []
-      : Orbit.data.scheduleForPlatform(state.scn.schedule, sat.name);
+    var satPos = Orbit.data.llaToEcefWgs84(pos.latDeg, pos.lonDeg, pos.altKm);
+    var entries = Orbit.data.scheduleForPlatform(state.scn.schedule, sat.name)
+      .filter(function (e) { return !e.stale; });
     var bore = Orbit.sensorviz.boresightAt({
       sat: sat, sensor: specSat.sensor, scn: state.scn, tSec: state.simSec,
       satPosEcef: satPos, entries: entries, spec: state.spec,
     });
 
-    if (optOn(state, "sensorFor")) {
+    if (wantFor) {
+      // Reachable region around the HOME boresight (gimbal limit) - not a
+      // bigger cone around the live slewed direction.
       var forRing = Orbit.sensorviz.footprintRing(
-        satPos, bore.dir, specSat.sensor.fieldOfRegardDeg || 60, R, 40);
-      strokeFootprint(ctx, rect, forRing, SENSOR_FOR, 1);
+        satPos, bore.home, specSat.sensor.fieldOfRegardDeg || 60, 56);
+      if (forRing) {
+        paintFootprint(ctx, rect, forRing, hexA(SENSOR_FOR, 0.07),
+          hexA(SENSOR_FOR, 0.55), 1, [4, 4]);
+      }
     }
-    if (optOn(state, "sensorFov")) {
+    if (wantFov) {
+      var phase = bore.pointing.phase;
+      var targetName = bore.pointing.targetName ||
+        (bore.pointing.entry ? bore.pointing.entry.target : "");
+      var active = phase === "track" || phase === "scan";
+      var fovActive = active && targetName &&
+        isFovActive(state.scn, sat.name, targetName, state.simSec);
+      // Same ramp as the 3D globe: blue idle, green only while the beam
+      // holds the target (or an area scan is actively sweeping), else amber.
+      var inView = fovActive || phase === "scan";
+      var color = phase === "idle" ? SENSOR_IDLE
+        : inView ? SENSOR_TRACK : SENSOR_FOR;
       var fovRing = Orbit.sensorviz.footprintRing(
-        satPos, bore.dir, specSat.sensor.coneHalfAngleDeg || 20, R, 32);
-      var color = bore.pointing.phase === "track" ? SENSOR_TRACK
-        : bore.pointing.phase === "idle" ? SENSOR_IDLE : SENSOR_FOR;
-      strokeFootprint(ctx, rect, fovRing, color, 1.3);
+        satPos, bore.dir, specSat.sensor.coneHalfAngleDeg || 20, 44);
+      if (fovRing) {
+        paintFootprint(ctx, rect, fovRing, hexA(color, 0.12),
+          hexA(color, 0.9), 1.3, null);
+      }
+      // Currently observed aim point (live scan point during area sweeps).
+      if (bore.aimLatDeg != null && bore.aimLonDeg != null && active) {
+        var ap = project(rect, bore.aimLatDeg, bore.aimLonDeg);
+        ctx.save();
+        ctx.strokeStyle = hexA(color, 0.95);
+        ctx.lineWidth = 1.1;
+        ctx.beginPath();
+        ctx.moveTo(ap.x - 6, ap.y);
+        ctx.lineTo(ap.x - 2, ap.y);
+        ctx.moveTo(ap.x + 2, ap.y);
+        ctx.lineTo(ap.x + 6, ap.y);
+        ctx.moveTo(ap.x, ap.y - 6);
+        ctx.lineTo(ap.x, ap.y - 2);
+        ctx.moveTo(ap.x, ap.y + 2);
+        ctx.lineTo(ap.x, ap.y + 6);
+        ctx.stroke();
+        ctx.restore();
+      }
     }
   }
 
-  // Stroke a footprint ring (array of ECEF points or null gaps from
-  // Orbit.sensorviz.footprintRing) on the equirectangular map, breaking
-  // wherever a sample missed the globe or the ring crosses the antimeridian.
-  function strokeFootprint(ctx, rect, ring, style, width) {
-    if (!ring) return;
-    ctx.strokeStyle = style;
+  // Paint a footprint ({points, clamped} from Orbit.sensorviz.footprintRing)
+  // on the equirectangular map: translucent fill (skipped when the ring
+  // straddles the antimeridian, where an equirect polygon would smear) and
+  // an outline split cleanly at the +/-180 seam.
+  function paintFootprint(ctx, rect, ring, fillStyle, strokeStyle, width, dash) {
+    if (!ring || !ring.points) return;
+    var lls = ring.points.map(function (pt) {
+      return Orbit.data.ecefToLlaWgs84(pt.x, pt.y, pt.z);
+    });
+    var crossesSeam = false;
+    for (var i = 0; i < lls.length; i++) {
+      var next = lls[(i + 1) % lls.length];
+      if (Math.abs(next.lonDeg - lls[i].lonDeg) > 180) crossesSeam = true;
+    }
+    if (!crossesSeam && fillStyle) {
+      ctx.save();
+      ctx.fillStyle = fillStyle;
+      ctx.beginPath();
+      lls.forEach(function (ll, k) {
+        var p = project(rect, ll.latDeg, ll.lonDeg);
+        if (k === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y);
+      });
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+    }
+    ctx.save();
+    if (dash) ctx.setLineDash(dash);
+    ctx.strokeStyle = strokeStyle;
     ctx.lineWidth = width;
     ctx.beginPath();
     var started = false, prevLon = null;
-    for (var i = 0; i < ring.length; i++) {
-      var pt = ring[i];
-      if (!pt) { started = false; prevLon = null; continue; }
-      var ll = Orbit.data.ecefToLla(pt.x, pt.y, pt.z);
-      if (started && prevLon != null && Math.abs(ll.lonDeg - prevLon) > 180) started = false;
-      var p = project(rect, ll.latDeg, ll.lonDeg);
-      if (started) ctx.lineTo(p.x, p.y); else ctx.moveTo(p.x, p.y);
+    for (var j = 0; j <= lls.length; j++) {
+      var ll2 = lls[j % lls.length];
+      if (started && prevLon != null && Math.abs(ll2.lonDeg - prevLon) > 180) {
+        started = false;
+      }
+      var p2 = project(rect, ll2.latDeg, ll2.lonDeg);
+      if (started) ctx.lineTo(p2.x, p2.y); else ctx.moveTo(p2.x, p2.y);
       started = true;
-      prevLon = ll.lonDeg;
+      prevLon = ll2.lonDeg;
     }
     ctx.stroke();
+    ctx.restore();
   }
 
   // Dashed sat->station lines for accesses active at the current time.
+  // Antimeridian-crossing pairs draw as two segments meeting at the map
+  // edges instead of one wrong line across the whole world (or nothing).
   function drawAccessLines(ctx, rect, scn, simSec) {
     scn.accesses.forEach(function (acc) {
       var live = acc.windows.some(function (win) {
@@ -564,20 +647,42 @@ window.Orbit = window.Orbit || {};
       if (!sat || !gp) return;
       var pos = Orbit.data.samplePosition(sat, simSec);
       if (!pos) return;
-      if (Math.abs(pos.lonDeg - gp.lonDeg) > 180) return; // skip wrap-around lines
-      var a = project(rect, pos.latDeg, pos.lonDeg);
-      var b = project(rect, gp.latDeg, gp.lonDeg);
-      ctx.strokeStyle = "rgba(95, 201, 143, 0.85)";
+      var alpha = acc.stale ? 0.35 : 0.85;
+      ctx.save();
+      ctx.strokeStyle = "rgba(95, 201, 143, " + alpha + ")";
       ctx.lineWidth = 1.2;
       ctx.setLineDash([5, 4]);
-      ctx.beginPath();
-      ctx.moveTo(a.x, a.y);
-      ctx.lineTo(b.x, b.y);
-      ctx.stroke();
+      var dLon = gp.lonDeg - pos.lonDeg;
+      if (Math.abs(dLon) <= 180) {
+        var a = project(rect, pos.latDeg, pos.lonDeg);
+        var b = project(rect, gp.latDeg, gp.lonDeg);
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+        ctx.stroke();
+      } else {
+        // Take the short way around: unwrap the ground longitude, find the
+        // latitude where the segment hits the seam, draw both halves.
+        var lonB = gp.lonDeg - Math.sign(dLon) * 360;
+        var seamLon = dLon > 0 ? -180 : 180; // edge on the satellite's side
+        var f = (seamLon - pos.lonDeg) / (lonB - pos.lonDeg);
+        var seamLat = pos.latDeg + (gp.latDeg - pos.latDeg) * Math.max(0, Math.min(1, f));
+        var a1 = project(rect, pos.latDeg, pos.lonDeg);
+        var e1 = project(rect, seamLat, seamLon);
+        var e2 = project(rect, seamLat, -seamLon);
+        var b2 = project(rect, gp.latDeg, gp.lonDeg);
+        ctx.beginPath();
+        ctx.moveTo(a1.x, a1.y);
+        ctx.lineTo(e1.x, e1.y);
+        ctx.moveTo(e2.x, e2.y);
+        ctx.lineTo(b2.x, b2.y);
+        ctx.stroke();
+      }
       ctx.setLineDash([]);
-      ctx.strokeStyle = "rgba(95, 201, 143, 0.6)";
+      ctx.strokeStyle = "rgba(95, 201, 143, " + (alpha * 0.7) + ")";
+      var bp = project(rect, gp.latDeg, gp.lonDeg);
       ctx.beginPath();
-      ctx.arc(b.x, b.y, 8, 0, 2 * Math.PI);
+      ctx.arc(bp.x, bp.y, 8, 0, 2 * Math.PI);
       ctx.stroke();
     });
   }

@@ -10,7 +10,9 @@
 
   var state = {
     raw: null,        // payload as served (authoritative propagation result)
-    scn: null,        // normalized scenario (Orbit.data.parseScenario)
+    scnBase: null,    // parsed payload scenario (Orbit.data.parseScenario)
+    scn: null,        // render scenario: payload merged with the spec, with
+                      // per-object freshness (Orbit.merge.buildRenderScenario)
     source: "",       // "sample" | "matlab" | ...
     bridge: null,     // /api/health payload or null
     spec: null,       // editable scenario spec (Orbit.spec shape)
@@ -28,14 +30,17 @@
     treeOpen: {},     // collapse state of tree groups ("sat:<g>" / "area:<g>")
     busy: false,
     // Viewport display toggles (2D map + 3D globe read these every frame);
-    // defaults mirror apps/orbit-ui's View menu.
+    // defaults mirror apps/orbit-ui's View menu, plus the orbit-track layer
+    // and the 3D display frame ("ecef" | "eci").
     viewOptions: {
       labels: true,
+      orbitTracks: true,
       groundTracks: true,
       accessLines: true,
       sensorFov: true,
       sensorFor: false,
       sun: true,
+      frame3d: "ecef",
     },
     // Recent status-bar messages, newest last, capped (worker/log panel).
     log: [],
@@ -47,6 +52,7 @@
 
   var VIEW_OPTIONS = [
     ["labels", "menu-toggle-labels"],
+    ["orbitTracks", "menu-toggle-orbit-tracks"],
     ["groundTracks", "menu-toggle-ground-tracks"],
     ["accessLines", "menu-toggle-access-lines"],
     ["sensorFov", "menu-toggle-sensor-fov"],
@@ -64,8 +70,10 @@
     "btn-worker-log", "worker-panel", "worker-status-dot", "worker-status-text",
     "worker-status-detail", "worker-log-list",
     "btn-view-menu", "view-menu",
-    "menu-toggle-labels", "menu-toggle-ground-tracks", "menu-toggle-access-lines",
+    "menu-toggle-labels", "menu-toggle-orbit-tracks", "menu-toggle-ground-tracks",
+    "menu-toggle-access-lines",
     "menu-toggle-sensor-fov", "menu-toggle-sensor-for", "menu-toggle-sun",
+    "menu-frame-ecef", "menu-frame-eci",
     "btn-add-sat", "btn-add-tle", "btn-add-walker", "btn-add-station",
     "btn-add-target", "btn-add-area", "btn-add-sensor", "btn-add-access",
     "btn-add-task", "btn-add-maneuver",
@@ -73,7 +81,7 @@
     "status-message", "status-counts", "status-source", "status-bridge",
   ].forEach(function (id) { els[id.replace(/-([a-z0-9])/g, function (_, c) { return c.toUpperCase(); })] = document.getElementById(id); });
 
-  var globeDrag = Orbit.globe3d.attach(els.canvas3d);
+  var globeDrag = Orbit.globe3d.attach(els.canvas3d, function () { return state; });
 
   function esc(text) {
     return String(text).replace(/[&<>"']/g, function (ch) {
@@ -188,10 +196,17 @@
       var taskCount = state.spec && state.spec.tasks !== undefined
         ? Orbit.spec.asArray(state.spec.tasks).length
         : null;
+      var previewNote = "";
+      if (state.scn && (state.scn.previewCount || state.scn.pendingCount)) {
+        var bits = [];
+        if (state.scn.previewCount) bits.push(state.scn.previewCount + " previewed");
+        if (state.scn.pendingCount) bits.push(state.scn.pendingCount + " awaiting run");
+        previewNote = " - " + bits.join(", ");
+      }
       els.statusCounts.textContent = counts.sats + " sat - " + counts.grounds +
         " ground - " + (state.scn ? state.scn.accesses.length : 0) + " access" +
         (reqCount == null ? "" : " - " + reqCount + " req") +
-        (taskCount == null ? "" : " - " + taskCount + " task");
+        (taskCount == null ? "" : " - " + taskCount + " task") + previewNote;
     }
     if (state.source) {
       els.statusSource.textContent = "data: " + state.source +
@@ -240,28 +255,30 @@
 
   // ---- spec state ------------------------------------------------------------
 
-  function recomputeDirty() {
-    state.dirty = !!state.spec &&
-      (!state.raw || !Orbit.spec.matchesScenario(state.spec, state.raw));
-  }
-
-  // Ground objects are fully defined by the spec; feed them to the renderers
-  // directly so inserts/edits/deletes are visible before any MATLAB run.
-  // Satellites keep the payload ephemerides (there is no browser propagator
-  // at this level), flagged stale via state.dirty.
-  function applySpecToView() {
-    if (state.scn && state.spec) {
-      state.scn.grounds = Orbit.spec.displayGrounds(state.spec);
+  // Rebuild the render scenario: the spec says what exists, the payload says
+  // how it moves, and Orbit.merge reconciles the two with per-object
+  // freshness (matlab / preview / pending satellites, stale windows, gated
+  // sun data). Falls back to the raw payload parse when no spec is loaded.
+  function recomputeScenario() {
+    if (state.spec) {
+      state.scn = Orbit.merge.buildRenderScenario(state.spec, state.scnBase);
+      state.dirty = !!state.scn.dirty;
+    } else {
+      state.scn = state.scnBase;
+      state.dirty = false;
+    }
+    if (state.scn) {
+      state.simSec = Math.min(state.simSec, state.scn.durationSec) || 0;
     }
   }
 
   function setSpecState(spec) {
     state.spec = spec;
-    recomputeDirty();
-    applySpecToView();
+    recomputeScenario();
     if (state.selection && !Orbit.panels.findSelected(state, state.selection)) {
       state.selection = null;
     }
+    Orbit.panels.buildTimeline(els.timelineLanes, state, seek);
     updateDirtyUi();
     updateEditButtons();
     renderPanels();
@@ -269,7 +286,16 @@
   }
 
   function deriveLocalSpec() {
-    return state.raw ? Orbit.spec.deriveSpecFromScenario(state.raw) : null;
+    if (!state.raw) return null;
+    // Payloads from run-scenario / the bundled sample embed the exact spec
+    // they were built from; adopting it keeps the fresh payload authoritative
+    // (a lossy re-derivation would mark everything edited/previewed).
+    if (state.raw.spec) {
+      var echoed = Orbit.spec.normalizeSpecShape(
+        JSON.parse(JSON.stringify(state.raw.spec)));
+      if (Orbit.spec.validateSpec(echoed).length === 0) return echoed;
+    }
+    return Orbit.spec.deriveSpecFromScenario(state.raw);
   }
 
   function saveSpecToBridge() {
@@ -395,17 +421,18 @@
   function setScenario(raw, source) {
     state.raw = raw;
     state.source = source;
-    state.scn = Orbit.data.parseScenario(raw);
-    recomputeDirty();
-    applySpecToView();
-    state.simSec = Math.min(state.simSec, state.scn.durationSec) || 0;
+    state.scnBase = Orbit.data.parseScenario(raw);
+    recomputeScenario();
     if (state.selection && !Orbit.panels.findSelected(state, state.selection)) {
       state.selection = null;
     }
     els.scenarioChip.textContent = state.scn.name;
     els.scenarioChip.title = "Epoch " + Orbit.data.fmtUtc(state.scn.epochMs) +
       " UTC - " + Orbit.data.fmtDuration(state.scn.durationSec) +
-      " @ " + state.scn.stepSec + " s";
+      " @ " + state.scn.stepSec + " s" +
+      (state.scnBase && state.scnBase.generatedAtUtc
+        ? "\nGenerated " + state.scnBase.generatedAtUtc + " (" + source + ")"
+        : "");
     Orbit.panels.buildTimeline(els.timelineLanes, state, seek);
     updateDirtyUi();
     renderPanels();
@@ -483,6 +510,46 @@
     return out;
   }
 
+  // Inline imaging-sensor section shared by the satellite / TLE /
+  // constellation insert dialogs (the React console carries the same fields
+  // on its satellite dialog). `tpl` is the existing sensor or null.
+  function sensorSectionFields(tpl) {
+    var sensor = tpl || Orbit.spec.sensorTemplate();
+    var visible = function (v) { return !!v.sensorEnabled; };
+    return [
+      { key: "sensorEnabled", label: "Imaging sensor", type: "checkbox",
+        value: !!tpl,
+        hint: "Equip a conic imaging sensor (FOV cone + slewable field of regard)" },
+      { key: "sensorConeHalfAngleDeg", label: "Sensor FOV half-angle (deg)",
+        type: "number", value: sensor.coneHalfAngleDeg, min: 0.1, max: 90,
+        visibleWhen: visible,
+        hint: "Instantaneous beam: half-angle of the sensor cone" },
+      { key: "sensorFieldOfRegardDeg", label: "Sensor FOR half-angle (deg)",
+        type: "number", value: sensor.fieldOfRegardDeg, min: 0.1, max: 180,
+        visibleWhen: visible,
+        hint: "How far the sensor can slew off its nominal boresight" },
+      { key: "sensorSlewRateDegPerSec", label: "Sensor slew rate (deg/s)",
+        type: "number",
+        value: sensor.slewRateDegPerSec == null ? 2 : sensor.slewRateDegPerSec,
+        min: 0.01, max: 60, visibleWhen: visible },
+    ];
+  }
+
+  // Apply the section's submitted values onto a satellite spec object.
+  function applySensorSection(obj, existingSensor, v) {
+    if (v.sensorEnabled) {
+      obj.sensor = copyWith(existingSensor || {}, {
+        coneHalfAngleDeg: v.sensorConeHalfAngleDeg,
+        fieldOfRegardDeg: v.sensorFieldOfRegardDeg,
+        slewRateDegPerSec: v.sensorSlewRateDegPerSec,
+      });
+      if (!obj.sensor.pointing) obj.sensor.pointing = "Nadir";
+    } else {
+      delete obj.sensor;
+    }
+    return obj;
+  }
+
   function nextExpandedBase(base, generatedPrefix) {
     var objects = state.spec.objects || [];
     for (var i = 1; ; i++) {
@@ -523,9 +590,9 @@
           value: tpl.massKg == null ? 1000 : tpl.massKg, min: 1 },
         { key: "propagator", label: "Propagator", type: "select",
           value: tpl.propagator, options: KEP_PROPAGATORS },
-      ],
+      ].concat(sensorSectionFields(tpl.sensor || null)),
       onSubmit: function (v) {
-        return upsertObject(copyWith(tpl, {
+        var next = copyWith(tpl, {
           kind: "satellite",
           name: v.name,
           propagator: v.propagator,
@@ -539,7 +606,9 @@
             argPerigeeDeg: v.argPerigeeDeg,
             trueAnomalyDeg: v.trueAnomalyDeg,
           },
-        }), editing ? initial.name : null);
+        });
+        applySensorSection(next, tpl.sensor || null, v);
+        return upsertObject(next, editing ? initial.name : null);
       },
     });
   }
@@ -564,15 +633,17 @@
         { key: "propagator", label: "Propagator", type: "select",
           value: tpl.propagator, options: TLE_PROPAGATORS,
           hint: "SGP4 propagates the TLE directly; Numerical seeds HPOP from it" },
-      ],
+      ].concat(sensorSectionFields(tpl.sensor || null)),
       onSubmit: function (v) {
-        return upsertObject(copyWith(tpl, {
+        var next = copyWith(tpl, {
           kind: "satellite",
           name: v.name,
           propagator: v.propagator,
           massKg: v.massKg,
           orbit: { type: "tle", line1: v.line1.trim(), line2: v.line2.trim() },
-        }), editing ? initial.name : null);
+        });
+        applySensorSection(next, tpl.sensor || null, v);
+        return upsertObject(next, editing ? initial.name : null);
       },
     });
   }
@@ -610,10 +681,11 @@
         { key: "propagator", label: "Propagator", type: "select",
           value: tpl.propagator, options: KEP_PROPAGATORS,
           hint: "Applied to every member; each remains individually editable after insert" },
-      ],
+      ].concat(sensorSectionFields(null)),
       preview: function (v) {
         var sats = Orbit.spec.expandWalker(v);
-        return sats.length + " satellites will be inserted";
+        return sats.length + " satellites will be inserted" +
+          (v.sensorEnabled ? ", each with an imaging sensor" : "");
       },
       onSubmit: function (v) {
         var sats;
@@ -622,8 +694,15 @@
         } catch (err) {
           return { errors: [err.message] };
         }
+        if (v.sensorEnabled) {
+          // Every member gets its own copy so later edits stay independent.
+          sats = sats.map(function (s) {
+            return applySensorSection(copyWith(s, {}), null, v);
+          });
+        }
         return insertObjects(sats, "Inserted " + sats.length +
-          " satellites (" + sats[0].group + ").");
+          " satellites (" + sats[0].group + ")" +
+          (v.sensorEnabled ? " with sensors." : "."));
       },
     });
   }
@@ -978,25 +1057,35 @@
     var options = Orbit.spec.accessRequestOptions(state.spec).filter(function (o) {
       return !existing[o.key];
     });
-    if (options.length === 0) {
-      setMessage(current.length > 0
-        ? "Every available access pair is already requested."
-        : "Add a satellite plus a ground station, a second satellite, or a " +
-          "sensor and a point target before requesting access.", "error");
+    var DEFAULT_SWEEP = "__default_sweep__";
+    var selectOptions = options.map(function (o) {
+      return [o.key, o.label + " - " + o.meta];
+    });
+    if (state.spec.accessRequests !== undefined) {
+      // Once requests exist, offer the way back to the backend's default
+      // satellite x ground-station sweep (removes the accessRequests key).
+      selectOptions.push([DEFAULT_SWEEP,
+        "Calculate all (drop requests, restore default sat x station sweep)"]);
+    }
+    if (selectOptions.length === 0) {
+      setMessage("Add a satellite plus a ground station, a second satellite, " +
+        "or a sensor and a point target before requesting access.", "error");
       return;
     }
     Orbit.modal.form({
       title: "Request Access",
-      submitLabel: "Add Request",
+      submitLabel: "Apply",
       fields: [
         { key: "key", label: "Access pair", type: "select",
-          value: options[0].key,
-          options: options.map(function (o) {
-            return [o.key, o.label + " - " + o.meta];
-          }),
+          value: selectOptions[0][0],
+          options: selectOptions,
           hint: "Only requested pairs are computed on Re-run" },
       ],
-      preview: function () {
+      preview: function (v) {
+        if (v.key === DEFAULT_SWEEP) {
+          return "Removes every request: the next Re-run computes the " +
+            "default satellite x ground-station sweep.";
+        }
         if (state.spec.accessRequests === undefined) {
           return "First request: Re-run will compute only requested pairs " +
             "instead of the default satellite/ground sweep.";
@@ -1005,6 +1094,17 @@
           Orbit.spec.MAX_ACCESS_REQUESTS + ").";
       },
       onSubmit: function (v) {
+        if (v.key === DEFAULT_SWEEP) {
+          var next = specWith({});
+          delete next.accessRequests;
+          return applySpec(next).then(function (result) {
+            if (result.ok) {
+              setMessage("Cleared access requests - Re-run computes the " +
+                "default satellite x ground-station sweep.", "ok");
+            }
+            return result;
+          });
+        }
         var option = null;
         options.forEach(function (o) { if (o.key === v.key) option = o; });
         if (!option) return { errors: ["Pick an access pair."] };
@@ -1210,8 +1310,16 @@
       : Orbit.spec.maneuverTemplate();
     var dv = Array.isArray(tpl.deltaVmps) ? tpl.deltaVmps : [10, 0, 0];
     var initialSat = pinned;
+    if (!initialSat && state.selection) {
+      // Prefer the currently selected satellite when it can maneuver.
+      sats.forEach(function (s) {
+        if (!initialSat && s.name === state.selection && s.propagator !== "TLE") {
+          initialSat = s;
+        }
+      });
+    }
     if (!initialSat) {
-      // Prefer a satellite that can actually maneuver (not SGP4).
+      // Else any satellite that can actually maneuver (not SGP4).
       sats.forEach(function (s) {
         if (!initialSat && s.propagator !== "TLE") initialSat = s;
       });
@@ -1468,6 +1576,23 @@
       var el = els[pair[1].replace(/-([a-z0-9])/g, function (_, c) { return c.toUpperCase(); })];
       el.classList.toggle("is-on", !!state.viewOptions[pair[0]]);
     });
+    var eci = state.viewOptions.frame3d === "eci";
+    els.menuFrameEcef.classList.toggle("is-on", !eci);
+    els.menuFrameEci.classList.toggle("is-on", eci);
+  }
+
+  function setFrame3d(frame) {
+    state.viewOptions.frame3d = frame;
+    refreshViewMenu();
+    updateFrameTag();
+  }
+
+  function updateFrameTag() {
+    var eci = state.viewOptions.frame3d === "eci";
+    els.viewportFrameTag.textContent = state.view === "2d"
+      ? "EARTH FIXED - EQUIRECTANGULAR"
+      : (eci ? "INERTIAL (GCRF) - EARTH ROTATES" : "EARTH FIXED (ECEF)") +
+        " - ORTHOGRAPHIC - DRAG TO ROTATE / DOUBLE-CLICK TO RECENTER";
   }
 
   els.btnViewMenu.addEventListener("click", function (ev) {
@@ -1485,6 +1610,14 @@
       state.viewOptions[key] = !state.viewOptions[key];
       refreshViewMenu();
     });
+  });
+  els.menuFrameEcef.addEventListener("click", function (ev) {
+    ev.stopPropagation();
+    setFrame3d("ecef");
+  });
+  els.menuFrameEci.addEventListener("click", function (ev) {
+    ev.stopPropagation();
+    setFrame3d("eci");
   });
   refreshViewMenu();
 
@@ -1617,7 +1750,12 @@
   function frame(nowMs) {
     if (lastFrameMs != null && state.playing && state.scn) {
       state.simSec += ((nowMs - lastFrameMs) / 1000) * state.speed;
-      if (state.simSec > state.scn.durationSec) state.simSec = 0; // loop playback
+      if (state.simSec >= state.scn.durationSec) {
+        // Pause pinned at the end (like the Node console); pressing Play
+        // again restarts from the beginning (see the play button handler).
+        state.simSec = state.scn.durationSec;
+        setPlaying(false);
+      }
     }
     lastFrameMs = nowMs;
 
@@ -1658,6 +1796,7 @@
     var scn = state.scn;
     var liveCount = 0;
     scn.accesses.forEach(function (acc) {
+      if (acc.stale) return;
       acc.windows.forEach(function (w) {
         if (state.simSec >= w.startSec && state.simSec <= w.stopSec) liveCount++;
       });
@@ -1665,9 +1804,15 @@
     lines.push(pad("CONTACTS", 10) +
       (liveCount > 0 ? liveCount + " ACTIVE" : "none") +
       (state.dirty ? " (STALE)" : ""));
-    var sun = Orbit.data.subsolarPoint(scn.epochMs + state.simSec * 1000);
+    // Subsolar point: Orekit samples when present, analytic fallback tagged.
+    var sun = Orbit.data.subsolarAt(scn, state.simSec);
     lines.push(pad("SUN", 10) +
-      sun.latDeg.toFixed(2) + "  " + sun.lonDeg.toFixed(2) + " SUBSOLAR");
+      sun.latDeg.toFixed(2) + "  " + sun.lonDeg.toFixed(2) + " SUBSOLAR" +
+      (sun.source === "analytic" ? " (approx)" : ""));
+    if (state.view === "3d") {
+      lines.push(pad("FRAME", 10) +
+        (state.viewOptions.frame3d === "eci" ? "INERTIAL GCRF" : "EARTH FIXED"));
+    }
     var sel = state.selection && Orbit.panels.findSelected(state, state.selection);
     var scnSat = sel && (sel.scnSat || null);
     if (scnSat) {
@@ -1675,10 +1820,17 @@
       if (pos) {
         lines.push(pad(scnSat.name.toUpperCase().slice(0, 10), 10) +
           pos.latDeg.toFixed(2) + "  " + pos.lonDeg.toFixed(2) + "  " +
-          pos.altKm.toFixed(0) + " KM");
+          pos.altKm.toFixed(0) + " KM" +
+          (scnSat.source === "preview" ? " (PREVIEW)" : ""));
       }
       var lighting = Orbit.data.lightingStateAt(scn, scnSat.name, state.simSec);
       if (lighting) lines.push(pad("LIGHTING", 10) + lighting.toUpperCase());
+      // Live sensor phase for the selected platform, when it has pointing.
+      var sampled = Orbit.data.pointingAt(scn, scnSat.name, null, state.simSec);
+      if (sampled && sampled.phase !== "idle") {
+        lines.push(pad("SENSOR", 10) + sampled.phase.toUpperCase() +
+          (sampled.targetName ? " " + sampled.targetName.toUpperCase() : ""));
+      }
     }
     els.viewportHud.textContent = lines.join("\n");
   }
@@ -1706,9 +1858,7 @@
     els.canvas3d.hidden = view !== "3d";
     els.btnView2d.classList.toggle("is-active", view === "2d");
     els.btnView3d.classList.toggle("is-active", view === "3d");
-    els.viewportFrameTag.textContent = view === "2d"
-      ? "EARTH FIXED - EQUIRECTANGULAR"
-      : "EARTH FIXED - ORTHOGRAPHIC - DRAG TO ROTATE / DOUBLE-CLICK TO RECENTER";
+    updateFrameTag();
     els.btnResetView.hidden = view !== "3d";
   }
 
@@ -1720,7 +1870,13 @@
 
   els.btnView2d.addEventListener("click", function () { setView("2d"); });
   els.btnView3d.addEventListener("click", function () { setView("3d"); });
-  els.btnPlay.addEventListener("click", function () { setPlaying(!state.playing); });
+  els.btnPlay.addEventListener("click", function () {
+    // Play at the pinned end restarts from the scenario start.
+    if (!state.playing && state.scn && state.simSec >= state.scn.durationSec) {
+      state.simSec = 0;
+    }
+    setPlaying(!state.playing);
+  });
   els.btnRewind.addEventListener("click", function () { seek(0); });
   els.speedSelect.addEventListener("change", function () {
     state.speed = parseFloat(els.speedSelect.value);
@@ -1875,6 +2031,18 @@
   }).then(function () {
     return loadSpec();
   }).then(function () {
+    // Deep links, applied once: ?t=<seconds past epoch>, ?view=2d|3d,
+    // ?frame=ecef|eci (3D display frame).
+    var search = window.location.search;
+    var tMatch = /[?&]t=([0-9.]+)/.exec(search);
+    if (tMatch && state.scn) {
+      seek(parseFloat(tMatch[1]));
+      setPlaying(false);
+    }
+    var viewMatch = /[?&]view=(2d|3d)/.exec(search);
+    if (viewMatch) setView(viewMatch[1]);
+    var frameMatch = /[?&]frame=(ecef|eci)/.exec(search);
+    if (frameMatch) setFrame3d(frameMatch[1]);
     requestAnimationFrame(frame);
   });
 })();

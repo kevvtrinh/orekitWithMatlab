@@ -1,20 +1,28 @@
 # Orbit Console Static UI
 
-This is a no-Node prototype of the Orbit Console. It uses plain HTML, CSS,
-classic JavaScript, canvas rendering, and a small MATLAB-hosted localhost
-bridge. There is no `npm install`, Vite server, or Node bridge.
+The no-Node Orbit Console: plain HTML, CSS, classic JavaScript, a WebGL
+globe with a Canvas-2D fallback, and a small MATLAB-hosted localhost bridge.
+There is no `npm install`, Vite server, or Node bridge, and the runtime
+never touches the network.
 
 The console edits a scenario spec (scenario settings, Keplerian and TLE
-satellites, Walker constellations, ground stations, point targets, area
-target grids, satellite sensors, access requests, sensor tasks incl. area
-scans, and impulsive maneuvers), saves it through the bridge, and re-runs it
-in MATLAB. Access/visibility windows and the sensor-task schedule are
-computed by MATLAB on Re-run; requested pairs and tasks show as pending
-until then, and everything propagated is flagged stale while the spec has
-unpropagated edits. Scheduled tasks appear as tree/inspector rows and
+satellites, Walker constellations - optionally sensor-equipped, ground
+stations, point targets, area target grids, satellite sensors, access
+requests, sensor tasks incl. area scans, and impulsive maneuvers), saves it
+through the bridge, and re-runs it in MATLAB. Access/visibility windows, the
+sensor-task schedule, the Sun/eclipse/daylight geometry, the Earth
+orientation, and the time-tagged sensor-pointing history are all computed by
+MATLAB/Orekit on Re-run - the browser only interpolates exported samples.
+
+Freshness is tracked per object: an edited Keplerian satellite instantly
+shows a dimmed two-body *browser preview* orbit (`prev` badge) until the
+next MATLAB run replaces it, a new TLE satellite shows as awaiting a run
+(`RUN` badge, SGP4 lives on the backend), and access/schedule/visibility
+entries whose endpoints changed dim individually instead of the whole
+scenario greying out. Scheduled tasks appear as tree/inspector rows and
 per-platform timeline lanes (slew lead-in, dwell, return-home). See
-`FEATURE_PARITY.md` for the parity roadmap against the React console in
-`apps/orbit-ui`.
+`FEATURE_PARITY.md` for the verified parity status against the React
+console in `apps/orbit-ui`.
 
 ## Run With MATLAB
 
@@ -68,7 +76,10 @@ is ignored by Git.
 apps/orbit-static-ui/
   index.html
   FEATURE_PARITY.md
-  assets/earth-natural-2048.jpg
+  assets/earth-natural-2048.jpg      (2D basemap - Natural Earth)
+  assets/earth_atmos_2048.jpg        (3D day texture - NASA Blue Marble)
+  assets/earth_lights_2048.png       (3D night lights - NASA Black Marble)
+  assets/earth_specular_2048.jpg     (3D ocean mask)
   css/app.css
   js/*.js
   data/sample-scenario.json
@@ -76,51 +87,89 @@ apps/orbit-static-ui/
   selftest.html
 ```
 
+## Sun, Lighting, And Frames
+
+Every lighting consumer - the day/night terminator, night-lights gating, the
+sun glyph, the subsolar marker, SunPointing sensor boresights, and the HUD
+SUN line - reads one shared source: the Orekit-computed samples exported by
+`src/ui/exportSunViz.m` (`sun.ephemeris` with time-tagged ECI and ECEF unit
+vectors plus the geodetic subsolar track, and `earthOrientation` with the
+true ITRF->GCRF prime-meridian angle). The browser only interpolates and
+renormalizes; it never re-derives frames. A documented analytic fallback
+(Astronomical Almanac low-precision sun + IAU-1982 GMST in `js/data.js`)
+covers offline sample mode and payloads that predate these fields, and the
+HUD tags it "(approx)" when it is in effect.
+
+The 3D globe offers two display frames from the View menu: **Earth fixed
+(ECEF)** - geography stationary, the Sun and inertial orbit lines sweep with
+scenario time - and **Inertial (GCRF)** - the star background and orbit
+ellipses stay fixed while the Earth rotates by the exported orientation
+angle. Deep links: `?t=<sec>`, `?view=2d|3d`, `?frame=ecef|eci`.
+
 ## Basemap Rendering
 
-The 2D map and 3D globe share a local 2048x1024 Natural Earth shaded-relief
-texture (`assets/earth-natural-2048.jpg`) loaded by `js/earthtex.js`. The
-image is color-graded at runtime for the dark mission-console view and paired
-with vector coastlines/lakes/city-light points from `js/world.js`. A
-deterministic procedural fallback is built immediately, so the viewport still
-renders before the image finishes decoding or if the file is opened in a
-restricted browser context.
+The 3D globe renders on the GPU (`js/globe3d.js`): a WebGL fragment-shader
+sphere with the bundled NASA-derived day/night/specular textures,
+sun-driven diffuse lighting with a soft geographically correct terminator,
+city night lights only on the dark side, ocean-weighted specular, an
+atmospheric limb glow, and a deterministic world-anchored starfield. The
+globe deliberately renders a cloud-free Earth so geography stays readable.
+When WebGL or texture loading is unavailable (very old machines, some
+`file://` contexts) it falls back automatically to the original per-pixel
+Canvas-2D shader over the procedural/Natural Earth basemap - the same
+scene, reduced fidelity.
 
-The Natural Earth source is public domain map data from
-`https://www.naturalearthdata.com/`. The runtime UI does not fetch from the
+The 2D map uses the color-graded 2048x1024 Natural Earth shaded-relief
+raster (`js/earthtex.js`) with vector coastlines/lakes from `js/world.js`,
+plus a solar-altitude day/night raster (civil/nautical/astronomical twilight
+bands), the terminator line, night city lights, and the subsolar marker -
+all positioned from the same exported Sun samples as the 3D view.
+
+Texture provenance: `earth-natural-2048.jpg` is public-domain Natural Earth
+data (naturalearthdata.com); `earth_atmos_2048.jpg`,
+`earth_lights_2048.png`, and `earth_specular_2048.jpg` are NASA Blue/Black
+Marble derivatives bundled from the three.js example assets (MIT-packaged,
+NASA imagery is public domain). The runtime UI does not fetch from the
 network or need Node.
-
-The 2D map layers a solar-altitude day/night raster
-(civil/nautical/astronomical twilight bands), terminator lines, night city
-lights, and a subsolar marker over the basemap. The 3D globe shades the sphere
-per pixel with sun-aligned lighting, ocean glint, a subtle cloud deck,
-front-side coastlines, city lights, an atmosphere rim, and a visible sun-vector
-source outside the globe.
 
 ## Viewport Controls And Sensor Visualization
 
-The topbar's View menu toggles Labels, Ground tracks, Access lines, Sensor
-FOV, Sensor FOR, and Sun rendering in both the 2D map and 3D globe. Area
-targets draw as a dashed rectangle outline with one label, in addition to
-their grid-point markers. A satellite with a sensor shows its instantaneous
-field-of-view and field-of-regard as ground footprints (`js/sensorviz.js`):
-the boresight follows the active scheduled slew/track/return phase when a
-fresh schedule exists for that platform, otherwise the sensor's home
-pointing mode (Nadir, velocity vector, Sun pointing, or a fixed ECEF
-vector). Satellite eclipse state and ground-site daylight, when the payload
-carries `sun.eclipses` / `sun.groundLighting`, dim the satellite marker and
-show in the inspector and viewport HUD. The 3D globe adds double-click to
-recenter under the clicked point and a Reset View button alongside
-drag-to-rotate and wheel-zoom.
+The topbar's View menu toggles Labels, Orbit tracks (inertial ECI paths),
+Ground tracks, Access lines, Sensor FOV, Sensor FOR, and Sun rendering in
+both the 2D map and 3D globe, plus the 3D frame selector. Area targets draw
+as a dashed rectangle outline with one label, in addition to their
+grid-point markers.
 
-`selftest.html` is a browser-only sanity check for the pure JavaScript data
-and spec helpers, including Walker/TLE/area-grid authoring, the
-sensor/access-request workflows, sensor task and maneuver validation,
-schedule/pointing normalization, the Level 5 sun/eclipse parsing and sensor
-pointing/footprint geometry, and the Level 6 ephemeris CSV export and
-`js/api.js` sample-reload/error-classification codepaths (a few checks are
-asynchronous and exercise real `fetch()` calls). It can be opened directly
-from disk.
+Sensor geometry (`js/sensorviz.js`) runs against the same WGS84 ellipsoid as
+the Orekit backend. The **FOV** is the instantaneous cone around the current
+boresight, drawn as a translucent filled footprint with a cone silhouette
+and a ground-clipped boresight line; the **FOR** is the full region
+reachable within the gimbal limit around the *home* boresight (it does not
+swing with an active slew), drawn dashed. Footprints clip cleanly at the
+Earth horizon (rays past the limb clamp to the tangent circle), cones that
+miss the Earth draw nothing, and antimeridian crossings split instead of
+smearing across the 2D map.
+
+The boresight itself follows the backend's exported time-tagged pointing
+history (`src/ui/exportPointingViz.m` - the authoritative
+slew/track/area-scan/return phases, including the serpentine scan sweep with
+a live aim-point marker). When results are stale or a satellite is a browser
+preview, the client-side phase model over the schedule entries takes over,
+and the inspector labels the pointing source ("MATLAB (authoritative)" vs
+"schedule estimate"). Satellite eclipse state and ground-site daylight dim
+the markers and show in the inspector and HUD. The 3D globe adds
+double-click-to-recenter and a Reset View button alongside drag-to-rotate
+and wheel-zoom.
+
+`selftest.html` is a browser-only test page (75+ checks, open from disk or
+through the bridge): spec authoring/validation, rename/delete reference
+pruning, Sun vectors and subsolar points at equinox/solstice dates,
+ECI<->ECEF consistency, texture longitude orientation, nadir/limb/miss/FOR
+footprint geometry, antimeridian wrapping, the pointing timeline
+(slew->track->return, area-scan sweep, moving-target tracking), preview
+propagation physics, the per-object freshness merge, tree/inspector/timeline
+rendering, and renderer smoke tests across every view-toggle combination in
+both frames.
 
 ## Operational Polish
 

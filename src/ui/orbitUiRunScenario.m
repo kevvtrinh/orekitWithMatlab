@@ -81,6 +81,10 @@ else
 end
 if ~isempty(scheduleViz.sensors) || ~isempty(tasks)
     extra = mergeStructs(extra, scheduleViz);
+    % Authoritative time-tagged boresight/phase history so the frontend can
+    % replay slews, tracks, area scans, and return-home without re-deriving
+    % scheduling math in the browser.
+    extra = mergeStructs(extra, exportPointingViz(scenario, schedule));
 end
 
 % Sun geometry and lighting are cheap relative to propagation and always

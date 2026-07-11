@@ -45,6 +45,9 @@ window.Orbit = window.Orbit || {};
     } else if (field.type === "datetime") {
       html = "<input" + attrs + ' type="datetime-local" step="1" value="' +
         esc(field.value == null ? "" : field.value) + '">';
+    } else if (field.type === "checkbox") {
+      html = '<input class="input-check" id="' + id + '" name="' +
+        esc(field.key) + '" type="checkbox"' + (field.value ? " checked" : "") + ">";
     } else {
       html = "<input" + attrs + ' type="text" value="' +
         esc(field.value == null ? "" : field.value) + '"' +
@@ -65,6 +68,8 @@ window.Orbit = window.Orbit || {};
         values[field.key] = isFinite(num) ? num : NaN;
       } else if (field.type === "text") {
         values[field.key] = el.value.trim();
+      } else if (field.type === "checkbox") {
+        values[field.key] = el.checked;
       } else {
         values[field.key] = el.value;
       }

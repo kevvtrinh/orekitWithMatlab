@@ -51,16 +51,24 @@
           <div class="menu" id="view-menu" hidden>
             <button class="menu-item menu-item-check" id="menu-toggle-labels"
                     title="Object name labels">Labels</button>
+            <button class="menu-item menu-item-check" id="menu-toggle-orbit-tracks"
+                    title="Inertial orbit paths from the ECI ephemeris">Orbit tracks</button>
             <button class="menu-item menu-item-check" id="menu-toggle-ground-tracks"
-                    title="Satellite orbit / ground tracks">Ground tracks</button>
+                    title="Sub-satellite ground tracks">Ground tracks</button>
             <button class="menu-item menu-item-check" id="menu-toggle-access-lines"
                     title="Live satellite-to-ground access lines">Access lines</button>
             <button class="menu-item menu-item-check" id="menu-toggle-sensor-fov"
-                    title="Instantaneous sensor field-of-view footprint">Sensor FOV</button>
+                    title="Instantaneous sensor field-of-view footprint (around the current boresight)">Sensor FOV</button>
             <button class="menu-item menu-item-check" id="menu-toggle-sensor-for"
-                    title="Sensor field-of-regard (reachable envelope)">Sensor FOR</button>
+                    title="Sensor field-of-regard: the whole region reachable within the gimbal limit around the home boresight">Sensor FOR</button>
             <button class="menu-item menu-item-check" id="menu-toggle-sun"
-                    title="Sun glyph / subsolar marker">Sun</button>
+                    title="Sun glyph / subsolar marker (lighting always follows the scenario sun)">Sun</button>
+            <hr class="menu-sep">
+            <div class="menu-caption">3D FRAME</div>
+            <button class="menu-item menu-item-check" id="menu-frame-ecef"
+                    title="Earth-fixed frame: geography stays put; the Sun and orbits sweep with time">Earth fixed (ECEF)</button>
+            <button class="menu-item menu-item-check" id="menu-frame-eci"
+                    title="Inertial frame (GCRF): stars and orbit ellipses stay put; the Earth rotates with scenario time">Inertial (ECI)</button>
           </div>
         </div>
         <button class="btn" id="btn-refresh" title="Reload scenario data (R)">&#10227; Refresh</button>
@@ -170,6 +178,8 @@
   <script src="js/earthtex.js" defer></script>
   <script src="js/data.js" defer></script>
   <script src="js/spec.js" defer></script>
+  <script src="js/preview.js" defer></script>
+  <script src="js/merge.js" defer></script>
   <script src="js/sensorviz.js" defer></script>
   <script src="js/api.js" defer></script>
   <script src="js/modal.js" defer></script>

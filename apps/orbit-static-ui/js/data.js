@@ -160,6 +160,10 @@ window.Orbit = window.Orbit || {};
       };
     }
     scn.sun = raw.sun ? {
+      // Authoritative Orekit Sun samples (exportSunViz.m): ECI positions,
+      // ECI/ECEF unit directions, and the geodetic subsolar track, all on
+      // the scenario grid. Older payloads may only carry tOffsetSec+eciKm.
+      ephemeris: parseSunEphemeris(raw.sun.ephemeris),
       eclipses: (raw.sun.eclipses || []).map(function (e) {
         return {
           satellite: e.satellite || "",
@@ -175,7 +179,50 @@ window.Orbit = window.Orbit || {};
       }),
     } : null;
 
+    // Orekit ITRF<->GCRF orientation (continuous/unwrapped prime-meridian
+    // angle) so the ECI view spins the Earth exactly like the backend.
+    scn.earthOrientation = raw.earthOrientation &&
+      Array.isArray(raw.earthOrientation.tOffsetSec) &&
+      Array.isArray(raw.earthOrientation.gmstRad) &&
+      raw.earthOrientation.tOffsetSec.length > 0
+      ? { t: raw.earthOrientation.tOffsetSec, gmstRad: raw.earthOrientation.gmstRad }
+      : null;
+
+    // Time-tagged sensor pointing history (exportPointingViz.m): the
+    // backend's own slew/track/scan/return boresights, one series per
+    // (platform, sensor).
+    scn.pointing = (raw.pointing || []).map(function (p) {
+      return {
+        platform: p.platform || "",
+        sensor: p.sensor || "",
+        t: p.tOffsetSec || [],
+        boresightEcef: p.boresightEcef || [],
+        phase: p.phase || [],
+        targetName: p.targetName || [],
+        aimLatDeg: p.aimLatDeg || [],
+        aimLonDeg: p.aimLonDeg || [],
+      };
+    }).filter(function (p) { return p.t.length > 0 && p.boresightEcef.length === p.t.length; });
+
     return scn;
+  }
+
+  function parseSunEphemeris(raw) {
+    if (!raw || !Array.isArray(raw.tOffsetSec) || raw.tOffsetSec.length === 0) {
+      return null;
+    }
+    var n = raw.tOffsetSec.length;
+    function rows(field) {
+      return Array.isArray(raw[field]) && raw[field].length === n ? raw[field] : null;
+    }
+    return {
+      t: raw.tOffsetSec,
+      eciKm: rows("eciKm"),
+      eciUnit: rows("eciUnit"),
+      ecefUnit: rows("ecefUnit"),
+      subsolarLatDeg: rows("subsolarLatDeg"),
+      subsolarLonDeg: rows("subsolarLonDeg"),
+    };
   }
 
   // Satellite lighting state at tSec: "Umbra" | "Penumbra" | "Sunlit", or
@@ -343,34 +390,279 @@ window.Orbit = window.Orbit || {};
     return m > 1e-9 ? { x: dx / m, y: dy / m, z: dz / m } : null;
   }
 
-  // ---- sun geometry ---------------------------------------------------------
+  // Linear interpolation of the satellite's ECI position (km) at tSec, from
+  // the payload's eciKm rows. Returns null when no ECI samples exist.
+  function sampleEci(sat, tSec) {
+    var t = sat.t, eci = sat.eci;
+    if (!eci || eci.length === 0 || eci.length !== t.length) return null;
+    var b = bracket(t, tSec);
+    if (!b) return null;
+    var a = eci[b.lo], c = eci[b.hi];
+    return {
+      x: a[0] + (c[0] - a[0]) * b.f,
+      y: a[1] + (c[1] - a[1]) * b.f,
+      z: a[2] + (c[2] - a[2]) * b.f,
+    };
+  }
 
-  // Subsolar point (deg) from a low-precision solar ephemeris (NOAA-style,
-  // good to ~0.3 deg) - drives the day/night terminator shading.
+  // ---- WGS84 geodetic conversions ---------------------------------------------
+  //
+  // The display sphere (llaToEcef/ecefToLla above, radius 6371 km) is only a
+  // rendering surface. Physical geometry - sensor cone/Earth intersections,
+  // boresight rays - uses the same WGS84 ellipsoid as the Orekit backend so
+  // footprint latitudes/longitudes agree with MATLAB results.
+
+  var WGS84_A_KM = 6378.137;
+  var WGS84_F = 1 / 298.257223563;
+  var WGS84_E2 = WGS84_F * (2 - WGS84_F);
+  var WGS84_B_KM = WGS84_A_KM * (1 - WGS84_F);
+
+  function llaToEcefWgs84(latDeg, lonDeg, altKm) {
+    var lat = latDeg * DEG, lon = lonDeg * DEG;
+    var sinLat = Math.sin(lat), cosLat = Math.cos(lat);
+    var N = WGS84_A_KM / Math.sqrt(1 - WGS84_E2 * sinLat * sinLat);
+    var h = altKm || 0;
+    return {
+      x: (N + h) * cosLat * Math.cos(lon),
+      y: (N + h) * cosLat * Math.sin(lon),
+      z: (N * (1 - WGS84_E2) + h) * sinLat,
+    };
+  }
+
+  // ECEF km -> geodetic (Bowring's closed form, same as js/preview.js).
+  function ecefToLlaWgs84(x, y, z) {
+    var p = Math.sqrt(x * x + y * y);
+    var ePrime2 = (WGS84_A_KM * WGS84_A_KM - WGS84_B_KM * WGS84_B_KM) /
+      (WGS84_B_KM * WGS84_B_KM);
+    var theta = Math.atan2(z * WGS84_A_KM, p * WGS84_B_KM);
+    var st = Math.sin(theta), ct = Math.cos(theta);
+    var lat = Math.atan2(
+      z + ePrime2 * WGS84_B_KM * st * st * st,
+      p - WGS84_E2 * WGS84_A_KM * ct * ct * ct);
+    var sinLat = Math.sin(lat);
+    var N = WGS84_A_KM / Math.sqrt(1 - WGS84_E2 * sinLat * sinLat);
+    var alt = Math.abs(lat) < Math.PI / 4
+      ? p / Math.cos(lat) - N
+      : z / sinLat - N * (1 - WGS84_E2);
+    return { latDeg: lat / DEG, lonDeg: Math.atan2(y, x) / DEG, altKm: alt };
+  }
+
+  // ---- sun geometry ---------------------------------------------------------
+  //
+  // Preferred source: the Orekit-computed samples in scn.sun.ephemeris
+  // (ECI/ECEF unit vectors + geodetic subsolar track) and
+  // scn.earthOrientation (true ITRF->GCRF prime-meridian angle), exported by
+  // exportSunViz.m on the scenario grid. The analytic formulas below are the
+  // DOCUMENTED FALLBACK ONLY, for offline sample mode and payloads predating
+  // those fields; every scenario-aware helper (sunDirEcefAt, sunDirEciAt,
+  // subsolarAt, gmstAt) prefers the backend samples and tags its output with
+  // source: "matlab" | "analytic".
+
+  function daysSinceJ2000(dateMs) {
+    return dateMs / 86400000 - 10957.5;
+  }
+
+  // Greenwich Mean Sidereal Time (radians, [0, 2pi)) - IAU 1982-style linear
+  // approximation, same formula as apps/orbit-ui/src/lib/time.js gmstRad.
+  function gmstRad(dateMs) {
+    var d = daysSinceJ2000(dateMs);
+    var deg = (280.46061837 + 360.98564736629 * d) % 360;
+    if (deg < 0) deg += 360;
+    return deg * DEG;
+  }
+
+  // Approximate unit Sun direction in ECI (Astronomical Almanac low-precision
+  // formula, ~0.01 deg) - fallback for payloads without sun samples.
+  function sunDirectionEci(dateMs) {
+    var n = daysSinceJ2000(dateMs);
+    var L = (280.46 + 0.9856474 * n) * DEG;
+    var g = (357.528 + 0.9856003 * n) * DEG;
+    var lambda = L + (1.915 * Math.sin(g) + 0.02 * Math.sin(2 * g)) * DEG;
+    var eps = (23.439 - 0.0000004 * n) * DEG;
+    return [Math.cos(lambda), Math.cos(eps) * Math.sin(lambda),
+      Math.sin(eps) * Math.sin(lambda)];
+  }
+
+  // Analytic subsolar point (deg) - fallback for the day/night terminator.
   function subsolarPoint(dateMs) {
-    var d = (dateMs / 86400000) - 10957.5; // days since J2000.0
-    var g = (357.529 + 0.98560028 * d) * DEG;             // mean anomaly
-    var q = 280.459 + 0.98564736 * d;                     // mean longitude
-    var L = (q + 1.915 * Math.sin(g) + 0.020 * Math.sin(2 * g)) * DEG;
-    var e = (23.439 - 0.00000036 * d) * DEG;              // obliquity
-    var dec = Math.asin(Math.sin(e) * Math.sin(L));
-    var ra = Math.atan2(Math.cos(e) * Math.sin(L), Math.cos(L));
-    // Greenwich mean sidereal time, degrees.
-    var gmst = (280.46061837 + 360.98564736629 * d) % 360;
-    if (gmst < 0) gmst += 360;
-    var lon = ra / DEG - gmst;
+    var s = sunDirectionEci(dateMs);
+    var dec = Math.asin(Math.max(-1, Math.min(1, s[2])));
+    var ra = Math.atan2(s[1], s[0]);
+    var lon = (ra - gmstRad(dateMs)) / DEG;
     lon = ((lon % 360) + 540) % 360 - 180;
     return { latDeg: dec / DEG, lonDeg: lon };
   }
 
-  // Unit Sun direction in the Earth-fixed (ECEF) display frame at dateMs,
-  // shared by the day/night shading, the 3D sun glyph, and SunPointing
-  // sensors so they all agree on where the sun is.
+  // Analytic unit Sun direction in ECEF - fallback shared by the day/night
+  // shading, sun glyphs, and SunPointing sensors when no backend samples
+  // exist, so all fallback consumers still agree with each other.
   function sunDirEcef(dateMs) {
     var sp = subsolarPoint(dateMs);
-    var v = llaToEcef(sp.latDeg, sp.lonDeg, 0);
-    var r = Math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z) || 1;
-    return { x: v.x / r, y: v.y / r, z: v.z / r, latDeg: sp.latDeg, lonDeg: sp.lonDeg };
+    var lat = sp.latDeg * DEG, lon = sp.lonDeg * DEG;
+    var c = Math.cos(lat);
+    return { x: c * Math.cos(lon), y: c * Math.sin(lon), z: Math.sin(lat),
+      latDeg: sp.latDeg, lonDeg: sp.lonDeg };
+  }
+
+  // ---- backend-sample interpolation ------------------------------------------
+
+  // Index of the sample interval containing tSec: returns {lo, hi, f} with
+  // endpoint clamping (no extrapolation), or null for empty/1-sample series.
+  function bracket(t, tSec) {
+    var n = t.length;
+    if (n === 0) return null;
+    if (n === 1) return { lo: 0, hi: 0, f: 0 };
+    var lo = 0, hi = n - 1;
+    if (tSec <= t[0]) hi = 1;
+    else if (tSec >= t[n - 1]) lo = n - 2;
+    else {
+      while (hi - lo > 1) {
+        var mid = (lo + hi) >> 1;
+        if (t[mid] <= tSec) lo = mid; else hi = mid;
+      }
+    }
+    var span = t[hi] - t[lo];
+    var f = span > 0 ? (tSec - t[lo]) / span : 0;
+    return { lo: lo, hi: hi, f: Math.max(0, Math.min(1, f)) };
+  }
+
+  // Interpolate a row-array of 3-vectors and renormalize to unit length.
+  // Returns null when the series is missing or degenerate at that time.
+  function interpUnitRow(t, rows, tSec) {
+    if (!rows) return null;
+    var b = bracket(t, tSec);
+    if (!b) return null;
+    var a = rows[b.lo], c = rows[b.hi];
+    if (!a || !c) return null;
+    var x = a[0] + (c[0] - a[0]) * b.f;
+    var y = a[1] + (c[1] - a[1]) * b.f;
+    var z = a[2] + (c[2] - a[2]) * b.f;
+    var m = Math.sqrt(x * x + y * y + z * z);
+    if (!(m > 1e-9)) return null;
+    return { x: x / m, y: y / m, z: z / m };
+  }
+
+  function interpScalar(t, values, tSec) {
+    var b = bracket(t, tSec);
+    if (!b || !values) return null;
+    return values[b.lo] + (values[b.hi] - values[b.lo]) * b.f;
+  }
+
+  // Wrap-aware longitude interpolation (degrees, short way around).
+  function interpLonDeg(t, values, tSec) {
+    var b = bracket(t, tSec);
+    if (!b || !values) return null;
+    var a = values[b.lo], c = values[b.hi];
+    var d = c - a;
+    if (d > 180) d -= 360;
+    if (d < -180) d += 360;
+    var lon = a + d * b.f;
+    if (lon > 180) lon -= 360;
+    if (lon < -180) lon += 360;
+    return lon;
+  }
+
+  // Unit Sun direction in ECEF at tSec: Orekit samples when the payload has
+  // them, else the analytic fallback. Result carries .source for the UI.
+  function sunDirEcefAt(scn, tSec) {
+    var eph = scn && scn.sun && scn.sun.ephemeris;
+    if (eph && eph.ecefUnit) {
+      var v = interpUnitRow(eph.t, eph.ecefUnit, tSec);
+      if (v) { v.source = "matlab"; return v; }
+    }
+    var fallback = sunDirEcef((scn ? scn.epochMs : 0) + tSec * 1000);
+    fallback.source = "analytic";
+    return fallback;
+  }
+
+  // Unit Sun direction in ECI (GCRF) at tSec, same preference order.
+  function sunDirEciAt(scn, tSec) {
+    var eph = scn && scn.sun && scn.sun.ephemeris;
+    if (eph) {
+      var v = interpUnitRow(eph.t, eph.eciUnit || eph.eciKm, tSec);
+      if (v) { v.source = "matlab"; return v; }
+    }
+    var s = sunDirectionEci((scn ? scn.epochMs : 0) + tSec * 1000);
+    return { x: s[0], y: s[1], z: s[2], source: "analytic" };
+  }
+
+  // Geodetic subsolar point at tSec (Orekit WGS84 when available).
+  function subsolarAt(scn, tSec) {
+    var eph = scn && scn.sun && scn.sun.ephemeris;
+    if (eph && eph.subsolarLatDeg && eph.subsolarLonDeg) {
+      var lat = interpScalar(eph.t, eph.subsolarLatDeg, tSec);
+      var lon = interpLonDeg(eph.t, eph.subsolarLonDeg, tSec);
+      if (lat != null && lon != null) {
+        return { latDeg: lat, lonDeg: lon, source: "matlab" };
+      }
+    }
+    var sp = subsolarPoint((scn ? scn.epochMs : 0) + tSec * 1000);
+    sp.source = "analytic";
+    return sp;
+  }
+
+  // Earth rotation angle (prime-meridian right ascension, radians) at tSec:
+  // interpolated from the Orekit ITRF->GCRF samples when present (they are
+  // exported unwrapped, so plain linear interpolation is safe), else GMST.
+  function gmstAt(scn, tSec) {
+    var eo = scn && scn.earthOrientation;
+    if (eo) {
+      var v = interpScalar(eo.t, eo.gmstRad, tSec);
+      if (v != null) return v;
+    }
+    return gmstRad((scn ? scn.epochMs : 0) + tSec * 1000);
+  }
+
+  // ---- sensor pointing samples -------------------------------------------------
+
+  // Backend pointing series for one platform (+ optional sensor name).
+  function pointingSeries(scn, platformName, sensorName) {
+    var series = null;
+    ((scn && scn.pointing) || []).forEach(function (p) {
+      if (p.platform !== platformName) return;
+      if (sensorName && p.sensor && p.sensor !== sensorName) return;
+      if (!series) series = p;
+    });
+    return series;
+  }
+
+  // Authoritative pointing state at tSec from the exported samples:
+  // { dir: {x,y,z} unit ECEF, phase, targetName, aimLatDeg, aimLonDeg,
+  //   source: "matlab" } or null when the payload has no series for this
+  // platform (caller falls back to the client-side phase model).
+  function pointingAt(scn, platformName, sensorName, tSec) {
+    var series = pointingSeries(scn, platformName, sensorName);
+    if (!series) return null;
+    var dir = interpUnitRow(series.t, series.boresightEcef, tSec);
+    if (!dir) return null;
+    var b = bracket(series.t, tSec);
+    // Phase boundaries carry exact samples, so the earlier sample's phase is
+    // correct inside any interval; clamp to the nearer end outside the span.
+    var idx = tSec >= series.t[series.t.length - 1] ? series.t.length - 1 : b.lo;
+    var aimLat = null, aimLon = null;
+    var la = series.aimLatDeg[b.lo], lc = series.aimLatDeg[b.hi];
+    if (isFiniteNum(la) && isFiniteNum(lc)) {
+      aimLat = la + (lc - la) * b.f;
+      aimLon = interpLonDeg(series.t, series.aimLonDeg, tSec);
+    } else if (isFiniteNum(la) || isFiniteNum(lc)) {
+      var near = b.f < 0.5 ? b.lo : b.hi;
+      if (isFiniteNum(series.aimLatDeg[near])) {
+        aimLat = series.aimLatDeg[near];
+        aimLon = series.aimLonDeg[near];
+      }
+    }
+    return {
+      dir: dir,
+      phase: series.phase[idx] || "idle",
+      targetName: series.targetName[idx] || "",
+      aimLatDeg: aimLat,
+      aimLonDeg: aimLon,
+      source: "matlab",
+    };
+  }
+
+  function isFiniteNum(v) {
+    return typeof v === "number" && isFinite(v);
   }
 
   // ---- CSV export ------------------------------------------------------------
@@ -452,11 +744,24 @@ window.Orbit = window.Orbit || {};
     scheduleForObject: scheduleForObject,
     pointingStateAt: pointingStateAt,
     samplePosition: samplePosition,
+    sampleEci: sampleEci,
     sampleVelocityDirEcef: sampleVelocityDirEcef,
     llaToEcef: llaToEcef,
     ecefToLla: ecefToLla,
+    llaToEcefWgs84: llaToEcefWgs84,
+    ecefToLlaWgs84: ecefToLlaWgs84,
+    // Analytic fallbacks (documented: offline sample mode / old payloads).
+    gmstRad: gmstRad,
+    sunDirectionEci: sunDirectionEci,
     subsolarPoint: subsolarPoint,
     sunDirEcef: sunDirEcef,
+    // Backend-first scenario-aware accessors (preferred everywhere).
+    sunDirEcefAt: sunDirEcefAt,
+    sunDirEciAt: sunDirEciAt,
+    subsolarAt: subsolarAt,
+    gmstAt: gmstAt,
+    pointingSeries: pointingSeries,
+    pointingAt: pointingAt,
     lightingStateAt: lightingStateAt,
     groundDaylightAt: groundDaylightAt,
     ephemerisCsv: ephemerisCsv,

@@ -24,8 +24,13 @@
   <script src="js/earthtex.js"></script>
   <script src="js/data.js"></script>
   <script src="js/spec.js"></script>
+  <script src="js/preview.js"></script>
+  <script src="js/merge.js"></script>
   <script src="js/sensorviz.js"></script>
   <script src="js/api.js"></script>
+  <script src="js/map2d.js"></script>
+  <script src="js/globe3d.js"></script>
+  <script src="js/panels.js"></script>
   <script>
     (function () {
       "use strict";
@@ -538,8 +543,12 @@
       });
 
       check("matchesScenario tracks spec freshness", function () {
-        var spec = Orbit.spec.deriveSpecFromScenario(raw);
-        assert(Orbit.spec.matchesScenario(spec, raw), "derived spec should match");
+        // Payloads with an embedded spec echo compare against that echo;
+        // payloads without one compare against their own derivation.
+        var spec = raw.spec
+          ? Orbit.spec.normalizeSpecShape(JSON.parse(JSON.stringify(raw.spec)))
+          : Orbit.spec.deriveSpecFromScenario(raw);
+        assert(Orbit.spec.matchesScenario(spec, raw), "matching spec should match");
         var edited = JSON.parse(JSON.stringify(spec));
         edited.objects.push(Orbit.spec.targetTemplate("New-Target"));
         assert(!Orbit.spec.matchesScenario(edited, raw), "edited spec should not match");
@@ -660,10 +669,15 @@
       });
 
       check("lightingStateAt / groundDaylightAt return null without a sun block", function () {
-        assert(scn.sun === null, "sample scenario should have no sun block");
-        assert(Orbit.data.lightingStateAt(scn, scn.sats[0].name, 0) === null,
+        var bare = Orbit.data.parseScenario({
+          meta: { epochUtc: "2026-01-01T00:00:00Z", durationSeconds: 3600, stepSeconds: 60 },
+          satellites: [{ name: "Sat-A" }],
+          groundPoints: [{ name: "GS-A", type: "GroundStation", latitudeDeg: 0, longitudeDeg: 0 }],
+        });
+        assert(bare.sun === null, "payload without sun should parse to null");
+        assert(Orbit.data.lightingStateAt(bare, "Sat-A", 0) === null,
           "expected null lighting");
-        assert(Orbit.data.groundDaylightAt(scn, scn.grounds[0].name, 0) === null,
+        assert(Orbit.data.groundDaylightAt(bare, "GS-A", 0) === null,
           "expected null daylight");
       });
 
@@ -743,9 +757,11 @@
         near(bore.dir.x * satPos.x + bore.dir.y * satPos.y + bore.dir.z * satPos.z, -r, 1e-6,
           "idle nadir boresight should point straight down");
 
-        var ring = Orbit.sensorviz.footprintRing(satPos, bore.dir, 20, Orbit.data.EARTH_RADIUS_KM, 24);
-        assert(ring, "expected a footprint ring for a nadir-pointing sensor");
-        ring.forEach(function (pt) { assert(pt, "nadir FOV should not miss the globe"); });
+        var ring = Orbit.sensorviz.footprintRing(satPos, bore.dir, 20, 24);
+        assert(ring && ring.points.length === 24,
+          "expected a footprint ring for a nadir-pointing sensor");
+        assert(!ring.anyClamped, "nadir FOV should not touch the horizon");
+        ring.points.forEach(function (pt) { assert(pt, "nadir FOV should not miss the globe"); });
       });
 
       check("sensorviz.boresightAt tracks the scheduled entry's target while dwelling", function () {
@@ -761,7 +777,8 @@
           satPosEcef: satPos, entries: entries,
         });
         assert(bore.pointing.phase === "track", "expected track phase mid-dwell");
-        var gs = Orbit.data.llaToEcef(10, 10, 0);
+        // Physical geometry now runs on the WGS84 ellipsoid.
+        var gs = Orbit.data.llaToEcefWgs84(10, 10, 0);
         var dx = gs.x - satPos.x, dy = gs.y - satPos.y, dz = gs.z - satPos.z;
         var m = Math.sqrt(dx * dx + dy * dy + dz * dz);
         near(bore.dir.x, dx / m, 1e-6, "boresight x");
@@ -858,6 +875,466 @@
           assert(["network", "timeout", "http", "malformed"].indexOf(err.kind) >= 0,
             "unexpected error kind: " + err.kind);
         });
+      });
+
+      // ================= Level 7: sun / frames / sensors / merge ===============
+
+      check("analytic subsolar point is sane at equinoxes and solstices", function () {
+        // Fallback model only (backend samples are tested separately below).
+        near(Orbit.data.subsolarPoint(Date.parse("2026-03-20T14:45:00Z")).latDeg, 0, 0.8, "mar lat");
+        near(Orbit.data.subsolarPoint(Date.parse("2026-06-21T08:25:00Z")).latDeg, 23.44, 0.4, "jun lat");
+        near(Orbit.data.subsolarPoint(Date.parse("2026-09-23T00:05:00Z")).latDeg, 0, 0.8, "sep lat");
+        near(Orbit.data.subsolarPoint(Date.parse("2026-12-21T20:50:00Z")).latDeg, -23.44, 0.4, "dec lat");
+        // Noon UTC puts the sun near Greenwich (equation of time ~ +/-4 deg).
+        near(Orbit.data.subsolarPoint(Date.parse("2026-07-05T12:00:00Z")).lonDeg, 0, 7, "noon lon");
+      });
+
+      check("backend sun samples drive sunDirEcefAt/subsolarAt (source: matlab)", function () {
+        var eph = scn.sun && scn.sun.ephemeris;
+        assert(eph && eph.ecefUnit && eph.subsolarLatDeg, "sample payload lacks sun ephemeris");
+        var t0 = eph.t[0];
+        var v = Orbit.data.sunDirEcefAt(scn, t0);
+        assert(v.source === "matlab", "expected backend-sourced sun, got " + v.source);
+        near(v.x, eph.ecefUnit[0][0], 1e-6, "x");
+        near(v.y, eph.ecefUnit[0][1], 1e-6, "y");
+        near(v.z, eph.ecefUnit[0][2], 1e-6, "z");
+        var sp = Orbit.data.subsolarAt(scn, t0);
+        assert(sp.source === "matlab", "expected backend subsolar");
+        near(sp.latDeg, eph.subsolarLatDeg[0], 1e-6, "subsolar lat");
+        // Interpolated mid-sample stays unit length.
+        var mid = Orbit.data.sunDirEcefAt(scn, (eph.t[0] + eph.t[1]) / 2);
+        near(Math.hypot(mid.x, mid.y, mid.z), 1, 1e-9, "unit norm");
+        // Backend and analytic agree to within the analytic model's error.
+        var approx = Orbit.data.sunDirEcef(scn.epochMs + t0 * 1000);
+        var dot0 = v.x * approx.x + v.y * approx.y + v.z * approx.z;
+        assert(dot0 > Math.cos(1.5 * Math.PI / 180),
+          "backend vs analytic sun disagree by >1.5 deg");
+      });
+
+      check("ECI-to-ECEF consistency: Rz(gmst) maps the sun between frames", function () {
+        var eph = scn.sun.ephemeris;
+        var t0 = eph.t[Math.floor(eph.t.length / 2)];
+        var eci = Orbit.data.sunDirEciAt(scn, t0);
+        var ecef = Orbit.data.sunDirEcefAt(scn, t0);
+        var g = Orbit.data.gmstAt(scn, t0);
+        // eci ~ Rz(g) * ecef (up to the small precession/nutation tilt).
+        var rx = Math.cos(g) * ecef.x - Math.sin(g) * ecef.y;
+        var ry = Math.sin(g) * ecef.x + Math.cos(g) * ecef.y;
+        var dot0 = rx * eci.x + ry * eci.y + ecef.z * eci.z;
+        assert(dot0 > Math.cos(0.6 * Math.PI / 180),
+          "frame rotation mismatch: " + (Math.acos(Math.min(dot0, 1)) * 180 / Math.PI).toFixed(3) + " deg");
+        // Exported orientation ticks at the sidereal rate.
+        var eo = scn.earthOrientation;
+        assert(eo, "sample payload lacks earthOrientation");
+        var rate = (eo.gmstRad[eo.gmstRad.length - 1] - eo.gmstRad[0]) /
+          (eo.t[eo.t.length - 1] - eo.t[0]);
+        near(rate, 2 * Math.PI / 86164.0905, 1e-6, "sidereal rate");
+      });
+
+      check("WGS84 geodetic conversions round-trip and match the display sphere", function () {
+        var p = Orbit.data.llaToEcefWgs84(38.5, -104.8, 1.84);
+        var ll = Orbit.data.ecefToLlaWgs84(p.x, p.y, p.z);
+        near(ll.latDeg, 38.5, 1e-6, "lat roundtrip");
+        near(ll.lonDeg, -104.8, 1e-6, "lon roundtrip");
+        near(ll.altKm, 1.84, 1e-4, "alt roundtrip");
+        // Equatorial radius is the WGS84 semi-major axis, not the sphere.
+        var eq = Orbit.data.llaToEcefWgs84(0, 0, 0);
+        near(eq.x, 6378.137, 1e-6, "WGS84 a");
+      });
+
+      check("earth texture longitude orientation (no mirror / meridian shift)", function () {
+        var tex = Orbit.earthtex.build();
+        function landAt(latDeg, lonDeg) {
+          var x = Math.floor(((lonDeg + 180) / 360) * tex.width);
+          var y = Math.floor(((90 - latDeg) / 180) * tex.height);
+          return tex.land[y * tex.width + x] > 0;
+        }
+        assert(landAt(0, 20), "central Africa (0N 20E) should be land");
+        assert(!landAt(0, -30), "equatorial Atlantic (0N 30W) should be ocean");
+        assert(landAt(40, -100), "Kansas-ish (40N 100W) should be land");
+        assert(!landAt(0, 180), "dateline Pacific (0N 180E) should be ocean");
+        assert(landAt(-25, 135), "central Australia (25S 135E) should be land");
+      });
+
+      check("nadir FOV footprint is a closed unclamped ring around the subsat point", function () {
+        var sat = Orbit.data.llaToEcefWgs84(0, 0, 700);
+        var ring = Orbit.sensorviz.footprintRing(sat, { x: -1, y: 0, z: 0 }, 20, 36);
+        assert(ring && ring.points.length === 36, "no ring");
+        assert(!ring.anyClamped, "nadir 20 deg cone should not touch the horizon");
+        ring.points.forEach(function (pt) {
+          var ll = Orbit.data.ecefToLlaWgs84(pt.x, pt.y, pt.z);
+          var range = Math.hypot(ll.latDeg, ll.lonDeg);
+          assert(range > 1.5 && range < 4.5,
+            "footprint radius out of expectation: " + range.toFixed(2) + " deg");
+          assert(Math.abs(ll.altKm) < 1, "footprint left the surface: " + ll.altKm);
+        });
+      });
+
+      check("limb-crossing FOV clamps to the horizon without gaps or NaNs", function () {
+        var sat = Orbit.data.llaToEcefWgs84(0, 0, 700);
+        // Boresight tilted 60 deg off nadir: part of a 20 deg cone misses.
+        var tilt = 60 * Math.PI / 180;
+        var dir = { x: -Math.cos(tilt), y: Math.sin(tilt), z: 0 };
+        var ring = Orbit.sensorviz.footprintRing(sat, dir, 20, 48);
+        assert(ring, "expected a partial footprint");
+        assert(ring.anyClamped, "expected horizon-clamped samples");
+        ring.points.forEach(function (pt) {
+          assert(isFinite(pt.x) && isFinite(pt.y) && isFinite(pt.z), "NaN in ring");
+          var ll = Orbit.data.ecefToLlaWgs84(pt.x, pt.y, pt.z);
+          assert(Math.abs(ll.altKm) < 2, "clamped point off the surface");
+        });
+      });
+
+      check("a cone pointing away from Earth produces no footprint", function () {
+        var sat = Orbit.data.llaToEcefWgs84(0, 0, 700);
+        var away = { x: 1, y: 0, z: 0 }; // zenith
+        assert(Orbit.sensorviz.coneMissesEarth(sat, away, 20), "should miss");
+        assert(Orbit.sensorviz.footprintRing(sat, away, 20, 24) === null,
+          "expected null ring");
+        // Sanity: the boresight ground intersection is also null.
+        assert(Orbit.sensorviz.boresightGroundPoint(sat, away) === null,
+          "zenith boresight cannot hit the ground");
+      });
+
+      check("FOR footprint respects steering limits vs the horizon", function () {
+        var sat = Orbit.data.llaToEcefWgs84(0, 0, 700);
+        var nadir = { x: -1, y: 0, z: 0 };
+        var forSmall = Orbit.sensorviz.footprintRing(sat, nadir, 45, 48);
+        var forWide = Orbit.sensorviz.footprintRing(sat, nadir, 75, 48);
+        assert(forSmall && !forSmall.anyClamped,
+          "45 deg FOR from 700 km stays inside the horizon");
+        assert(forWide && forWide.anyClamped,
+          "75 deg FOR from 700 km must clamp at the horizon");
+        function maxRange(ring) {
+          var worst = 0;
+          ring.points.forEach(function (pt) {
+            var ll = Orbit.data.ecefToLlaWgs84(pt.x, pt.y, pt.z);
+            worst = Math.max(worst, Math.hypot(ll.latDeg, ll.lonDeg));
+          });
+          return worst;
+        }
+        assert(maxRange(forWide) > maxRange(forSmall) + 5,
+          "wide FOR should reach much farther toward the limb");
+        // Horizon distance from 700 km is ~26 deg ground range.
+        assert(maxRange(forWide) < 30, "clamped FOR cannot pass the horizon");
+      });
+
+      check("antimeridian: footprints and area grids wrap without smearing", function () {
+        var sat = Orbit.data.llaToEcefWgs84(5, 179.8, 700);
+        var ring = Orbit.sensorviz.footprintRing(sat, { x: 0.0872 - 1, y: 0, z: 0 }, 25, 40);
+        // Use the true nadir at that longitude instead of the axis hack above.
+        var nadir = { x: -sat.x, y: -sat.y, z: -sat.z };
+        ring = Orbit.sensorviz.footprintRing(sat, nadir, 25, 40);
+        assert(ring, "no ring at the dateline");
+        var eastSide = 0, westSide = 0;
+        ring.points.forEach(function (pt) {
+          var ll = Orbit.data.ecefToLlaWgs84(pt.x, pt.y, pt.z);
+          assert(ll.lonDeg >= -180 && ll.lonDeg <= 180, "unwrapped longitude leaked");
+          if (ll.lonDeg > 0) eastSide++; else westSide++;
+        });
+        assert(eastSide > 0 && westSide > 0, "footprint should straddle the seam");
+        var grid = Orbit.spec.expandAreaGrid({ name: "Seam", centerLatDeg: 0,
+          centerLonDeg: 179.9, widthKm: 200, heightKm: 100, spacingKm: 50,
+          altitudeM: 0, priority: 5 });
+        var east = grid.filter(function (g) { return g.longitudeDeg > 0; });
+        var west = grid.filter(function (g) { return g.longitudeDeg < 0; });
+        assert(east.length > 0 && west.length > 0, "area grid should wrap the seam");
+      });
+
+      check("sample payload pointing timeline: slew -> track -> return transitions", function () {
+        assert(scn.pointing && scn.pointing.length > 0, "sample payload lacks pointing");
+        var series = scn.pointing[0];
+        ["idle", "slew", "track", "return"].forEach(function (phase) {
+          assert(series.phase.indexOf(phase) >= 0, "missing phase " + phase);
+        });
+        // Boresight is continuous: no adjacent samples more than ~20 deg apart.
+        for (var i = 1; i < series.t.length; i++) {
+          var a = series.boresightEcef[i - 1], b = series.boresightEcef[i];
+          var dot0 = a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+          assert(dot0 > Math.cos(20 * Math.PI / 180),
+            "boresight jump at sample " + i);
+        }
+        // pointingAt interpolates and tags the source.
+        var trackIdx = series.phase.indexOf("track");
+        var p = Orbit.data.pointingAt(scn, series.platform, series.sensor,
+          series.t[trackIdx]);
+        assert(p && p.source === "matlab", "pointingAt should use backend samples");
+        assert(p.phase === "track", "expected track phase, got " + p.phase);
+        assert(p.targetName.length > 0, "track sample should name its target");
+      });
+
+      check("area scan sweeps across the region with a live aim point", function () {
+        var series = null;
+        scn.pointing.forEach(function (p) {
+          if (!series && p.phase.indexOf("scan") >= 0) series = p;
+        });
+        assert(series, "sample payload has no scan phase (Scan Region task)");
+        var lats = [], lons = [];
+        series.phase.forEach(function (ph, i) {
+          if (ph !== "scan") return;
+          var la = series.aimLatDeg[i], lo = series.aimLonDeg[i];
+          if (typeof la === "number" && isFinite(la)) { lats.push(la); lons.push(lo); }
+        });
+        assert(lats.length >= 5, "expected several scan aim samples, got " + lats.length);
+        assert(Math.max.apply(null, lats) - Math.min.apply(null, lats) > 0.3,
+          "scan should sweep in latitude, not sit on the centroid");
+        assert(Math.max.apply(null, lons) - Math.min.apply(null, lons) > 0.3,
+          "scan should sweep in longitude, not sit on the centroid");
+      });
+
+      check("point tracking follows the target as the satellite moves", function () {
+        var series = scn.pointing[0];
+        var idx = [];
+        series.phase.forEach(function (ph, i) { if (ph === "track") idx.push(i); });
+        assert(idx.length >= 2, "need at least two track samples");
+        var sat = null;
+        scn.sats.forEach(function (s) { if (s.name === series.platform) sat = s; });
+        [idx[0], idx[idx.length - 1]].forEach(function (i) {
+          var t = series.t[i];
+          var pos = Orbit.data.samplePosition(sat, t);
+          var satEcef = Orbit.data.llaToEcefWgs84(pos.latDeg, pos.lonDeg, pos.altKm);
+          var aim = Orbit.data.llaToEcefWgs84(series.aimLatDeg[i], series.aimLonDeg[i], 0);
+          var toAim = { x: aim.x - satEcef.x, y: aim.y - satEcef.y, z: aim.z - satEcef.z };
+          var m = Math.hypot(toAim.x, toAim.y, toAim.z);
+          var b = series.boresightEcef[i];
+          var dot0 = (toAim.x * b[0] + toAim.y * b[1] + toAim.z * b[2]) / m;
+          assert(dot0 > Math.cos(2 * Math.PI / 180),
+            "boresight is not on the aim point at t=" + t);
+        });
+      });
+
+      check("preview propagation: two-body ephemeris is physically sane", function () {
+        var meta = { epochUtc: "2026-01-01T00:00:00Z", durationSeconds: 6000, stepSeconds: 60 };
+        var sat = Orbit.spec.keplerianSatelliteTemplate("Preview-1");
+        var eph = Orbit.preview.previewEphemeris(sat, meta);
+        assert(eph && eph.t.length === 101, "sample count");
+        var r0 = Math.hypot(eph.eci[0][0], eph.eci[0][1], eph.eci[0][2]);
+        near(r0, 7000 * (1 - 0.001), 2, "initial radius ~ a(1-e)");
+        // One orbital period brings it back near the start (two-body closure).
+        var T = 2 * Math.PI * Math.sqrt(Math.pow(7000, 3) / 398600.4418);
+        var i = Math.round(T / 60);
+        var drift = Math.hypot(eph.eci[i][0] - eph.eci[0][0],
+          eph.eci[i][1] - eph.eci[0][1], eph.eci[i][2] - eph.eci[0][2]);
+        assert(drift < 200, "orbit did not close after one period: " + drift.toFixed(1) + " km");
+        eph.lla.forEach(function (row) {
+          assert(Math.abs(row[0]) <= 51.7 + 0.2, "|lat| exceeded inclination");
+          assert(row[1] >= -180 && row[1] <= 180, "lon out of range");
+        });
+        // TLE satellites are never previewed.
+        assert(Orbit.preview.previewEphemeris(
+          Orbit.spec.tleSatelliteTemplate("T"), meta) === null, "TLE preview must be null");
+      });
+
+      check("merge: fresh payload keeps MATLAB ephemerides and sun data", function () {
+        var spec = Orbit.spec.normalizeSpecShape(raw.spec);
+        var merged = Orbit.merge.buildRenderScenario(spec, scn);
+        assert(!merged.dirty, "unedited spec should not be dirty");
+        merged.sats.forEach(function (s) {
+          assert(s.source === "matlab", s.name + " should be authoritative");
+        });
+        assert(merged.sun && merged.sun.ephemeris, "sun data should survive");
+        assert(merged.pointing.length === scn.pointing.length, "pointing should survive");
+        assert(merged.schedule.every(function (e) { return !e.stale; }),
+          "fresh schedule entries must not be stale");
+      });
+
+      check("merge: editing a sensor stales the schedule and previews the satellite", function () {
+        var spec = Orbit.spec.normalizeSpecShape(JSON.parse(JSON.stringify(raw.spec)));
+        spec.objects.forEach(function (o) {
+          if (o.kind === "satellite" && o.sensor) o.sensor.coneHalfAngleDeg = 5;
+        });
+        var merged = Orbit.merge.buildRenderScenario(spec, scn);
+        assert(merged.dirty, "sensor edit must dirty the scenario");
+        var imager = null;
+        merged.sats.forEach(function (s) { if (s.name === "SSO-Imager") imager = s; });
+        assert(imager.source === "preview",
+          "edited Keplerian satellite should preview, got " + imager.source);
+        assert(imager.t.length > 0, "preview ephemeris missing");
+        assert(merged.pointing.length === 0, "stale pointing must be dropped");
+        merged.schedule.forEach(function (e) {
+          if (e.platform === "SSO-Imager") assert(e.stale, "schedule should be stale");
+        });
+        // The other satellite is untouched and stays authoritative.
+        var iss = null;
+        merged.sats.forEach(function (s) { if (s.name === "ISS-Demo") iss = s; });
+        assert(iss.source === "matlab", "unedited satellite should stay authoritative");
+      });
+
+      check("merge: deleting a referenced object prunes its results", function () {
+        var spec = Orbit.spec.normalizeSpecShape(JSON.parse(JSON.stringify(raw.spec)));
+        var victim = "Denver GS";
+        spec.objects = spec.objects.filter(function (o) { return o.name !== victim; });
+        var merged = Orbit.merge.buildRenderScenario(spec, scn);
+        merged.accesses.forEach(function (a) {
+          assert(a.source !== victim && a.target !== victim,
+            "access to a deleted object must be pruned");
+        });
+        merged.grounds.forEach(function (g) {
+          assert(g.name !== victim, "deleted ground object leaked into render scenario");
+        });
+      });
+
+      check("merge: editing scenario timing drops the sun block (metaFresh gate)", function () {
+        var spec = Orbit.spec.normalizeSpecShape(JSON.parse(JSON.stringify(raw.spec)));
+        spec.meta.durationSeconds = spec.meta.durationSeconds + 600;
+        var merged = Orbit.merge.buildRenderScenario(spec, scn);
+        assert(merged.dirty, "timing edit must dirty the scenario");
+        assert(merged.sun === null, "sun data must be gated on metaFresh");
+        assert(merged.earthOrientation === null, "orientation must be gated too");
+      });
+
+      check("merge: moving a tasked target drops the authoritative pointing series", function () {
+        var spec = Orbit.spec.normalizeSpecShape(JSON.parse(JSON.stringify(raw.spec)));
+        spec.objects.forEach(function (o) {
+          if (o.name === "Survey Site") o.latitudeDeg = o.latitudeDeg + 1;
+        });
+        var merged = Orbit.merge.buildRenderScenario(spec, scn);
+        assert(merged.pointing.length === 0,
+          "pointing baked against the old target location must not survive");
+        // The client-side fallback still resolves a boresight for the phase
+        // model, so the viewport degrades gracefully instead of going blank.
+        var sat = null;
+        merged.sats.forEach(function (s) { if (s.name === "SSO-Imager") sat = s; });
+        assert(sat && sat.t.length > 0, "platform still has an ephemeris");
+      });
+
+      check("multi-satellite overlapping tasks stay platform-separated", function () {
+        // Synthetic: two platforms, overlapping windows on different targets.
+        var mk = function (platform, target, start, stop) {
+          return { kind: "scheduleEntry", taskId: "t-" + platform, taskName: "T",
+            taskType: "TrackPointTarget", sensor: platform + " Sensor",
+            platform: platform, target: target, startSec: start, stopSec: stop,
+            startMs: 0, stopMs: 0, durationSec: stop - start, slewSec: 20,
+            slewStartSec: start - 20, returnEndSec: stop + 20,
+            priority: 5, qualityScore: null };
+        };
+        var schedule = [mk("A", "T1", 100, 200), mk("B", "T2", 150, 260)];
+        var forA = Orbit.data.scheduleForPlatform(schedule, "A");
+        var forB = Orbit.data.scheduleForPlatform(schedule, "B");
+        assert(forA.length === 1 && forB.length === 1, "platform separation");
+        var pa = Orbit.data.pointingStateAt(forA, 160);
+        var pb = Orbit.data.pointingStateAt(forB, 160);
+        assert(pa.phase === "track" && pa.entry.target === "T1", "A tracks T1");
+        assert(pb.phase === "track" && pb.entry.target === "T2", "B tracks T2");
+        assert(Orbit.data.pointingStateAt(forA, 230).phase === "idle" ||
+          Orbit.data.pointingStateAt(forA, 230).phase === "return", "A released");
+      });
+
+      check("2D and 3D renderers draw the sample scenario in every toggle combination", function () {
+        // Smoke coverage: exceptions here are real integration breakage.
+        var spec = Orbit.spec.normalizeSpecShape(raw.spec);
+        var merged = Orbit.merge.buildRenderScenario(spec, scn);
+        var canvas = document.createElement("canvas");
+        canvas.style.width = "320px";
+        canvas.style.height = "200px";
+        canvas.width = 320; canvas.height = 200;
+        document.body.appendChild(canvas);
+        try {
+          var combos = [
+            { labels: true, orbitTracks: true, groundTracks: true, accessLines: true,
+              sensorFov: true, sensorFor: true, sun: true, frame3d: "ecef" },
+            { labels: false, orbitTracks: false, groundTracks: false, accessLines: false,
+              sensorFov: false, sensorFor: false, sun: false, frame3d: "ecef" },
+            { labels: true, orbitTracks: true, groundTracks: true, accessLines: true,
+              sensorFov: true, sensorFor: true, sun: true, frame3d: "eci" },
+          ];
+          combos.forEach(function (opts) {
+            var st = { scn: merged, spec: spec, simSec: merged.schedule.length
+              ? merged.schedule[0].startSec + 10 : 600,
+              selection: null, dirty: false, viewOptions: opts };
+            Orbit.map2d.draw(canvas, st);
+            Orbit.globe3d.draw(canvas, st);
+          });
+        } finally {
+          canvas.remove();
+        }
+      });
+
+      check("object tree: satellite rows expand into sensor/task/access/vis children", function () {
+        var spec = Orbit.spec.normalizeSpecShape(JSON.parse(JSON.stringify(raw.spec)));
+        var merged = Orbit.merge.buildRenderScenario(spec, scn);
+        var el = document.createElement("div");
+        var st = { scn: merged, spec: spec, simSec: 0, selection: null,
+          dirty: merged.dirty, treeOpen: {}, viewOptions: {} };
+        Orbit.panels.renderTree(el, st, function () {}, function () {});
+        assert(el.querySelector('[data-toggle="satx:SSO-Imager"]'),
+          "imager satellite should have a disclosure toggle");
+        assert(el.textContent.indexOf("Sensor: ") === -1,
+          "children hidden while collapsed");
+        st.treeOpen["satx:SSO-Imager"] = true;
+        Orbit.panels.renderTree(el, st, function () {}, function () {});
+        assert(el.textContent.indexOf("Sensor: Imager-1") >= 0, "sensor child row");
+        assert(el.textContent.indexOf("Task: ") >= 0, "task child rows");
+        assert(el.textContent.indexOf("Vis: ") >= 0, "sensor-visibility child rows");
+        assert(el.textContent.indexOf("Access to ") >= 0, "access child rows");
+      });
+
+      check("inspector: sensor section reports authoritative live pointing", function () {
+        var spec = Orbit.spec.normalizeSpecShape(JSON.parse(JSON.stringify(raw.spec)));
+        var merged = Orbit.merge.buildRenderScenario(spec, scn);
+        var series = merged.pointing[0];
+        var trackT = series.t[series.phase.indexOf("track")];
+        var el = document.createElement("div");
+        var st = { scn: merged, spec: spec, simSec: trackT,
+          selection: "SSO-Imager", dirty: false, treeOpen: {}, viewOptions: {},
+          busy: false };
+        Orbit.panels.renderInspector(el, st, {});
+        assert(el.textContent.indexOf("MATLAB (authoritative)") >= 0,
+          "inspector should tag backend pointing as authoritative");
+        assert(el.textContent.indexOf("Tracking ") >= 0 ||
+          el.textContent.indexOf("Scanning ") >= 0,
+          "inspector should describe the live phase");
+        assert(el.textContent.indexOf("ECI position") >= 0,
+          "inspector should show the live ECI position");
+      });
+
+      check("inspector: sensor-visibility selection resolves and renders", function () {
+        var spec = Orbit.spec.normalizeSpecShape(JSON.parse(JSON.stringify(raw.spec)));
+        var merged = Orbit.merge.buildRenderScenario(spec, scn);
+        var sa = merged.sensorAccesses[0];
+        var key = Orbit.panels.visSelectionKey(sa);
+        var st = { scn: merged, spec: spec, simSec: 0, selection: key,
+          dirty: false, treeOpen: {}, viewOptions: {}, busy: false };
+        var sel = Orbit.panels.findSelected(st, key);
+        assert(sel && sel.type === "sensorAccess", "vis: selection should resolve");
+        var el = document.createElement("div");
+        Orbit.panels.renderInspector(el, st, {});
+        assert(el.textContent.indexOf("FOR WINDOWS") >= 0, "FOR window list");
+        assert(el.textContent.indexOf("FOV WINDOWS") >= 0, "FOV window list");
+      });
+
+      check("timeline: fresh bands are solid, edited scenarios dim per entry", function () {
+        var spec = Orbit.spec.normalizeSpecShape(JSON.parse(JSON.stringify(raw.spec)));
+        var merged = Orbit.merge.buildRenderScenario(spec, scn);
+        var el = document.createElement("div");
+        var st = { scn: merged, spec: spec, simSec: 0, dirty: merged.dirty };
+        Orbit.panels.buildTimeline(el, st, function () {});
+        assert(el.querySelectorAll(".lane-band").length > 0, "no bands");
+        assert(el.querySelectorAll(".is-stale-band").length === 0,
+          "fresh scenario should have no stale bands");
+        // Rename the tracked target: its access + schedule bands go stale.
+        var edited = JSON.parse(JSON.stringify(spec));
+        edited.objects.forEach(function (o) {
+          if (o.name === "Survey Site") o.latitudeDeg = o.latitudeDeg + 1;
+        });
+        var staleMerged = Orbit.merge.buildRenderScenario(edited, scn);
+        var el2 = document.createElement("div");
+        Orbit.panels.buildTimeline(el2, { scn: staleMerged, spec: edited,
+          simSec: 0, dirty: true }, function () {});
+        assert(el2.querySelectorAll(".is-stale-band").length > 0,
+          "edited target should dim its bands");
+      });
+
+      check("3D frame modes: ECEF is static, ECI rotates with the exported angle", function () {
+        var spec = Orbit.spec.normalizeSpecShape(raw.spec);
+        var merged = Orbit.merge.buildRenderScenario(spec, scn);
+        var stEcef = { scn: merged, simSec: 0, viewOptions: { frame3d: "ecef" } };
+        var stEci = { scn: merged, simSec: 3600, viewOptions: { frame3d: "eci" } };
+        assert(Orbit.globe3d.frameMode(stEcef) === "ecef", "default frame");
+        assert(Orbit.globe3d.earthRotation(stEcef) === 0, "no rotation in ECEF");
+        var rot = Orbit.globe3d.earthRotation(stEci);
+        near(rot, Orbit.data.gmstAt(merged, 3600), 1e-12, "ECI uses gmstAt");
+        assert(Math.abs(rot) > 0.01, "ECI rotation should be nonzero");
       });
 
       var summary = document.getElementById("summary");

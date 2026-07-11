@@ -228,9 +228,12 @@ See `apps/orbit-ui/README.md` for details on the bridge and scripts.
 
 ## Static Web UI (No Node)
 
-A no-Node prototype lives in `apps/orbit-static-ui`. It is plain HTML/CSS
-and vanilla JavaScript, served by MATLAB itself over a localhost-only Java
-socket bridge. It can also be opened directly from disk in sample-data mode.
+The full-parity no-Node console lives in `apps/orbit-static-ui`: plain
+HTML/CSS and vanilla JavaScript with a WebGL Earth (bundled NASA textures,
+Canvas fallback), ECI/ECEF display frames, per-object result freshness with
+instant two-body previews, and Orekit-authoritative Sun/terminator/pointing
+data - served by MATLAB itself over a localhost-only Java socket bridge. It
+can also be opened directly from disk in sample-data mode.
 
 ```matlab
 startupOrekitSuite()
@@ -238,8 +241,12 @@ launchOrbitStaticUi()   % http://127.0.0.1:8321
 ```
 
 The bridge reuses the same JSON pipeline as the Node app:
-`orbitUiDemoScenario`, `orbitUiRunScenario`, and `exportScenarioJson`.
-See `apps/orbit-static-ui/README.md` for details.
+`orbitUiDemoScenario`, `orbitUiRunScenario`, and `exportScenarioJson`, plus
+the shared viz exports `exportSunViz`, `exportScheduleViz`, and
+`exportPointingViz`. Browser tests: open
+`apps/orbit-static-ui/selftest.html`; MATLAB tests:
+`runtests('src/tests/testOrbitUiVizExports.m')`. See
+`apps/orbit-static-ui/README.md` and `FEATURE_PARITY.md` for details.
 
 ## Current UI
 

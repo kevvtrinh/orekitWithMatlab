@@ -1,9 +1,12 @@
-# Static UI Feature Parity Plan
+# Static UI Feature Parity
 
-Rollout plan for bringing the no-Node static console (this app) to feature
-parity with the React console in `apps/orbit-ui`. The app stays plain
-HTML/CSS/classic JavaScript with the MATLAB bridge
-(`src/ui/orbitStaticUiServe.m` / `orbitStaticUiRequest.m`) as its only backend.
+Status of the no-Node static console against the React console in
+`apps/orbit-ui`. The app stays plain HTML/CSS/classic JavaScript with the
+MATLAB bridge (`src/ui/orbitStaticUiServe.m` / `orbitStaticUiRequest.m`) as
+its only backend. Every level below is implemented and covered by
+`selftest.html` (75+ browser checks) and `src/tests/testOrbitUiVizExports.m`
+plus the pre-existing MATLAB suite (110 tests passing); the headline flows
+were additionally exercised end-to-end against a live bridge.
 
 - [x] **Level 1 - Core scenario authoring and spec lifecycle**
   Load/save the editable spec through the MATLAB bridge, import/export
@@ -30,41 +33,81 @@ HTML/CSS/classic JavaScript with the MATLAB bridge
   target inspector details incl. live sensor pointing phase, and an
   impulsive maneuver editor (+ Mnvr and per-satellite inspector rows;
   TNW/Inertial burns, blocked for SGP4).
-- [x] **Level 5 - High-fidelity viewport parity** *(this step)*
-  A View menu (Labels, Ground tracks, Access lines, Sensor FOV, Sensor FOR,
-  Sun) toggles rendering in both the 2D map and 3D globe, matching
-  `apps/orbit-ui`'s View menu one-for-one. Sensor FOV/FOR render as ground
-  footprints (`js/sensorviz.js`, shared ECEF ray/cone geometry) that follow
-  the satellite's live boresight: the active scheduled slew/track/return
-  phase when a fresh schedule exists for that platform, else the sensor's
-  home pointing mode (Nadir, VelocityVector via finite-difference ground
-  track, SunPointing via the shared subsolar direction, or a fixed ECEF
-  vector). Area targets draw as a dashed rectangle outline plus one
-  centroid label instead of only their grid-point markers. Satellite
-  eclipse state (Umbra/Penumbra/Sunlit, from the payload's `sun.eclipses`)
-  dims the satellite marker and shows in the inspector and viewport HUD;
-  ground-site daylight (`sun.groundLighting`) shows in the inspector. 3D
-  interaction adds double-click-to-recenter and a Reset View control
-  alongside the existing drag-to-rotate/wheel-zoom. 2D/3D access lines and
-  ground-track visibility are both toggle-gated; the Natural Earth
-  map/globe/sun rendering from the prior step is unchanged.
+- [x] **Level 5 - High-fidelity viewport parity**
+  A View menu (Labels, Orbit tracks, Ground tracks, Access lines, Sensor
+  FOV, Sensor FOR, Sun) toggles rendering in both the 2D map and 3D globe.
+  Sensor FOV/FOR render as WGS84-correct ground footprints following the
+  live boresight; area targets draw as dashed outlines with one centroid
+  label; eclipse state dims satellite markers and shows in the inspector
+  and HUD; ground-site daylight shows in the inspector. 3D interaction:
+  drag-to-rotate, wheel zoom, double-click-to-recenter, Reset View.
 - [x] **Level 6 - Operational polish**
-  A Log button next to the bridge pill opens a worker/status panel (idle /
-  running / succeeded / failed / offline, warm-session detail, last-run
-  duration) backed by a capped history of status-bar messages, so run/refresh
-  failures stay visible after the status line moves on. Bridge calls
-  (`js/api.js`) tag failures with a diagnostic kind - timeout, network
-  (unreachable), http, or malformed payload - surfaced in status messages and
-  the log instead of one generic failure string; busy and stale are already
-  visible via the busy status pulse and the EDITED/STALE pills. File menu
-  gains Export Ephemeris CSV (propagated position samples for the selected
-  satellite, or every propagated satellite if none is selected, with clear
-  column headers incl. lighting state) and Reset Demo Spec (confirmation,
-  restores the shipped demo's editable spec through the same derive/validate/
-  save path as any other edit, without silently propagating it). Keyboard
-  polish: Left/Right steps the clock, Home rewinds, 1/2 switch 2D/3D, Delete
-  removes the current selection, R refreshes, Escape closes open menus - all
-  skipped while typing in a field or with a dialog open; button tooltips spell
-  out the new shortcuts. `selftest.html` gained ephemeris-CSV and sample/
-  demo-reload coverage, plus async checks that exercise `js/api.js`'s real
-  fetch/error-classification codepaths instead of reimplementing them.
+  Worker/status Log panel (idle/running/succeeded/failed/offline, last-run
+  duration) over a capped message history; bridge failures classified as
+  timeout / network / http / malformed; Export Ephemeris CSV; Reset Demo
+  Spec; keyboard shortcuts (Space, arrows, Home, 1/2, Delete, R, Escape)
+  with typing/dialog guards and tooltips.
+- [x] **Level 7 - Authoritative sun/pointing data, per-object freshness,
+  and the WebGL globe** *(this step - closes the full parity audit)*
+  - **Orekit-authoritative Sun and frames.** `exportSunViz.m` now exports
+    time-tagged Sun ECI *and* ECEF unit vectors, the geodetic subsolar
+    track, and the true ITRF->GCRF prime-meridian angle
+    (`earthOrientation`), all validated against direct Orekit queries at
+    equinox/solstice epochs. The terminator, night lights, sun glyph,
+    subsolar marker, SunPointing boresights, and HUD all read these samples
+    through `Orbit.data.sunDirEcefAt/sunDirEciAt/subsolarAt/gmstAt`; the
+    analytic model is a documented fallback for offline sample mode only,
+    tagged "(approx)" in the HUD.
+  - **Authoritative pointing timeline.** `exportPointingViz.m` samples
+    every sensor's real boresight (resolveSensorPointing) through
+    idle/slew/track/scan/return phases - including the serpentine area-scan
+    sweep with per-sample ground aim points - and `exportScheduleViz.m`
+    exports the computed `returnSlewTimeSeconds`. The viewports and
+    inspector replay these samples when fresh (labelled "MATLAB
+    (authoritative)") and fall back to the client-side phase model over
+    schedule entries when stale.
+  - **Per-object freshness.** `js/merge.js` (a port of the React console's
+    renderScenario) tags each satellite matlab/preview/pending, previews
+    edited Keplerian satellites instantly with two-body ephemerides
+    (`js/preview.js`), prunes results whose endpoints were deleted, dims
+    stale entries individually (tree, inspector, timeline bands), and
+    gates sun/orientation/pointing data on timing freshness. Run payloads
+    and the bundled sample embed their spec, which the console adopts on
+    load so fresh results stay authoritative.
+  - **WebGL globe with ECI/ECEF frames.** GPU fragment-shader Earth with
+    bundled NASA day/night/specular textures (cloud-free by design),
+    sun-driven terminator, dark-side-only city lights, ocean specular,
+    atmosphere rim, and a world-anchored starfield; automatic Canvas-2D
+    fallback. The View menu
+    selects Earth-fixed or Inertial (GCRF) display frames - inertial orbit
+    ellipses stay fixed while the Earth rotates by the exported
+    orientation angle. Deep links `?t=`, `?view=`, `?frame=`.
+  - **Sensor geometry correctness.** FOV and FOR are distinct: the FOV is
+    the instantaneous cone around the current boresight (filled footprint,
+    cone silhouette, ground-clipped boresight line, FOV-in-view coloring
+    from the backend's fovWindows); the FOR is the gimbal-limit region
+    around the *home* boresight, drawn dashed. Ray/Earth intersections run
+    against the WGS84 ellipsoid in scaled space; rays past the limb clamp
+    to the horizon circle; cones that miss the Earth draw nothing;
+    antimeridian crossings split cleanly in 2D.
+  - **Tree/inspector/dialog parity.** Satellite rows expand into
+    sensor/task/access/sensor-visibility children with prev/RUN source
+    badges; sensor-visibility pairs are inspectable regardless of request
+    origin; the satellite/TLE/Walker dialogs carry an inline imaging-sensor
+    section; + Access offers "Calculate all" to restore the default sweep;
+    the maneuver dialog preselects the current satellite; playback pauses
+    pinned at the scenario end; unscheduled tasks explain why.
+
+Known limitations (deliberate):
+
+- One sensor per satellite (a spec-schema constraint shared with the React
+  console and `buildScenarioFromSpec.m`).
+- Edits are blocked while a synchronous MATLAB run is in flight (the
+  static bridge has no async job queue; the React console's Node bridge
+  does).
+- The free-run browser preview is two-body only; SGP4/TLE satellites wait
+  for the backend.
+- The ECI view spins geography by the exported prime-meridian angle (a
+  pure Z rotation); the ~0.3 deg precession/nutation pole tilt is not
+  rendered - same approximation as the React console.
+- 2D map has no pan/zoom (the React console has no 2D map at all).

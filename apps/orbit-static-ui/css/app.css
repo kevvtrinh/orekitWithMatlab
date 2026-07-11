@@ -1023,3 +1023,54 @@ body {
   border: 2px solid var(--bg-panel);
 }
 ::-webkit-scrollbar-thumb:hover { background: #4a515d; }
+
+/* ---------- Level 7 additions: freshness badges, frame menu, responsive ---- */
+
+/* Satellite data-source badge: browser two-body preview vs MATLAB result. */
+.tree-badge {
+  flex: none;
+  margin-left: 6px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.tree-badge-preview {
+  color: #9ec7dd;
+  background: rgba(127, 180, 216, 0.16);
+  border: 1px solid rgba(127, 180, 216, 0.35);
+}
+
+/* Per-entry stale timeline bands (endpoints edited since the last run). */
+.lane-band.is-stale-band { opacity: 0.32; }
+
+/* Section caption inside the View menu (3D FRAME). */
+.menu-caption {
+  padding: 6px 12px 2px;
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  color: var(--text-muted);
+}
+
+/* Checkbox rows in modal forms (inline sensor section). */
+.form-row .input-check {
+  width: 16px;
+  height: 16px;
+  margin-right: auto;
+  accent-color: var(--accent);
+}
+
+/* Narrow-window layout: stack the side panels above/below the viewport so
+   nothing overlaps or becomes unreachable on small screens. */
+@media (max-width: 900px) {
+  .main {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(160px, 28vh) minmax(240px, 1fr) minmax(160px, 28vh);
+  }
+  .tree-panel, .inspector-panel { max-width: none; }
+  .topbar { flex-wrap: wrap; row-gap: 4px; }
+  .utc-readout { order: 5; }
+  .statusbar { flex-wrap: wrap; }
+}

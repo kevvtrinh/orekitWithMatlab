@@ -32,6 +32,30 @@ window.Orbit = window.Orbit || {};
     return state.dirty ? '<span class="stale-tag">STALE</span>' : "";
   }
 
+  // Per-entry staleness (Orbit.merge marks accesses/schedule/sensorAccesses
+  // whose endpoints or timing changed); falls back to the global flag for
+  // payloads that predate the merge.
+  function entryStale(state, entry) {
+    if (entry && entry.stale !== undefined) return !!entry.stale;
+    return !!state.dirty;
+  }
+
+  function entryStaleTag(state, entry) {
+    return entryStale(state, entry) ? '<span class="stale-tag">STALE</span>' : "";
+  }
+
+  // Satellite data-source badge: preview (client two-body estimate) or
+  // pending (needs a MATLAB run - TLE), nothing when authoritative.
+  function sourceBadge(scnSat) {
+    if (!scnSat || !scnSat.source || scnSat.source === "matlab") return "";
+    if (scnSat.source === "preview") {
+      return '<span class="tree-badge tree-badge-preview" title="Two-body browser ' +
+        'preview - run MATLAB for the authoritative orbit">prev</span>';
+    }
+    return '<span class="tree-pending" title="Awaiting a MATLAB run (SGP4 runs ' +
+      'on the backend)">RUN</span>';
+  }
+
   function findByName(list, name) {
     for (var i = 0; i < (list || []).length; i++) {
       if (list[i].name === name) return list[i];
@@ -174,6 +198,18 @@ window.Orbit = window.Orbit || {};
       var group = Orbit.spec.areaGroup(state.spec, name);
       if (group) return { type: "areaGroup", name: name, points: group.points };
     }
+    if (name && name.indexOf("vis:") === 0 && scn) {
+      // Sensor visibility pair rows ("vis:<platform>|<target>") from the
+      // satellite tree children; these exist per payload, not per request.
+      var visKey = name.slice("vis:".length);
+      for (var v = 0; v < scn.sensorAccesses.length; v++) {
+        var sa2 = scn.sensorAccesses[v];
+        if (sa2.platform + "|" + sa2.target === visKey) {
+          return { type: "sensorAccess", key: name, sensorAccess: sa2 };
+        }
+      }
+      return null;
+    }
     if (scn) {
       var acc = findByName(scn.accesses, name);
       if (acc) return { type: "access", access: acc };
@@ -181,6 +217,10 @@ window.Orbit = window.Orbit || {};
       if (scnSat) return { type: "payload-satellite", scnSat: scnSat };
     }
     return null;
+  }
+
+  function visSelectionKey(sensorAccess) {
+    return "vis:" + sensorAccess.platform + "|" + sensorAccess.target;
   }
 
   // ---- object tree -----------------------------------------------------------
@@ -194,14 +234,102 @@ window.Orbit = window.Orbit || {};
     return sat.propagator || "?";
   }
 
+  // Child rows nested under an expanded satellite: its sensor, the tasks it
+  // may perform, its plain access pairs, and its sensor-visibility pairs -
+  // mirroring the Node console's per-satellite disclosure.
+  function satChildKey(name) { return "satx:" + name; }
+
+  function satChildSelectionKeys(state, sat) {
+    var keys = [];
+    var scn = state.scn;
+    Orbit.spec.asArray(state.spec && state.spec.tasks).forEach(function (t) {
+      if (t && (!t.satelliteName || t.satelliteName === sat.name)) {
+        keys.push(taskSelectionKey(t));
+      }
+    });
+    if (scn) {
+      scn.accesses.forEach(function (acc) {
+        if (acc.source === sat.name || acc.target === sat.name) keys.push(acc.name);
+      });
+      scn.sensorAccesses.forEach(function (sa) {
+        if (sa.platform === sat.name) keys.push(visSelectionKey(sa));
+      });
+    }
+    return keys;
+  }
+
+  function satChildRows(state, sat, d) {
+    var html = "";
+    var scn = state.scn;
+    if (sat.sensor) {
+      var sensorName = Orbit.spec.sensorDisplayName(sat);
+      var meta = "FOV " + (sat.sensor.coneHalfAngleDeg || 20) + " / FOR " +
+        (sat.sensor.fieldOfRegardDeg || 60) + " deg";
+      html += row2(sat.name, "Sensor: " + sensorName, state.selection,
+        "#7fb4d8", false, meta, "", true);
+    }
+    Orbit.spec.asArray(state.spec && state.spec.tasks).forEach(function (t) {
+      if (!t) return;
+      if (t.satelliteName && t.satelliteName !== sat.name) return;
+      var entries = findTaskEntries(state, t).filter(function (e) {
+        return e.platform === sat.name;
+      });
+      var meta2 = entries.length > 0 ? entries.length + " sched"
+        : t.satelliteName ? "pinned" : "any sat";
+      html += row2(taskSelectionKey(t), "Task: " + Orbit.spec.taskLabel(t),
+        state.selection, "#d1904f", true, meta2, "", true);
+    });
+    if (scn) {
+      scn.accesses.forEach(function (acc) {
+        if (acc.source !== sat.name && acc.target !== sat.name) return;
+        var other = acc.source === sat.name ? acc.target : acc.source;
+        var live = !entryStale(state, acc) && isLive(acc, state.simSec);
+        html += row2(acc.name, "Access to " + other, state.selection, "#5fc98f",
+          true, acc.windows.length + " win",
+          live ? '<span class="tree-live">LIVE</span>' : "", true);
+      });
+      scn.sensorAccesses.forEach(function (sa) {
+        if (sa.platform !== sat.name) return;
+        html += row2(visSelectionKey(sa), "Vis: " + sa.target, state.selection,
+          "#c77ddb", true,
+          "FOR " + sa.forWindows.length + " / FOV " + sa.fovWindows.length,
+          entryStaleTag(state, sa), true);
+      });
+    }
+    return html;
+  }
+
   function satRows(entries, state, d, child) {
     var html = "";
     entries.forEach(function (entry) {
-      html += row(entry.sat.name, state.selection,
-        Orbit.spec.satColor(entry.sat, entry.index), false,
-        satMeta(entry.sat, d), "", child);
+      var sat = entry.sat;
+      var scnSat = state.scn ? findByName(state.scn.sats, sat.name) : null;
+      var childKeys = satChildSelectionKeys(state, sat);
+      var hasChildren = !!sat.sensor || childKeys.length > 0;
+      var key = satChildKey(sat.name);
+      var open = hasChildren && (isOpen(state, key, false) ||
+        childKeys.indexOf(state.selection) >= 0);
+      if (hasChildren && !child) {
+        var toggleAttrs = ' data-toggle="' + esc(key) + '" data-open="' +
+          (open ? "1" : "0") + '"';
+        html += '<div class="tree-subrow">' +
+          '<button class="tree-disclosure"' + toggleAttrs +
+          ' aria-expanded="' + (open ? "true" : "false") + '" title="' +
+          (open ? "Collapse" : "Expand") + " " + esc(sat.name) + '">' +
+          (open ? "v" : "&gt;") + "</button>" +
+          satRowButton(sat, entry.index, state, scnSat, d) + "</div>";
+        if (open) html += satChildRows(state, sat, d);
+      } else {
+        html += satRowButton(sat, entry.index, state, scnSat, d, child);
+      }
     });
     return html;
+  }
+
+  function satRowButton(sat, index, state, scnSat, d, child) {
+    return row2(sat.name, sat.name, state.selection,
+      Orbit.spec.satColor(sat, index), false,
+      satMeta(sat, d), sourceBadge(scnSat), !!child);
   }
 
   // groupRow: collapsible header line (chevron + label). `selectable` rows
@@ -439,6 +567,7 @@ window.Orbit = window.Orbit || {};
     else if (sel.type === "areaGroup") el.innerHTML = areaGroupHtml(sel, state);
     else if (sel.type === "task") el.innerHTML = taskHtml(sel, state);
     else if (sel.type === "accessRequest") el.innerHTML = accessRequestHtml(sel, state);
+    else if (sel.type === "sensorAccess") el.innerHTML = sensorAccessHtml(sel, state);
     else if (sel.type === "access") el.innerHTML = accessHtml(sel.access, state);
     else el.innerHTML = payloadSatelliteHtml(sel.scnSat, state);
 
@@ -521,10 +650,38 @@ window.Orbit = window.Orbit || {};
       ["Longitude", d.fmtDeg(pos.lonDeg, 3)],
       ["Altitude", pos.altKm.toFixed(1) + " km"],
     ];
+    var eci = d.sampleEci(scnSat, state.simSec);
+    if (eci) {
+      pairs.push(["ECI position", "[" + eci.x.toFixed(0) + ", " +
+        eci.y.toFixed(0) + ", " + eci.z.toFixed(0) + "] km"]);
+    }
     var lighting = d.lightingStateAt(state.scn, scnSat.name, state.simSec);
     if (lighting) pairs.push(["Lighting", lighting]);
+    var sourceNote = scnSat.source === "preview"
+      ? '<span class="tree-badge tree-badge-preview">browser preview</span>'
+      : "";
     return '<div class="insp-caption">LIVE STATE (T+' + d.fmtHms(state.simSec) +
-      ")" + staleTag(state) + "</div>" + kv(pairs);
+      ")" + sourceNote + (scnSat.source === "matlab" ? "" : staleTag(state)) +
+      "</div>" + kv(pairs);
+  }
+
+  // Sensor visibility pair (payload sensorAccesses entry): both gating modes
+  // for one platform/target combination, whether or not a request exists.
+  function sensorAccessHtml(sel, state) {
+    var sa = sel.sensorAccess;
+    return '<div class="insp-section">' +
+      '<div class="insp-title">' + esc(sa.platform) + " sensor &#8594; " +
+      esc(sa.target) + entryStaleTag(state, sa) + "</div>" +
+      '<div class="insp-subtitle">Sensor visibility - computed by the last ' +
+      "MATLAB run" + (sa.sensor ? " - " + esc(sa.sensor) : "") + "</div>" +
+      kv([["Platform", sa.platform], ["Sensor", sa.sensor || "(default)"],
+        ["Target", sa.target]]) +
+      '<div class="insp-caption">FOR WINDOWS (SLEW-REACHABLE)' +
+      entryStaleTag(state, sa) + "</div>" +
+      windowListHtml(sa.forWindows, state) +
+      '<div class="insp-caption">FOV WINDOWS (IN BEAM)' +
+      entryStaleTag(state, sa) + "</div>" +
+      windowListHtml(sa.fovWindows, state) + "</div>";
   }
 
   function specSatelliteHtml(sel, state) {
@@ -690,12 +847,34 @@ window.Orbit = window.Orbit || {};
         Array.isArray(sensor.boresight)) {
       pairs.push(["Boresight", sensor.boresight.join(", ")]);
     }
-    // Live pointing phase from the scheduled tasks (idle / slew / track /
-    // return-home), only while the schedule is fresh for the current spec.
-    if (state.scn && state.scn.hasSchedule && !state.dirty) {
-      var pointing = Orbit.data.pointingStateAt(
-        Orbit.data.scheduleForPlatform(state.scn.schedule, sat.name),
-        state.simSec);
+    // Live pointing phase: the backend's exported pointing samples when the
+    // schedule is fresh (authoritative, includes the real area-scan sweep),
+    // else the client-side phase model over fresh schedule entries.
+    var sampled = state.scn ? Orbit.data.pointingAt(state.scn, sat.name,
+      sensor.name || null, state.simSec) : null;
+    if (sampled) {
+      var sampledText;
+      if (sampled.phase === "track") {
+        sampledText = "Tracking " + (sampled.targetName || "target");
+      } else if (sampled.phase === "scan") {
+        sampledText = "Scanning " + (sampled.targetName || "area");
+        if (sampled.aimLatDeg != null) {
+          sampledText += " @ " + sampled.aimLatDeg.toFixed(2) + ", " +
+            sampled.aimLonDeg.toFixed(2);
+        }
+      } else if (sampled.phase === "slew") {
+        sampledText = "Slewing to " + (sampled.targetName || "target");
+      } else if (sampled.phase === "return") {
+        sampledText = "Returning home from " + (sampled.targetName || "target");
+      } else {
+        sampledText = (sensor.pointing || "Nadir") + " (home)";
+      }
+      pairs.push(["Live pointing", sampledText]);
+      pairs.push(["Pointing source", "MATLAB (authoritative)"]);
+    } else if (state.scn && state.scn.hasSchedule) {
+      var freshEntries = Orbit.data.scheduleForPlatform(state.scn.schedule, sat.name)
+        .filter(function (e) { return !entryStale(state, e); });
+      var pointing = Orbit.data.pointingStateAt(freshEntries, state.simSec);
       var pct = Math.round(pointing.progress * 100);
       var text;
       if (pointing.phase === "track") {
@@ -708,6 +887,8 @@ window.Orbit = window.Orbit || {};
         text = (sensor.pointing || "Nadir") + " (home)";
       }
       pairs.push(["Live pointing", text]);
+      pairs.push(["Pointing source",
+        state.dirty ? "estimate (results stale - Re-run)" : "schedule estimate"]);
     }
     return html + kv(pairs) +
       '<div class="insp-actions">' +
@@ -809,11 +990,15 @@ window.Orbit = window.Orbit || {};
       staleTag(state) + "</div>";
     if (sel.entries.length > 0) {
       html += scheduleListHtml(sel.entries, state, function (e) {
-        return e.sensor || e.platform;
+        var suffix = e.sensor || e.platform;
+        if (e.qualityScore != null) suffix += " - q " + e.qualityScore.toFixed(2);
+        return suffix;
       });
     } else if (!state.dirty && state.scn && state.scn.hasSchedule) {
       html += '<div class="insp-hint">The last run could not schedule this ' +
-        "task - no feasible sensor window met its constraints.</div>";
+        "task: no candidate window satisfied its dwell/coverage constraints " +
+        "within the sensor's field of regard (higher-priority tasks win " +
+        "conflicts). Try a longer scenario, a wider FOR, or a lower dwell.</div>";
     } else {
       html += '<div class="insp-hint">Not scheduled yet - press Re-run to let ' +
         "the MATLAB scheduler assign it.</div>";
@@ -924,12 +1109,15 @@ window.Orbit = window.Orbit || {};
   // ---- timeline ------------------------------------------------------------------
 
   // One timeline band, positioned as a percentage of the scenario span.
-  function laneBand(scn, startSec, stopSec, color, title) {
+  // Stale bands (their endpoints changed since the run) render dimmed.
+  function laneBand(scn, startSec, stopSec, color, title, stale) {
     var left = (startSec / scn.durationSec) * 100;
     var width = ((stopSec - startSec) / scn.durationSec) * 100;
-    return '<span class="lane-band" style="left:' + left.toFixed(3) +
+    return '<span class="lane-band' + (stale ? " is-stale-band" : "") +
+      '" style="left:' + left.toFixed(3) +
       "%;width:" + Math.max(width, 0.15).toFixed(3) + "%;background:" + color +
-      '" title="' + esc(title) + '"></span>';
+      '" title="' + esc(title + (stale ? "\n(stale - re-run to refresh)" : "")) +
+      '"></span>';
   }
 
   // Build the lane DOM once per scenario; the cursor is repositioned per frame.
@@ -943,10 +1131,11 @@ window.Orbit = window.Orbit || {};
     var html = "";
     scn.accesses.forEach(function (acc) {
       var bands = "";
+      var stale = entryStale(state, acc);
       acc.windows.forEach(function (w) {
         bands += laneBand(scn, w.startSec, w.stopSec, "#3f9e6f",
           acc.name + "\n" + Orbit.data.fmtUtc(w.startMs) + " -> " +
-          Orbit.data.fmtUtc(w.stopMs).slice(11) + " UTC");
+          Orbit.data.fmtUtc(w.stopMs).slice(11) + " UTC", stale);
       });
       html += '<div class="lane"><span class="lane-label" title="' + esc(acc.name) +
         '">' + esc(acc.name) + '</span><span class="lane-track" data-name="' +
@@ -967,17 +1156,18 @@ window.Orbit = window.Orbit || {};
     platforms.forEach(function (platform) {
       var bands = "";
       byPlatform[platform].forEach(function (e) {
+        var stale = entryStale(state, e);
         if (e.slewStartSec < e.startSec) {
           bands += laneBand(scn, e.slewStartSec, e.startSec, "#63498a",
-            e.taskName + ": slew (" + (e.sensor || platform) + ")");
+            e.taskName + ": slew (" + (e.sensor || platform) + ")", stale);
         }
         bands += laneBand(scn, e.startSec, e.stopSec, "#9a6bd1",
           e.taskName + ": " + (e.sensor || platform) + " -> " + e.target + "\n" +
           Orbit.data.fmtUtc(e.startMs) + " -> " +
-          Orbit.data.fmtUtc(e.stopMs).slice(11) + " UTC");
+          Orbit.data.fmtUtc(e.stopMs).slice(11) + " UTC", stale);
         if (e.returnEndSec > e.stopSec) {
           bands += laneBand(scn, e.stopSec, e.returnEndSec, "#63498a",
-            e.taskName + ": return to home (" + (e.sensor || platform) + ")");
+            e.taskName + ": return to home (" + (e.sensor || platform) + ")", stale);
         }
       });
       var label = platform + " - tasks";
@@ -1022,8 +1212,10 @@ window.Orbit = window.Orbit || {};
     findRequestResult: findRequestResult,
     requestSelectionKey: requestSelectionKey,
     taskSelectionKey: taskSelectionKey,
+    visSelectionKey: visSelectionKey,
     findTaskEntries: findTaskEntries,
     satGroupKey: satGroupKey,
     areaGroupKey: areaGroupKey,
+    satChildKey: satChildKey,
   };
 })();
