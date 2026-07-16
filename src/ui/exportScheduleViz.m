@@ -13,6 +13,8 @@ function viz = exportScheduleViz(scenario, schedule, options)
 %   viz.sensorAccesses per sensor/target pair, both gating modes:
 %                      forWindows ("the sensor can slew to see it") and
 %                      fovWindows ("the fixed beam sees it right now")
+%   viz.areaSensorAccesses projected area-target boundaries in the sensor
+%                      az/el frame for each FOR access window
 %
 % Pass the result to exportScenarioJson via "Extra" to merge it into the
 % payload, e.g.
@@ -25,6 +27,8 @@ arguments
     schedule table = emptySensorScheduleTable("UTC")
     options.AccessTimeStepSeconds (1, 1) double = 30
     options.MaxAccessPairs (1, 1) double = 24
+    options.AreaProjectionTimeStepSeconds (1, 1) double = 10
+    options.MaxAreaProjectionWindows (1, 1) double = 6
     options.AccessRequests = []
     options.RestrictToAccessRequests (1, 1) logical = false
 end
@@ -132,6 +136,7 @@ warnState = warning("off", "computeSensorAccess:NoWindows");
 restoreWarn = onCleanup(@() warning(warnState));
 
 accessEntries = {};
+areaAccessEntries = {};
 accessOptions = struct("TimeStepSeconds", options.AccessTimeStepSeconds);
 for k = 1:size(pairs, 1)
     forOptions = accessOptions;
@@ -148,8 +153,81 @@ for k = 1:size(pairs, 1)
         "target", pairs(k, 3), ...
         "forWindows", {windowList(forResult.AccessWindows)}, ...
         "fovWindows", {windowList(fovResult.AccessWindows)}); %#ok<AGROW>
+
+    targetObject = scenario.getObject(pairs(k, 3));
+    if isa(targetObject, "AreaTargetObject")
+        areaAccessEntries{end + 1} = areaProjectionEntry( ...
+            scenario, pairs(k, :), forResult.AccessWindows, ...
+            options.AreaProjectionTimeStepSeconds, ...
+            options.MaxAreaProjectionWindows); %#ok<AGROW>
+    end
 end
 viz.sensorAccesses = accessEntries;
+viz.areaSensorAccesses = areaAccessEntries;
+end
+
+function entry = areaProjectionEntry(scenario, pair, accessWindows, stepSeconds, maxWindows)
+parent = scenario.getObject(pair(1));
+sensor = parent.getSensor(pair(2));
+windowCount = min(height(accessWindows), max(0, floor(maxWindows)));
+projectionWindows = cell(windowCount, 1);
+
+for w = 1:windowCount
+    startTime = accessWindows.StartTime(w);
+    stopTime = accessWindows.StopTime(w);
+    timeVector = (startTime:seconds(stepSeconds):stopTime).';
+    if timeVector(end) < stopTime
+        timeVector(end + 1, 1) = stopTime; %#ok<AGROW>
+    end
+    projection = computeAreaTargetAzElSweep( ...
+        scenario, pair(1), pair(2), pair(3), struct( ...
+        "TimeVector", timeVector, ...
+        "MaximumBoundaryStepDeg", 0.25, ...
+        "AzimuthLimitsDeg", [-180 180], ...
+        "ElevationLimitsDeg", [max(0, 90 - sensor.FieldOfRegardDeg), 90], ...
+        "HomeAzElDeg", [0 90]));
+
+    samples = cell(numel(projection.Time), 1);
+    for sampleIndex = 1:numel(projection.Time)
+        samples{sampleIndex} = struct( ...
+            "tOffsetSec", round(seconds( ...
+                projection.Time(sampleIndex) - scenario.Config.Epoch), 3), ...
+            "boundarySegments", {finiteAzElSegments( ...
+                projection.AzimuthDeg{sampleIndex}, ...
+                projection.ElevationDeg{sampleIndex})}, ...
+            "commandAzimuthDeg", round(projection.CommandAzimuthDeg(sampleIndex), 5), ...
+            "commandElevationDeg", round(projection.CommandElevationDeg(sampleIndex), 5), ...
+            "commandInsideFor", projection.CommandInsidePositionLimits(sampleIndex), ...
+            "status", projection.Status(sampleIndex));
+    end
+
+    projectionWindows{w} = struct( ...
+        "startUtc", iso8601(startTime), ...
+        "stopUtc", iso8601(stopTime), ...
+        "samples", {samples});
+end
+
+entry = struct( ...
+    "platform", pair(1), ...
+    "sensor", pair(2), ...
+    "target", pair(3), ...
+    "fieldOfRegardDeg", sensor.FieldOfRegardDeg, ...
+    "coneHalfAngleDeg", sensor.effectiveConeHalfAngleDeg(), ...
+    "projectionWindows", {projectionWindows});
+end
+
+function segments = finiteAzElSegments(azimuthDeg, elevationDeg)
+azimuthDeg = double(azimuthDeg(:));
+elevationDeg = double(elevationDeg(:));
+finite = isfinite(azimuthDeg) & isfinite(elevationDeg);
+changes = diff([false; finite; false]);
+starts = find(changes == 1);
+stops = find(changes == -1) - 1;
+segments = cell(numel(starts), 1);
+for k = 1:numel(starts)
+    segments{k} = round([azimuthDeg(starts(k):stops(k)), ...
+        elevationDeg(starts(k):stops(k))], 5);
+end
 end
 
 function pairs = addPair(pairs, platform, sensor, target, maxPairs)

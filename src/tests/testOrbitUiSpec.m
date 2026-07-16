@@ -153,6 +153,46 @@ verifyEqual(testCase, numel(payload.sun.groundLighting), 1);
 verifyEqual(testCase, string(payload.sun.groundLighting{1}.name), "Eq Target");
 end
 
+function testAreaSensorForProjectionExport(testCase)
+cfg = ScenarioConfig("Name", "Area FOR export", ...
+    "Epoch", datetime(2026, 7, 5, 0, 0, 0, "TimeZone", "UTC"), ...
+    "Duration", minutes(20), "TimeStep", seconds(30));
+scenario = MissionScenario(cfg);
+sat = SatelliteObject.fromKeplerian("AreaSat", 7078e3, 0, 0, 0, 0, 0);
+sensor = SensorObject.simpleConic("AreaCam", "AreaSat", 10);
+sensor.PointingMode = "Nadir";
+sensor.FieldOfRegardDeg = 70;
+sat = sat.addSensor(sensor);
+scenario = scenario.addObject(sat);
+scenario = scenario.propagate();
+
+propagatedSat = scenario.getObject("AreaSat");
+centerLat = propagatedSat.Ephemeris.LatitudeDeg(1);
+centerLon = propagatedSat.Ephemeris.LongitudeDeg(1);
+area = AreaTargetObject("Survey Area", centerLat + [-0.4 -0.4 0.4 0.4], ...
+    centerLon + [-0.4 0.4 0.4 -0.4], 0);
+scenario = scenario.addObject(area);
+
+request = struct("type", "sensor", "platformName", "AreaSat", ...
+    "sensorName", "AreaCam", "targetName", "Survey Area");
+viz = exportScheduleViz(scenario, emptySensorScheduleTable("UTC"), ...
+    "AccessTimeStepSeconds", 10, ...
+    "AreaProjectionTimeStepSeconds", 10, ...
+    "AccessRequests", request, "RestrictToAccessRequests", true);
+
+verifyEqual(testCase, numel(viz.sensorAccesses), 1);
+verifyNotEmpty(testCase, viz.sensorAccesses{1}.forWindows);
+verifyEqual(testCase, numel(viz.areaSensorAccesses), 1);
+projection = viz.areaSensorAccesses{1};
+verifyEqual(testCase, string(projection.platform), "AreaSat");
+verifyEqual(testCase, string(projection.target), "Survey Area");
+verifyGreaterThan(testCase, numel(projection.projectionWindows), 0);
+samples = projection.projectionWindows{1}.samples;
+verifyGreaterThan(testCase, numel(samples), 0);
+verifyNotEmpty(testCase, samples{1}.boundarySegments);
+verifyTrue(testCase, samples{1}.commandInsideFor);
+end
+
 function testRunScenarioEndToEnd(testCase)
 specFile = [tempname(), '.json'];
 outputFile = [tempname(), '.json'];

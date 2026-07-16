@@ -35,6 +35,7 @@ window.Orbit = window.Orbit || {};
       grounds: [],
       accesses: [],
       sensorAccesses: [],
+      areaSensorAccesses: [],
       schedule: [],
       // Distinguishes "the last run scheduled nothing" (schedule present but
       // empty) from "the payload predates tasking" (no schedule field).
@@ -107,6 +108,43 @@ window.Orbit = window.Orbit || {};
         target: sa.target || "",
         forWindows: parseWindows(sa.forWindows),
         fovWindows: parseWindows(sa.fovWindows),
+      });
+    });
+
+    // Whole-area boundary projections in the sensor az/el frame. MATLAB
+    // exports finite line segments, so the browser never has to reconstruct
+    // WGS-84 horizon crossings or the moving sensor attitude.
+    (raw.areaSensorAccesses || []).forEach(function (entry) {
+      var projectionWindows = (entry.projectionWindows || []).map(function (window) {
+        var startMs = Date.parse(window.startUtc);
+        var stopMs = Date.parse(window.stopUtc);
+        return {
+          startSec: (startMs - scn.epochMs) / 1000,
+          stopSec: (stopMs - scn.epochMs) / 1000,
+          samples: (window.samples || []).map(function (sample) {
+            return {
+              tSec: num(sample.tOffsetSec, 0),
+              boundarySegments: (sample.boundarySegments || []).map(function (segment) {
+                return (segment || []).map(function (point) {
+                  return [num(point[0], 0), num(point[1], 0)];
+                });
+              }),
+              commandAzimuthDeg: num(sample.commandAzimuthDeg, null),
+              commandElevationDeg: num(sample.commandElevationDeg, null),
+              commandInsideFor: !!sample.commandInsideFor,
+              status: sample.status || "",
+            };
+          }),
+        };
+      });
+      scn.areaSensorAccesses.push({
+        kind: "areaSensorAccess",
+        platform: entry.platform || "",
+        sensor: entry.sensor || "",
+        target: entry.target || "",
+        fieldOfRegardDeg: num(entry.fieldOfRegardDeg, 180),
+        coneHalfAngleDeg: num(entry.coneHalfAngleDeg, 0),
+        projectionWindows: projectionWindows,
       });
     });
 

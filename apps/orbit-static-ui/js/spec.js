@@ -550,6 +550,7 @@ window.Orbit = window.Orbit || {};
     var satellites = objects.filter(function (o) { return o && o.kind === "satellite"; });
     var stations = objects.filter(function (o) { return o && o.kind === "groundStation"; });
     var targets = objects.filter(function (o) { return o && o.kind === "target"; });
+    var areas = groupTargets(objects).areas;
     var options = [];
 
     satellites.forEach(function (sat) {
@@ -596,9 +597,32 @@ window.Orbit = window.Orbit || {};
           request: sensorRequest,
         });
       });
+      areas.forEach(function (area) {
+        var areaRequest = {
+          type: "sensor",
+          platformName: sat.name,
+          sensorName: sensorName,
+          targetName: area.name,
+        };
+        options.push({
+          key: accessRequestKey(areaRequest),
+          label: sensorName + " -> " + area.name,
+          meta: "sensor / area FOR projection",
+          request: areaRequest,
+        });
+      });
     });
 
     return options;
+  }
+
+  // Whole-area sensor requests only. Used by the dedicated Sensor / Area
+  // workspace so its selectors never list point targets or area grid points.
+  function sensorAreaAccessOptions(spec) {
+    return accessRequestOptions(spec).filter(function (option) {
+      return option.request.type === "sensor" &&
+        !!areaGroup(spec, option.request.targetName);
+    });
   }
 
   // Sensor requests on a platform carry the sensor name explicitly; keep
@@ -900,11 +924,12 @@ window.Orbit = window.Orbit || {};
         ? request.platformName : request.sourceName;
       var platform = byName[platformName];
       var sensorTarget = byName[request.targetName];
+      var sensorArea = areaGroup(spec, request.targetName);
       if (!platform || platform.kind !== "satellite" || !platform.sensor) {
         errors.push(where + ": platformName must reference a satellite with a sensor.");
       }
-      if (!sensorTarget || sensorTarget.kind !== "target") {
-        errors.push(where + ": targetName must reference a point target.");
+      if ((!sensorTarget || sensorTarget.kind !== "target") && !sensorArea) {
+        errors.push(where + ": targetName must reference a point or area target.");
       }
     });
   }
@@ -1281,6 +1306,7 @@ window.Orbit = window.Orbit || {};
     accessRequestKey: accessRequestKey,
     accessRequestLabel: accessRequestLabel,
     accessRequestOptions: accessRequestOptions,
+    sensorAreaAccessOptions: sensorAreaAccessOptions,
     renameSensorRequests: renameSensorRequests,
     detachSensorReferences: detachSensorReferences,
     countReferences: countReferences,

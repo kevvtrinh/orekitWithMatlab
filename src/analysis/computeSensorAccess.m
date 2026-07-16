@@ -18,6 +18,8 @@ function sensorAccessResult = computeSensorAccess(scenario, parentObjectName, se
 %                    footprint/instantaneous-view question. Model a
 %                    non-slewable sensor by setting FieldOfRegardDeg equal
 %                    to its field of view half-angle.
+%   SuppressNoAccessWarning  Default false. Set true when a caller will
+%                    handle an empty AccessWindows table itself.
 %
 % Result adds FieldOfViewMode ("FOV"|"FOR") and FovLimitDeg (the half-angle
 % gate that was applied).
@@ -319,6 +321,9 @@ end
 
 function warnNoAccess(scenario, fovLimitDeg, timeVector, offBoresightAngleDeg, rangeKm, ...
         lineOfSightOK, options)
+if isfield(options, "SuppressNoAccessWarning") && options.SuppressNoAccessWarning
+    return;
+end
 [minOff, idx] = min(offBoresightAngleDeg);
 stepSeconds = seconds(scenario.Config.TimeStep);
 usedDenseSampling = isfield(options, "TimeStepSeconds") && ...

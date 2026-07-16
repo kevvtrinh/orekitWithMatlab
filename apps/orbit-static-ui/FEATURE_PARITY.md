@@ -97,6 +97,13 @@ were additionally exercised end-to-end against a live bridge.
     section; + Access offers "Calculate all" to restore the default sweep;
     the maneuver dialog preselects the current satellite; playback pauses
     pinned at the scenario end; unscheduled tasks explain why.
+- [x] **Level 8 - Sensor / area FOR workspace**
+  A third top-level view (`3`) pairs sensor/area access authoring with a live
+  sensor-frame az/el pane. Whole-area `accessRequests` are computed by
+  MATLAB/Orekit, including FOR/FOV windows, WGS-84 horizon clipping, moving
+  sensor attitude, centroid command, and representative boundary samples for
+  each projected pass. Pending and stale states remain explicit, and area
+  request inspector rows can open the FOR view directly.
 
 Known limitations (deliberate):
 

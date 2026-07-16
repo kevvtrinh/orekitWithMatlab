@@ -94,6 +94,11 @@ exportSensorAccessReport(result, "sensor_access_report.csv");
 
 See `examples/example_08_sensorAccess.m` and `examples/headless/sensors/script_219_sensorFullDemo.m`.
 
+For a geographic polygon projected into a moving satellite sensor frame,
+including WGS-84 horizon clipping, animated az/el outlines, and an accumulated
+sweep print, run `examples/example_22_areaTargetAzElSweep.m`. The reusable
+analysis entry point is `computeAreaTargetAzElSweep`.
+
 ## Propagators and force models
 
 Each satellite selects its propagator through `PropagatorType`:

@@ -48,6 +48,10 @@
     lastRunOutcome: null,
     lastRunFinishedMs: null,
     lastRunDurationMs: null,
+    sensorAreaPlatform: "",
+    sensorAreaSensor: "",
+    sensorAreaTarget: "",
+    sensorAreaKey: "",
   };
 
   var VIEW_OPTIONS = [
@@ -62,8 +66,12 @@
 
   var els = {};
   ["scenario-chip", "utc-readout", "btn-refresh", "btn-run-demo", "btn-run-scenario",
-    "bridge-pill", "dirty-pill", "btn-view-2d", "btn-view-3d", "canvas-2d", "canvas-3d",
-    "viewport-hud", "viewport-frame-tag", "btn-reset-view", "object-tree", "inspector",
+    "bridge-pill", "dirty-pill", "btn-view-2d", "btn-view-3d", "btn-view-sensor-area",
+    "canvas-2d", "canvas-3d", "canvas-sensor-for", "sensor-area-view",
+    "sensor-area-sensor", "sensor-area-target", "btn-add-sensor-area-access",
+    "sensor-area-note", "sensor-area-request-list", "sensor-for-title",
+    "viewport-hud", "viewport-toolbar", "viewport-frame-tag", "btn-reset-view",
+    "object-tree", "inspector",
     "btn-settings", "btn-file-menu", "file-menu", "menu-import-spec",
     "menu-export-spec", "menu-export-scenario", "menu-export-ephemeris",
     "menu-reset-demo", "import-spec-input",
@@ -248,7 +256,8 @@
     var disabled = state.busy || !state.spec;
     [els.btnSettings, els.btnAddSat, els.btnAddTle, els.btnAddWalker,
      els.btnAddStation, els.btnAddTarget, els.btnAddArea,
-     els.btnAddSensor, els.btnAddAccess, els.btnAddTask, els.btnAddManeuver]
+     els.btnAddSensor, els.btnAddAccess, els.btnAddTask, els.btnAddManeuver,
+     els.btnAddSensorAreaAccess]
       .forEach(function (btn) { btn.disabled = disabled; });
     els.menuImportSpec.disabled = state.busy;
   }
@@ -282,6 +291,7 @@
     updateDirtyUi();
     updateEditButtons();
     renderPanels();
+    renderSensorAreaWorkspace();
     refreshStatusBar();
   }
 
@@ -436,6 +446,7 @@
     Orbit.panels.buildTimeline(els.timelineLanes, state, seek);
     updateDirtyUi();
     renderPanels();
+    renderSensorAreaWorkspace();
     refreshStatusBar();
   }
 
@@ -1069,7 +1080,7 @@
     }
     if (selectOptions.length === 0) {
       setMessage("Add a satellite plus a ground station, a second satellite, " +
-        "or a sensor and a point target before requesting access.", "error");
+        "or a sensor and a point or area target before requesting access.", "error");
       return;
     }
     Orbit.modal.form({
@@ -1144,6 +1155,175 @@
     applySpec(specWith({ accessRequests: remaining })).then(function (result) {
       if (result.errors) setMessage(result.errors.join(" "), "error");
       else setMessage("Removed access request '" + label + "'.", "ok");
+    });
+  }
+
+  // ---- sensor / area workspace -----------------------------------------------
+
+  function areaAccessRequests() {
+    if (!state.spec) return [];
+    return Orbit.spec.asArray(state.spec.accessRequests).filter(function (request) {
+      return request && request.type === "sensor" &&
+        !!Orbit.spec.areaGroup(state.spec, request.targetName);
+    });
+  }
+
+  function sensorAreaRequestByKey(key) {
+    var requests = areaAccessRequests();
+    for (var i = 0; i < requests.length; i++) {
+      if (Orbit.spec.accessRequestKey(requests[i]) === key) return requests[i];
+    }
+    return null;
+  }
+
+  function sensorAreaDraftRequest() {
+    if (!state.sensorAreaPlatform || !state.sensorAreaTarget) return null;
+    return {
+      type: "sensor",
+      platformName: state.sensorAreaPlatform,
+      sensorName: state.sensorAreaSensor,
+      targetName: state.sensorAreaTarget,
+    };
+  }
+
+  function activeSensorAreaRequest() {
+    var selected = sensorAreaRequestByKey(state.sensorAreaKey);
+    if (selected) return selected;
+    var draft = sensorAreaDraftRequest();
+    return draft ? sensorAreaRequestByKey(Orbit.spec.accessRequestKey(draft)) : null;
+  }
+
+  function selectSensorAreaRequest(request, openView) {
+    if (!request) return;
+    state.sensorAreaPlatform = request.platformName != null
+      ? request.platformName : request.sourceName;
+    state.sensorAreaSensor = request.sensorName || "";
+    state.sensorAreaTarget = request.targetName || "";
+    state.sensorAreaKey = Orbit.spec.accessRequestKey(request);
+    state.selection = Orbit.panels.requestSelectionKey(request);
+    renderPanels();
+    renderSensorAreaWorkspace();
+    if (openView) setView("sensorArea");
+  }
+
+  function sensorAreaChoiceData() {
+    var combinations = state.spec
+      ? Orbit.spec.sensorAreaAccessOptions(state.spec) : [];
+    var sensors = [], areas = [], sensorSeen = {}, areaSeen = {};
+    combinations.forEach(function (option) {
+      var request = option.request;
+      var sensorKey = encodeURIComponent(request.platformName) + "|" +
+        encodeURIComponent(request.sensorName);
+      if (!sensorSeen[sensorKey]) {
+        sensorSeen[sensorKey] = true;
+        sensors.push({ key: sensorKey, platform: request.platformName,
+          sensor: request.sensorName, label: request.sensorName + " / " + request.platformName });
+      }
+      if (!areaSeen[request.targetName]) {
+        areaSeen[request.targetName] = true;
+        areas.push(request.targetName);
+      }
+    });
+    return { sensors: sensors, areas: areas };
+  }
+
+  function renderSensorAreaWorkspace() {
+    if (!els.sensorAreaSensor || !state.spec) return;
+    var choices = sensorAreaChoiceData();
+    var hasChoices = choices.sensors.length > 0 && choices.areas.length > 0;
+
+    if (!choices.sensors.some(function (s) {
+      return s.platform === state.sensorAreaPlatform && s.sensor === state.sensorAreaSensor;
+    }) && choices.sensors.length > 0) {
+      state.sensorAreaPlatform = choices.sensors[0].platform;
+      state.sensorAreaSensor = choices.sensors[0].sensor;
+    }
+    if (choices.areas.indexOf(state.sensorAreaTarget) < 0 && choices.areas.length > 0) {
+      state.sensorAreaTarget = choices.areas[0];
+    }
+
+    els.sensorAreaSensor.innerHTML = choices.sensors.length
+      ? choices.sensors.map(function (sensor) {
+          var selected = sensor.platform === state.sensorAreaPlatform &&
+            sensor.sensor === state.sensorAreaSensor ? " selected" : "";
+          return '<option value="' + esc(sensor.key) + '"' + selected + '>' +
+            esc(sensor.label) + "</option>";
+        }).join("")
+      : '<option value="">No mounted sensors</option>';
+    els.sensorAreaTarget.innerHTML = choices.areas.length
+      ? choices.areas.map(function (area) {
+          return '<option value="' + esc(area) + '"' +
+            (area === state.sensorAreaTarget ? " selected" : "") + '>' +
+            esc(area) + "</option>";
+        }).join("")
+      : '<option value="">No area targets</option>';
+
+    var draft = sensorAreaDraftRequest();
+    var draftKey = draft ? Orbit.spec.accessRequestKey(draft) : "";
+    var existing = sensorAreaRequestByKey(draftKey);
+    els.btnAddSensorAreaAccess.disabled = state.busy || !hasChoices;
+    els.btnAddSensorAreaAccess.textContent = existing ? "Open Access" : "Add Access";
+
+    var requests = areaAccessRequests();
+    els.sensorAreaRequestList.innerHTML = requests.length === 0
+      ? '<div class="sensor-area-request-label">NO AREA REQUESTS YET</div>'
+      : '<div class="sensor-area-request-label">AREA ACCESS REQUESTS</div>' +
+        requests.map(function (request) {
+          var key = Orbit.spec.accessRequestKey(request);
+          return '<button class="sensor-area-request' +
+            (key === state.sensorAreaKey ? " is-active" : "") +
+            '" data-area-request="' + esc(key) + '">' +
+            esc(Orbit.spec.accessRequestLabel(request)) + "</button>";
+        }).join("");
+
+    els.sensorAreaRequestList.querySelectorAll("[data-area-request]")
+      .forEach(function (button) {
+        button.addEventListener("click", function () {
+          selectSensorAreaRequest(sensorAreaRequestByKey(button.dataset.areaRequest), false);
+        });
+      });
+
+    var active = activeSensorAreaRequest();
+    var projection = Orbit.sensorfor.findProjection(state.scn, active);
+    if (!hasChoices) {
+      els.sensorAreaNote.textContent = choices.sensors.length === 0
+        ? "Add a sensor to a satellite first."
+        : "Add an area target first.";
+      els.sensorAreaNote.className = "sensor-area-note is-warn";
+    } else if (!existing) {
+      els.sensorAreaNote.textContent = "This pair is not requested yet.";
+      els.sensorAreaNote.className = "sensor-area-note";
+    } else if (!projection || projection.stale) {
+      els.sensorAreaNote.textContent = "Request saved. Re-run to calculate its FOR projection.";
+      els.sensorAreaNote.className = "sensor-area-note is-warn";
+    } else {
+      els.sensorAreaNote.textContent = projection.projectionWindows.length +
+        " projected FOR pass" + (projection.projectionWindows.length === 1 ? "" : "es") + ".";
+      els.sensorAreaNote.className = "sensor-area-note is-ok";
+    }
+    els.sensorForTitle.textContent = active
+      ? (active.sensorName || "Sensor") + " -> " + active.targetName
+      : "Field-of-regard view";
+  }
+
+  function addOrOpenSensorAreaAccess() {
+    var request = sensorAreaDraftRequest();
+    if (!request) return;
+    var key = Orbit.spec.accessRequestKey(request);
+    var existing = sensorAreaRequestByKey(key);
+    if (existing) {
+      selectSensorAreaRequest(existing, false);
+      return;
+    }
+    var requests = Orbit.spec.asArray(state.spec.accessRequests).concat([request]);
+    applySpec(specWith({ accessRequests: requests })).then(function (result) {
+      if (!result.ok) {
+        setMessage((result.errors || ["Could not add area access."]).join(" "), "error");
+        return;
+      }
+      selectSensorAreaRequest(request, false);
+      setMessage("Requested " + Orbit.spec.accessRequestLabel(request) +
+        " - press Re-run to compute the FOR projection.", "ok");
     });
   }
 
@@ -1589,7 +1769,9 @@
 
   function updateFrameTag() {
     var eci = state.viewOptions.frame3d === "eci";
-    els.viewportFrameTag.textContent = state.view === "2d"
+    els.viewportFrameTag.textContent = state.view === "sensorArea"
+      ? "SENSOR AZIMUTH / ELEVATION"
+      : state.view === "2d"
       ? "EARTH FIXED - EQUIRECTANGULAR"
       : (eci ? "INERTIAL (GCRF) - EARTH ROTATES" : "EARTH FIXED (ECEF)") +
         " - ORTHOGRAPHIC - DRAG TO ROTATE / DOUBLE-CLICK TO RECENTER";
@@ -1759,8 +1941,16 @@
     }
     lastFrameMs = nowMs;
 
-    if (state.view === "2d") Orbit.map2d.draw(els.canvas2d, state);
-    else Orbit.globe3d.draw(els.canvas3d, state);
+    if (state.view === "2d") {
+      Orbit.map2d.draw(els.canvas2d, state);
+    } else if (state.view === "3d") {
+      Orbit.globe3d.draw(els.canvas3d, state);
+    } else {
+      var areaProjection = Orbit.sensorfor.findProjection(
+        state.scn, activeSensorAreaRequest());
+      Orbit.sensorfor.draw(els.canvasSensorFor, areaProjection,
+        state.simSec, !areaProjection || !!areaProjection.stale);
+    }
 
     if (state.scn) {
       els.utcReadout.textContent =
@@ -1788,6 +1978,7 @@
       onRemoveSensor: removeSensor,
       onManeuver: openManeuverDialog,
       onRemoveManeuver: deleteManeuver,
+      onSensorArea: function (request) { selectSensorAreaRequest(request, true); },
     });
   }
 
@@ -1844,6 +2035,17 @@
 
   function select(name) {
     state.selection = state.selection === name ? null : name;
+    if (state.selection && state.selection.indexOf("req:") === 0) {
+      var selected = Orbit.panels.findSelected(state, state.selection);
+      if (selected && selected.type === "accessRequest" &&
+          Orbit.spec.areaGroup(state.spec, selected.request.targetName)) {
+        state.sensorAreaKey = Orbit.spec.accessRequestKey(selected.request);
+        state.sensorAreaPlatform = selected.request.platformName || selected.request.sourceName || "";
+        state.sensorAreaSensor = selected.request.sensorName || "";
+        state.sensorAreaTarget = selected.request.targetName || "";
+        renderSensorAreaWorkspace();
+      }
+    }
     renderPanels();
   }
 
@@ -1856,10 +2058,16 @@
     state.view = view;
     els.canvas2d.hidden = view !== "2d";
     els.canvas3d.hidden = view !== "3d";
+    els.sensorAreaView.hidden = view !== "sensorArea";
     els.btnView2d.classList.toggle("is-active", view === "2d");
     els.btnView3d.classList.toggle("is-active", view === "3d");
+    els.btnViewSensorArea.classList.toggle("is-active", view === "sensorArea");
+    els.viewportHud.hidden = view === "sensorArea";
+    els.viewportToolbar.hidden = view === "sensorArea";
+    els.viewportFrameTag.hidden = view === "sensorArea";
     updateFrameTag();
     els.btnResetView.hidden = view !== "3d";
+    if (view === "sensorArea") renderSensorAreaWorkspace();
   }
 
   function setPlaying(playing) {
@@ -1870,6 +2078,7 @@
 
   els.btnView2d.addEventListener("click", function () { setView("2d"); });
   els.btnView3d.addEventListener("click", function () { setView("3d"); });
+  els.btnViewSensorArea.addEventListener("click", function () { setView("sensorArea"); });
   els.btnPlay.addEventListener("click", function () {
     // Play at the pinned end restarts from the scenario start.
     if (!state.playing && state.scn && state.simSec >= state.scn.durationSec) {
@@ -1908,6 +2117,25 @@
   });
   els.btnAddAccess.addEventListener("click", function () {
     if (state.spec) openAccessDialog();
+  });
+  els.btnAddSensorAreaAccess.addEventListener("click", function () {
+    if (state.spec) addOrOpenSensorAreaAccess();
+  });
+  els.sensorAreaSensor.addEventListener("change", function () {
+    var parts = els.sensorAreaSensor.value.split("|");
+    state.sensorAreaPlatform = decodeURIComponent(parts[0] || "");
+    state.sensorAreaSensor = decodeURIComponent(parts[1] || "");
+    var request = sensorAreaDraftRequest();
+    state.sensorAreaKey = request && sensorAreaRequestByKey(
+      Orbit.spec.accessRequestKey(request)) ? Orbit.spec.accessRequestKey(request) : "";
+    renderSensorAreaWorkspace();
+  });
+  els.sensorAreaTarget.addEventListener("change", function () {
+    state.sensorAreaTarget = els.sensorAreaTarget.value;
+    var request = sensorAreaDraftRequest();
+    state.sensorAreaKey = request && sensorAreaRequestByKey(
+      Orbit.spec.accessRequestKey(request)) ? Orbit.spec.accessRequestKey(request) : "";
+    renderSensorAreaWorkspace();
   });
   els.btnAddTask.addEventListener("click", function () {
     if (state.spec) openTaskDialog(null);
@@ -1995,6 +2223,7 @@
     }
     if (ev.key === "1") { setView("2d"); return; }
     if (ev.key === "2") { setView("3d"); return; }
+    if (ev.key === "3") { setView("sensorArea"); return; }
     if ((ev.key === "r" || ev.key === "R") && !ev.metaKey && !ev.ctrlKey && !els.btnRefresh.disabled) {
       ev.preventDefault();
       els.btnRefresh.click();

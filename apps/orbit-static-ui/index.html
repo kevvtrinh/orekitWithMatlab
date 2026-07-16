@@ -28,6 +28,8 @@
       <div class="view-toggle" role="tablist" aria-label="Mission view">
         <button class="toggle-btn is-active" id="btn-view-2d" role="tab" title="2D map view (1)">2D MAP</button>
         <button class="toggle-btn" id="btn-view-3d" role="tab" title="3D globe view (2)">3D GLOBE</button>
+        <button class="toggle-btn" id="btn-view-sensor-area" role="tab"
+                title="Sensor-to-area access and FOR projection (3)">SENSOR / AREA</button>
       </div>
       <div class="utc-readout" id="utc-readout">&ndash;&ndash;&ndash;&ndash;&#8209;&ndash;&ndash;&#8209;&ndash;&ndash; &ndash;&ndash;:&ndash;&ndash;:&ndash;&ndash; UTC</div>
       <div class="topbar-group">
@@ -124,6 +126,39 @@
       <section class="viewport" id="viewport">
         <canvas id="canvas-2d"></canvas>
         <canvas id="canvas-3d" hidden></canvas>
+        <div class="sensor-area-view" id="sensor-area-view" hidden>
+          <aside class="sensor-area-setup">
+            <div class="sensor-area-eyebrow">ACCESS SETUP</div>
+            <h2>Sensor to area</h2>
+            <p>Select a mounted sensor and a whole area target. Add the request,
+               then Re-run to calculate access and project the boundary with Orekit.</p>
+            <label class="sensor-area-field">Sensor / platform
+              <select class="input" id="sensor-area-sensor"></select>
+            </label>
+            <label class="sensor-area-field">Area target
+              <select class="input" id="sensor-area-target"></select>
+            </label>
+            <button class="btn btn-accent sensor-area-add" id="btn-add-sensor-area-access">
+              Add Access
+            </button>
+            <div class="sensor-area-note" id="sensor-area-note"></div>
+            <div class="sensor-area-request-list" id="sensor-area-request-list"></div>
+          </aside>
+          <section class="sensor-for-pane">
+            <header class="sensor-for-header">
+              <div>
+                <div class="sensor-area-eyebrow">SENSOR FRAME</div>
+                <h2 id="sensor-for-title">Field-of-regard view</h2>
+              </div>
+              <div class="sensor-for-legend">
+                <span><i class="legend-swatch legend-for"></i>FOR</span>
+                <span><i class="legend-swatch legend-fov"></i>FOV</span>
+                <span><i class="legend-swatch legend-area"></i>Area</span>
+              </div>
+            </header>
+            <canvas id="canvas-sensor-for"></canvas>
+          </section>
+        </div>
         <div class="viewport-hud" id="viewport-hud"></div>
         <div class="viewport-toolbar" id="viewport-toolbar">
           <button class="btn btn-small" id="btn-reset-view"
@@ -181,6 +216,7 @@
   <script src="js/preview.js" defer></script>
   <script src="js/merge.js" defer></script>
   <script src="js/sensorviz.js" defer></script>
+  <script src="js/sensorfor.js" defer></script>
   <script src="js/api.js" defer></script>
   <script src="js/modal.js" defer></script>
   <script src="js/map2d.js" defer></script>

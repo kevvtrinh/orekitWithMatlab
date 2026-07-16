@@ -135,10 +135,26 @@ window.Orbit = window.Orbit || {};
         e.stale = !tasksFresh || !freshNames[e.platform] || !targetFresh;
         return e;
       });
+    function targetKnown(targetName) {
+      return !!specNames[targetName] || !!Orbit.spec.areaGroup(spec, targetName);
+    }
+
+    function targetFresh(targetName) {
+      return !!freshNames[targetName] || areaFresh(spec, runSpec, targetName);
+    }
+
     var sensorAccesses = ((scn && scn.sensorAccesses) || [])
-      .filter(function (a) { return specNames[a.platform] && specNames[a.target]; })
+      .filter(function (a) { return specNames[a.platform] && targetKnown(a.target); })
       .map(function (a) {
-        a.stale = endpointStale(a.platform, a.target);
+        a.stale = !metaFresh || !freshNames[a.platform] || !targetFresh(a.target);
+        return a;
+      });
+    var areaSensorAccesses = ((scn && scn.areaSensorAccesses) || [])
+      .filter(function (a) {
+        return specNames[a.platform] && !!Orbit.spec.areaGroup(spec, a.target);
+      })
+      .map(function (a) {
+        a.stale = !metaFresh || !freshNames[a.platform] || !areaFresh(spec, runSpec, a.target);
         return a;
       });
 
@@ -187,6 +203,7 @@ window.Orbit = window.Orbit || {};
       grounds: Orbit.spec.displayGrounds(spec),
       accesses: accesses,
       sensorAccesses: sensorAccesses,
+      areaSensorAccesses: areaSensorAccesses,
       schedule: schedule,
       hasSchedule: !!(scn && scn.hasSchedule),
       sun: sun,

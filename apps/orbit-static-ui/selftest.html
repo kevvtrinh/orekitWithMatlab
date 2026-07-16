@@ -27,6 +27,7 @@
   <script src="js/preview.js"></script>
   <script src="js/merge.js"></script>
   <script src="js/sensorviz.js"></script>
+  <script src="js/sensorfor.js"></script>
   <script src="js/api.js"></script>
   <script src="js/map2d.js"></script>
   <script src="js/globe3d.js"></script>
@@ -341,6 +342,22 @@
           "sensor request fields wrong");
       });
 
+      check("sensorAreaAccessOptions exposes one whole-area request", function () {
+        var sat = Orbit.spec.keplerianSatelliteTemplate("AreaSat");
+        sat.sensor = Orbit.spec.sensorTemplate();
+        var points = Orbit.spec.expandAreaGrid({
+          name: "Survey Area", centerLatDeg: 10, centerLonDeg: 20,
+          altitudeM: 0, widthKm: 100, heightKm: 100, spacingKm: 50, priority: 5,
+        });
+        var spec = { objects: [sat].concat(points) };
+        var options = Orbit.spec.sensorAreaAccessOptions(spec);
+        assert(options.length === 1, "whole-area option count");
+        assert(options[0].request.targetName === "Survey Area", "area name missing");
+        spec.accessRequests = [options[0].request];
+        var errors = Orbit.spec.validateSpec(spec);
+        assert(errors.length === 0, errors[0]);
+      });
+
       check("validateSpec flags duplicate and broken access requests", function () {
         var spec = Orbit.spec.deriveSpecFromScenario(raw);
         var sat = Orbit.spec.keplerianSatelliteTemplate("ReqSat");
@@ -401,6 +418,39 @@
         near(pair.forWindows[0].startSec, 600, 1e-6, "startSec");
         near(pair.forWindows[0].durationSec, 600, 1e-6, "durationSec");
         assert(pair.fovWindows.length === 0, "fov windows should be empty");
+      });
+
+      check("area FOR projection parsing and sample selection", function () {
+        var scn2 = Orbit.data.parseScenario({
+          meta: { epochUtc: "2026-01-01T00:00:00Z", durationSeconds: 3600,
+            stepSeconds: 60 },
+          areaSensorAccesses: [{
+            platform: "S", sensor: "Cam", target: "Survey",
+            fieldOfRegardDeg: 60, coneHalfAngleDeg: 10,
+            projectionWindows: [{
+              startUtc: "2026-01-01T00:10:00Z",
+              stopUtc: "2026-01-01T00:20:00Z",
+              samples: [
+                { tOffsetSec: 600, boundarySegments: [[[-2, 70], [2, 70], [2, 75]]],
+                  commandAzimuthDeg: 0, commandElevationDeg: 72,
+                  commandInsideFor: true, status: "visible" },
+                { tOffsetSec: 900, boundarySegments: [[[-1, 72], [1, 72], [1, 76]]],
+                  commandAzimuthDeg: 0, commandElevationDeg: 74,
+                  commandInsideFor: true, status: "visible" }
+              ]
+            }]
+          }]
+        });
+        assert(scn2.areaSensorAccesses.length === 1, "area projection missing");
+        var entry = scn2.areaSensorAccesses[0];
+        var model = Orbit.sensorfor.viewModel(entry, 850);
+        assert(model.active, "pass should be active");
+        assert(model.sample.tSec === 900, "nearest projection sample");
+        assert(model.sample.boundarySegments[0][0][1] === 72, "boundary lost");
+        var request = { type: "sensor", platformName: "S", sensorName: "Cam",
+          targetName: "Survey" };
+        assert(Orbit.sensorfor.findProjection(scn2, request) === entry,
+          "request did not resolve projection");
       });
 
       check("task templates and area-scan tasks validate; bad tasks are flagged", function () {
@@ -1136,6 +1186,29 @@
         assert(merged.pointing.length === scn.pointing.length, "pointing should survive");
         assert(merged.schedule.every(function (e) { return !e.stale; }),
           "fresh schedule entries must not be stale");
+      });
+
+      check("merge: whole-area sensor projections survive freshness gating", function () {
+        var raw2 = JSON.parse(JSON.stringify(raw));
+        var runSpec = Orbit.spec.normalizeSpecShape(raw2.spec);
+        var platform = null;
+        runSpec.objects.forEach(function (o) {
+          if (!platform && o.kind === "satellite" && o.sensor) platform = o;
+        });
+        var area = Orbit.spec.groupTargets(runSpec.objects).areas[0];
+        assert(platform && area, "sample needs a sensor and area");
+        raw2.areaSensorAccesses = [{
+          platform: platform.name,
+          sensor: Orbit.spec.sensorDisplayName(platform),
+          target: area.name,
+          fieldOfRegardDeg: platform.sensor.fieldOfRegardDeg,
+          coneHalfAngleDeg: platform.sensor.coneHalfAngleDeg,
+          projectionWindows: []
+        }];
+        var parsed = Orbit.data.parseScenario(raw2);
+        var merged = Orbit.merge.buildRenderScenario(runSpec, parsed);
+        assert(merged.areaSensorAccesses.length === 1, "area projection was dropped");
+        assert(!merged.areaSensorAccesses[0].stale, "fresh area projection marked stale");
       });
 
       check("merge: editing a sensor stales the schedule and previews the satellite", function () {

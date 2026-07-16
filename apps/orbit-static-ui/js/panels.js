@@ -552,7 +552,8 @@ window.Orbit = window.Orbit || {};
 
   // handlers: { onSeek(sec), onEdit(name), onDelete(name),
   //   onSensor(satName), onRemoveSensor(satName),
-  //   onManeuver(satName, indexOrNull), onRemoveManeuver(satName, index) }
+  //   onManeuver(satName, indexOrNull), onRemoveManeuver(satName, index),
+  //   onSensorArea(request) }
   function renderInspector(el, state, handlers) {
     var sel = state.selection ? findSelected(state, state.selection) : null;
     if (!sel) {
@@ -612,6 +613,15 @@ window.Orbit = window.Orbit || {};
         handlers.onRemoveManeuver(btn.dataset.name, parseInt(btn.dataset.index, 10));
       });
     });
+    var sensorAreaBtn = el.querySelector('[data-action="sensor-area-view"]');
+    if (sensorAreaBtn) {
+      sensorAreaBtn.addEventListener("click", function () {
+        var selected = state.selection ? findSelected(state, state.selection) : null;
+        if (selected && selected.type === "accessRequest") {
+          handlers.onSensorArea(selected.request);
+        }
+      });
+    }
   }
 
   function kv(pairs) {
@@ -1067,6 +1077,7 @@ window.Orbit = window.Orbit || {};
     var req = sel.request;
     var isSensor = (req.type == null ? "access" : req.type) === "sensor";
     var platform = req.platformName != null ? req.platformName : req.sourceName;
+    var isArea = isSensor && !!Orbit.spec.areaGroup(state.spec, req.targetName);
     var dis = state.busy ? " disabled" : "";
     var pairs = isSensor
       ? [["Platform", platform || "?"],
@@ -1079,7 +1090,8 @@ window.Orbit = window.Orbit || {};
       '<div class="insp-title">' + esc(Orbit.spec.accessRequestLabel(req)) +
       staleTag(state) + "</div>" +
       '<div class="insp-subtitle">' +
-      (isSensor ? "Access request - sensor FOR / FOV visibility"
+      (isArea ? "Access request - area boundary in sensor FOR"
+              : isSensor ? "Access request - sensor FOR / FOV visibility"
                 : "Access request - line of sight / elevation") + "</div>" +
       kv(pairs);
 
@@ -1102,6 +1114,8 @@ window.Orbit = window.Orbit || {};
 
     return html +
       '<div class="insp-actions">' +
+      (isArea ? '<button class="btn btn-small" data-action="sensor-area-view">' +
+        "Open FOR View</button>" : "") +
       '<button class="btn btn-small btn-danger" data-action="delete" data-name="' +
       esc(sel.key) + '" title="Delete (Del)"' + dis + ">Delete Request</button></div></div>";
   }

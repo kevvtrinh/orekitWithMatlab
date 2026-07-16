@@ -24,6 +24,12 @@ per-platform timeline lanes (slew lead-in, dwell, return-home). See
 `FEATURE_PARITY.md` for the verified parity status against the React
 console in `apps/orbit-ui`.
 
+The **Sensor / Area** view adds a focused whole-area workflow: choose a
+satellite sensor and an area target, add the access request, and Re-run. MATLAB
+and Orekit compute the FOR/FOV windows plus the WGS-84-clipped area boundary in
+the moving sensor az/el frame. The adjacent FOR pane shows the current boundary,
+centroid command, FOV/FOR bands, and representative outlines across the pass.
+
 ## Run With MATLAB
 
 From this repository root in MATLAB:
@@ -171,6 +177,8 @@ propagation physics, the per-object freshness merge, tree/inspector/timeline
 rendering, and renderer smoke tests across every view-toggle combination in
 both frames.
 
+The top view tabs are 2D Map (`1`), 3D Globe (`2`), and Sensor / Area (`3`).
+
 ## Operational Polish
 
 A **Log** button next to the bridge pill opens a worker/status panel: the
@@ -198,7 +206,7 @@ The File menu adds two commands:
 
 Keyboard shortcuts, layered onto the existing Space play/pause: Left/Right
 arrow steps the clock by one time step, Home rewinds to the scenario start,
-1/2 switch between the 2D map and 3D globe, Delete removes the current
+1/2/3 switch between the 2D map, 3D globe, and Sensor / Area view; Delete removes the current
 selection (with the existing confirmation dialogs), R reloads scenario data,
 and Escape closes an open menu. All of them are skipped while a dialog is
 open or while typing in a text/number/select field, and the buttons/rows that
