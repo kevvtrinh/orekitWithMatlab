@@ -1,0 +1,2088 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; style-src 'unsafe-inline' blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; img-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; font-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; media-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; worker-src blob:; connect-src blob: data:; frame-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<title>Azel Wrap Lab</title>
+<style>:root{color-scheme:light dark;background:light-dark(rgb(255 255 255), rgb(24 24 24))}html,body{margin:0}body{box-sizing:border-box;padding:1rem;background:inherit}iframe{display:block;width:100%;max-width:736px;height:calc(100vh - 2rem);margin:0 auto;border:0}</style>
+</head>
+<body>
+<iframe sandbox="allow-scripts" referrerpolicy="no-referrer" title="Azel Wrap Lab" srcdoc="&lt;!doctype html&gt;
+&lt;html lang=&quot;en&quot;&gt;
+&lt;head&gt;
+&lt;meta charset=&quot;utf-8&quot;&gt;
+&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width, initial-scale=1&quot;&gt;
+&lt;meta name=&quot;referrer&quot; content=&quot;no-referrer&quot;&gt;
+&lt;meta http-equiv=&quot;Content-Security-Policy&quot; content=&quot;default-src &#x27;none&#x27;; script-src &#x27;unsafe-inline&#x27; &#x27;unsafe-eval&#x27; &#x27;wasm-unsafe-eval&#x27; blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; style-src &#x27;unsafe-inline&#x27; blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; img-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; font-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; media-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; worker-src blob:; connect-src blob: data:; frame-src &#x27;none&#x27;; object-src &#x27;none&#x27;; base-uri &#x27;none&#x27;; form-action &#x27;none&#x27;&quot;&gt;
+&lt;title&gt;Azel Wrap Lab&lt;/title&gt;
+&lt;style&gt;:root {
+  color-scheme: light dark;
+  background-color: var(--background) !important;
+
+  /* Agent-facing contract; keep in sync with SKILL.md. */
+  --background: light-dark(rgb(255 255 255), rgb(24 24 24));
+  --foreground: light-dark(rgb(26 28 31), rgb(255 255 255));
+  --card: color-mix(in oklab, var(--foreground) 5%, transparent);
+  --card-foreground: var(--foreground);
+  --popover: light-dark(rgb(255 255 255), rgb(45 45 45));
+  --popover-foreground: var(--foreground);
+  --primary: light-dark(rgb(51 156 255), rgb(131 195 255));
+  --primary-foreground: light-dark(rgb(255 255 255), rgb(13 13 13));
+  --secondary: light-dark(rgb(255 255 255 / 96%), rgb(54 54 54 / 96%));
+  --secondary-foreground: var(--foreground);
+  --muted: color-mix(in srgb, var(--foreground) 10%, transparent);
+  --muted-foreground: light-dark(
+    rgb(26 28 31 / 49.4%),
+    rgb(255 255 255 / 49.8%)
+  );
+  --accent: light-dark(rgb(229 242 255), rgb(13 39 63));
+  --accent-foreground: var(--primary);
+  --destructive: light-dark(rgb(226 85 7), rgb(255 133 73));
+  --border: light-dark(rgb(26 28 31 / 8%), rgb(255 255 255 / 8.2%));
+  --input: light-dark(
+    rgb(26 28 31 / 11.8%),
+    color-mix(in oklab, rgb(0 0 0) 10%, transparent)
+  );
+  --ring: light-dark(rgb(51 156 255), rgb(131 195 255 / 76%));
+  --font-size-base: 14px;
+  --viz-series-1: var(--primary);
+  --viz-series-2: light-dark(rgb(243 136 59), rgb(245 154 86));
+  --viz-series-3: light-dark(rgb(93 201 119), rgb(116 213 139));
+  --viz-series-4: light-dark(rgb(235 119 177), rgb(240 143 192));
+  --viz-series-5: light-dark(rgb(155 121 236), rgb(170 145 239));
+  --viz-series-6: light-dark(rgb(58 185 177), rgb(90 203 194));
+
+  /* Internal implementation variables; not part of the agent contract. */
+  --font-sans: -apple-system, system-ui, &quot;Segoe UI&quot;, sans-serif;
+  --font-mono:
+    ui-monospace, SFMono-Regular, &quot;SF Mono&quot;, Menlo, Consolas, &quot;Liberation Mono&quot;,
+    monospace;
+  --font-size-normal: max(11px, var(--font-size-base));
+  --font-size-tooltip: calc(var(--font-size-base) - 1px);
+  --font-size-small: max(11px, calc(var(--font-size-base) - 2px));
+  --font-size-h1: calc(var(--font-size-normal) * 1.7142857143);
+  --font-size-h2: calc(var(--font-size-normal) * 1.4285714286);
+  --font-size-h3: calc(var(--font-size-normal) * 1.2857142857);
+  --font-weight-normal: 430;
+  --font-weight-medium: 500;
+  --line-height-normal: calc(var(--font-size-normal) * 1.5);
+  --line-height-tooltip: calc(var(--font-size-tooltip) * 1.4285714286);
+  --line-height-small: calc(var(--font-size-small) + 4px);
+  --radius: 12.5px;
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-2xl: calc(var(--radius) * 1.6);
+  --radius-full: 9999px;
+  --shadow-sm: 0 1px 2px -1px rgb(0 0 0 / 8%);
+  --checkmark-image: url(&quot;data:image/svg+xml,%3Csvg xmlns=&#x27;http://www.w3.org/2000/svg&#x27; viewBox=&#x27;0 0 17 17&#x27;%3E%3Cpath d=&#x27;M12.8961 3.64101C13.1297 3.41418 13.4984 3.37523 13.7779 3.56581C14.0571 3.75635 14.1554 4.11331 14.0299 4.41347L13.9615 4.53847L7.71151 13.7045C7.59411 13.8767 7.4063 13.9877 7.19881 14.0072C6.99136 14.0267 6.78564 13.9533 6.63826 13.806L2.88826 10.056L2.79842 9.9457C2.6192 9.67407 2.64927 9.30496 2.88826 9.06581C3.12738 8.82669 3.49647 8.79676 3.76815 8.97597L3.8785 9.06581L7.03084 12.2182L12.8053 3.74941L12.8961 3.64101Z&#x27;/%3E%3C/svg%3E&quot;);
+
+  /* Legacy aliases; not part of the current agent contract. */
+  --viz-bg: transparent;
+  --viz-panel: var(--card);
+  --viz-border: var(--border);
+  --viz-text: var(--foreground);
+  --viz-muted: var(--muted-foreground);
+  --viz-accent: var(--primary);
+  --viz-accent-text: var(--primary-foreground);
+  --viz-accent-bg: var(--accent);
+  --viz-font-size: var(--font-size-base);
+  --viz-warning: var(--destructive);
+  --color-background-primary: var(--background);
+  --color-text-primary: var(--foreground);
+  --color-border-secondary: var(--border);
+}
+
+:root[data-theme=&quot;light&quot;] {
+  color-scheme: light;
+}
+
+:root[data-theme=&quot;dark&quot;] {
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html &gt; body {
+  margin: 0;
+  padding: 5px;
+  color: var(--foreground);
+  background: transparent !important;
+  font-family: var(--font-sans);
+  font-size: var(--font-size-normal);
+  font-weight: var(--font-weight-normal);
+  line-height: var(--line-height-normal);
+}
+
+a {
+  color: color-mix(in srgb, var(--viz-accent) 80%, var(--viz-text) 20%);
+  cursor: pointer;
+  font-weight: var(--viz-font-weight-medium);
+  text-decoration: none;
+  text-underline-offset: 2px;
+}
+
+a:is(:hover, :focus-visible) {
+  text-decoration-line: underline;
+  text-decoration-style: dashed;
+  text-decoration-thickness: 0.5px;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+p {
+  margin-block: 0;
+}
+
+h1 {
+  font-size: var(--font-size-h1);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.25;
+}
+
+h2 {
+  font-size: var(--font-size-h2);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.25;
+}
+
+h3,
+h4,
+h5,
+h6 {
+  font-size: var(--font-size-h3);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.3;
+}
+
+b,
+strong,
+th {
+  font-weight: var(--font-weight-medium);
+}
+
+code:not(pre code) {
+  display: inline;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  corner-shape: superellipse(1.5);
+  background: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  overflow-wrap: anywhere;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  word-break: break-word;
+}
+
+#widget {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  padding: 0;
+  background: transparent !important;
+}
+
+.card {
+  min-width: 0;
+  padding: 12px;
+  overflow: hidden;
+  overflow-wrap: break-word;
+  border-radius: var(--radius-2xl);
+  corner-shape: superellipse(1.5);
+  color: var(--card-foreground);
+  background: var(--card);
+}
+
+#widget &gt; :not(.card) {
+  width: 100% !important;
+  max-width: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.tooltip {
+  position: fixed;
+  z-index: 50;
+  top: 0;
+  left: 0;
+  width: max-content;
+  max-width: min(
+    20rem,
+    var(--tooltip-available-width, calc(100vw - 10px)),
+    calc(100vw - 10px)
+  );
+  max-height: min(
+    var(--tooltip-available-height, calc(100vh - 10px)),
+    calc(100vh - 10px)
+  );
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  corner-shape: superellipse(1.5);
+  color: var(--popover-foreground);
+  background: var(--popover);
+  box-shadow: none;
+  font-size: var(--font-size-tooltip);
+  line-height: var(--line-height-tooltip);
+  overflow-wrap: break-word;
+  white-space: normal;
+  pointer-events: none;
+  user-select: none;
+}
+
+.viz-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(max(180px, 24%), 1fr));
+  gap: 10px;
+}
+
+.viz-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.viz-stat-value {
+  font-size: var(--font-size-h2);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.25;
+}
+
+.viz-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.viz-badge {
+  padding: 3px 8px;
+  border-radius: var(--radius-full);
+  color: var(--accent-foreground);
+  background: var(--accent);
+  font-weight: var(--font-weight-medium);
+}
+
+small,
+.text-small,
+.viz-badge {
+  font-size: var(--font-size-small);
+  line-height: var(--line-height-small);
+}
+
+.text-muted {
+  color: var(--muted-foreground);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.viz-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.viz-controls &gt; .form-label {
+  display: grid;
+  min-width: min(100%, 260px);
+  flex: 1 1 280px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 2px 12px;
+  margin-bottom: 0;
+}
+
+.viz-controls &gt; .form-label &gt; :is(.form-control, .form-range, .form-select) {
+  grid-column: 1 / -1;
+}
+
+.btn,
+.form-check-input,
+.form-control,
+.form-range,
+.form-select {
+  font: inherit;
+}
+
+.btn {
+  appearance: button;
+  display: inline-flex;
+  inline-size: fit-content;
+  max-inline-size: 100%;
+  min-height: 28px;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  margin: 0;
+  padding: 0 8px;
+  -webkit-app-region: no-drag;
+  border: 1px solid var(--input);
+  border-radius: var(--radius-lg);
+  corner-shape: superellipse(1.5);
+  color: var(--secondary-foreground);
+  background: var(--secondary);
+  cursor: var(--cursor-interaction, pointer);
+  text-align: center;
+  text-decoration: none;
+  white-space: nowrap;
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+.btn:is(.btn-block, .viz-tile) {
+  inline-size: 100%;
+}
+
+.btn.viz-tile {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+a.btn {
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.btn:not(:disabled):hover {
+  background: color-mix(in srgb, var(--foreground) 6%, var(--secondary));
+}
+
+.btn-primary {
+  border-color: transparent;
+  color: var(--primary-foreground);
+  background: var(--foreground);
+  background-clip: padding-box;
+}
+
+.btn-primary .text-muted {
+  color: color-mix(in srgb, var(--primary-foreground) 50%, transparent);
+}
+
+.btn-primary:not(:disabled):hover {
+  background: color-mix(in srgb, var(--foreground) 80%, transparent);
+  background-clip: padding-box;
+}
+
+.btn-ghost {
+  border-color: transparent;
+  color: var(--muted-foreground);
+  background: transparent;
+}
+
+.btn-ghost:not(:disabled):hover {
+  color: var(--foreground);
+  background: color-mix(in srgb, var(--foreground) 6%, var(--secondary));
+}
+
+.btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+[data-lucide] {
+  stroke-width: 1.6;
+}
+
+.form-label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--foreground);
+}
+
+.form-control {
+  display: block;
+  width: 100%;
+  min-height: 28px;
+  padding: 0 8px;
+  outline: none;
+  border: 1px solid var(--input);
+  border-radius: var(--radius-lg);
+  corner-shape: superellipse(1.5);
+  color: var(--foreground);
+  background: var(--secondary);
+}
+
+.form-control::placeholder {
+  color: var(--muted-foreground);
+}
+
+.form-control[type=&quot;file&quot;] {
+  padding: 0;
+  overflow: hidden;
+  cursor: var(--cursor-interaction, pointer);
+}
+
+.form-control[type=&quot;file&quot;]::file-selector-button {
+  min-height: 26px;
+  margin-right: 8px;
+  padding: 0 8px;
+  border: 0;
+  border-right: 1px solid var(--input);
+  color: var(--secondary-foreground);
+  background: var(--secondary);
+  cursor: inherit;
+  font: inherit;
+}
+
+.form-control[type=&quot;file&quot;]:not(:disabled):hover::file-selector-button {
+  background: color-mix(in srgb, var(--foreground) 6%, var(--secondary));
+}
+
+.form-control-color[type=&quot;color&quot;] {
+  width: 40px;
+  height: 28px;
+  padding: 3px;
+  cursor: var(--cursor-interaction, pointer);
+}
+
+.form-control-color[type=&quot;color&quot;]::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.form-control-color[type=&quot;color&quot;]::-webkit-color-swatch {
+  border: 0;
+  border-radius: calc(var(--radius-lg) - 4px);
+  corner-shape: superellipse(1.5);
+}
+
+textarea.form-control {
+  height: auto;
+  min-height: 72px;
+  padding: 8px 10px;
+  resize: vertical;
+}
+
+.form-control:focus-visible {
+  border-color: var(--ring);
+  box-shadow: inset 0 0 0 1px var(--ring);
+}
+
+.form-control:disabled,
+.form-select:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.form-select {
+  appearance: none;
+  display: block;
+  width: 100%;
+  min-height: 28px;
+  margin: 0;
+  padding: 0 32px 0 8px;
+  outline: none;
+  border: 1px solid var(--input);
+  border-radius: var(--radius-lg);
+  corner-shape: superellipse(1.5);
+  color: var(--foreground);
+  background-color: var(--secondary);
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--muted-foreground) 50%),
+    linear-gradient(135deg, var(--muted-foreground) 50%, transparent 50%);
+  background-position:
+    calc(100% - 14px) 50%,
+    calc(100% - 10px) 50%;
+  background-repeat: no-repeat;
+  background-size: 4px 4px;
+  cursor: var(--cursor-interaction, default);
+}
+
+.form-select:not(:disabled):hover {
+  background-color: color-mix(in srgb, var(--foreground) 6%, var(--secondary));
+}
+
+.form-select:focus-visible {
+  border-color: var(--ring);
+  box-shadow: inset 0 0 0 1px var(--ring);
+}
+
+.form-check {
+  display: flex;
+  min-height: 20px;
+  align-items: center;
+  gap: 6px;
+}
+
+.form-check-input {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  margin: 0;
+  border: 1px solid var(--input);
+  color: var(--primary-foreground);
+  background-color: transparent;
+  cursor: var(--cursor-interaction, default);
+  transition:
+    background-color 150ms,
+    border-color 150ms,
+    box-shadow 150ms;
+}
+
+.form-check:not(.form-switch) .form-check-input[type=&quot;checkbox&quot;] {
+  border-color: var(--input);
+  border-radius: var(--radius-sm);
+  corner-shape: superellipse(1.5);
+  background-color: var(--secondary);
+  box-shadow: var(--shadow-sm);
+}
+
+.form-check:not(.form-switch)
+  .form-check-input:not(:disabled):not(:checked):hover {
+  background-color: var(--card);
+}
+
+.form-check:not(.form-switch) .form-check-input[type=&quot;checkbox&quot;]:checked {
+  border-color: var(--primary);
+  background-color: var(--primary);
+}
+
+.form-check:not(.form-switch)
+  .form-check-input[type=&quot;checkbox&quot;]:checked::before {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: var(--primary-foreground);
+  content: &quot;&quot;;
+  mask: var(--checkmark-image) center / 12px 12px no-repeat;
+}
+
+.form-check-input[type=&quot;radio&quot;] {
+  width: 14px;
+  height: 14px;
+  border-radius: var(--radius-full);
+}
+
+.form-check-input[type=&quot;radio&quot;]:checked {
+  border: 2px solid var(--primary);
+  background:
+    radial-gradient(circle, var(--primary-foreground) 0 2.5px, transparent 3px),
+    var(--primary);
+}
+
+.form-check:not(.form-switch) .form-check-input:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.form-check:not(.form-switch) .form-check-input:disabled {
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.form-check:not(.form-switch) .form-check-input:disabled + .form-check-label {
+  cursor: not-allowed;
+}
+
+.form-switch .form-check-input:disabled,
+.form-switch .form-check-input:disabled + .form-check-label {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.form-check-label {
+  color: var(--foreground);
+  cursor: var(--cursor-interaction, default);
+}
+
+.form-switch .form-check-input {
+  position: relative;
+  width: 32px;
+  height: 20px;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--muted);
+  box-shadow: none;
+  transition: background-color 200ms cubic-bezier(0, 0, 0.2, 1);
+}
+
+.form-switch .form-check-input::before {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 16px;
+  height: 16px;
+  box-sizing: border-box;
+  border: 1px solid light-dark(var(--primary-foreground), var(--foreground));
+  border-radius: var(--radius-full);
+  background: light-dark(var(--primary-foreground), var(--foreground));
+  box-shadow: var(--shadow-sm);
+  content: &quot;&quot;;
+  transform: translate(2px, -50%);
+  transition: transform 200ms cubic-bezier(0, 0, 0.2, 1);
+}
+
+.form-switch .form-check-input:checked {
+  background: var(--primary);
+}
+
+.form-switch .form-check-input:checked::before {
+  transform: translate(14px, -50%);
+}
+
+.form-switch .form-check-input:focus-visible {
+  box-shadow: 0 0 0 2px var(--ring);
+}
+
+.form-range {
+  appearance: none;
+  display: block;
+  width: 100%;
+  height: 28px;
+  flex: 1;
+  margin: 0;
+  padding: 0;
+  outline: none;
+  border: 0;
+  accent-color: var(--primary);
+  background: linear-gradient(
+      color-mix(in srgb, var(--foreground) 7%, transparent),
+      color-mix(in srgb, var(--foreground) 7%, transparent)
+    )
+    center / 100% 2px no-repeat;
+}
+
+.form-range::-webkit-slider-runnable-track {
+  height: 28px;
+  background: transparent;
+}
+
+.form-range::-webkit-slider-thumb {
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  margin-top: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: light-dark(var(--primary-foreground), var(--foreground));
+}
+
+.form-range:focus-visible::-webkit-slider-thumb {
+  border-color: var(--ring);
+  box-shadow: inset 0 0 0 1px var(--ring);
+}
+
+.form-range::-moz-range-track {
+  height: 28px;
+  background: transparent;
+}
+
+.form-range::-moz-range-thumb {
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: light-dark(var(--primary-foreground), var(--foreground));
+}
+
+.form-range:focus-visible::-moz-range-thumb {
+  border-color: var(--ring);
+  box-shadow: inset 0 0 0 1px var(--ring);
+}
+
+.form-range:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.btn:not(.btn-primary, .viz-tile):is(
+    [aria-pressed=&quot;true&quot;],
+    [aria-selected=&quot;true&quot;],
+    .is-selected
+  ) {
+  border-color: var(--primary);
+  color: var(--primary-foreground);
+  background: var(--primary);
+}
+
+.btn.viz-tile:is([aria-pressed=&quot;true&quot;], [aria-selected=&quot;true&quot;], .is-selected) {
+  border-color: var(--primary);
+  box-shadow: inset 0 0 0 1px var(--primary);
+}
+
+.btn:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+#widget &gt; svg {
+  width: 100%;
+}
+
+.text-warning,
+.text-destructive {
+  color: var(--destructive);
+}
+
+html&gt;body{padding:0}&lt;/style&gt;
+&lt;/head&gt;
+&lt;body&gt;
+&lt;style&gt;
+  #azel-wrap-lab {
+    color: var(--foreground);
+    width: 100%;
+  }
+  #azel-wrap-lab .awl-layout {
+    display: grid;
+    grid-template-columns: minmax(210px, 255px) minmax(0, 1fr);
+    gap: 16px;
+    align-items: start;
+    margin-top: 14px;
+  }
+  #azel-wrap-lab .awl-controls {
+    display: grid;
+    gap: 14px;
+  }
+  #azel-wrap-lab .awl-fields {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+  #azel-wrap-lab .awl-fields .form-label {
+    min-width: 0;
+  }
+  #azel-wrap-lab .awl-fields input {
+    width: 100%;
+  }
+  #azel-wrap-lab .awl-stage {
+    min-width: 0;
+  }
+  #azel-wrap-lab canvas {
+    display: block;
+    width: 100%;
+    height: auto;
+    aspect-ratio: 12 / 7;
+    touch-action: none;
+  }
+  #azel-wrap-lab .awl-status {
+    justify-content: space-between;
+    padding-top: 8px;
+  }
+  #azel-wrap-lab .awl-status span {
+    white-space: nowrap;
+  }
+  @media (max-width: 720px) {
+    #azel-wrap-lab .awl-layout {
+      grid-template-columns: 1fr;
+    }
+    #azel-wrap-lab .awl-fields {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+  }
+  @media (max-width: 430px) {
+    #azel-wrap-lab .awl-fields {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+&lt;/style&gt;
+
+&lt;section id=&quot;azel-wrap-lab&quot; aria-label=&quot;Azimuth elevation cable-wrap simulator&quot;&gt;
+  &lt;div class=&quot;viz-controls&quot; role=&quot;toolbar&quot; aria-label=&quot;Simulation mode&quot;&gt;
+    &lt;button class=&quot;btn&quot; type=&quot;button&quot; data-mode=&quot;manual&quot; aria-pressed=&quot;true&quot;&gt;Manual drag&lt;/button&gt;
+    &lt;button class=&quot;btn&quot; type=&quot;button&quot; data-mode=&quot;slew&quot; aria-pressed=&quot;false&quot;&gt;Slew P1 → P2&lt;/button&gt;
+    &lt;button class=&quot;btn&quot; type=&quot;button&quot; data-mode=&quot;track&quot; aria-pressed=&quot;false&quot;&gt;Smart track P1&lt;/button&gt;
+    &lt;button class=&quot;btn&quot; type=&quot;button&quot; data-mode=&quot;lookahead&quot; aria-pressed=&quot;false&quot;&gt;Smart P1 + next P2&lt;/button&gt;
+    &lt;button class=&quot;btn btn-ghost&quot; type=&quot;button&quot; id=&quot;awl-rotate&quot; aria-pressed=&quot;false&quot;
+      data-tooltip=&quot;Drag the 3D sphere to rotate the viewing camera&quot;&gt;
+      &lt;i data-lucide=&quot;hand&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt; Rotate
+    &lt;/button&gt;
+    &lt;button class=&quot;btn btn-primary&quot; type=&quot;button&quot; id=&quot;awl-run&quot; disabled&gt;Drag vector&lt;/button&gt;
+    &lt;button class=&quot;btn&quot; type=&quot;button&quot; id=&quot;awl-reset&quot;&gt;Reset&lt;/button&gt;
+  &lt;/div&gt;
+
+  &lt;div class=&quot;awl-layout&quot;&gt;
+    &lt;div class=&quot;awl-controls&quot;&gt;
+      &lt;div&gt;
+        &lt;h3&gt;Pointing envelope&lt;/h3&gt;
+        &lt;div class=&quot;awl-fields&quot;&gt;
+          &lt;label class=&quot;form-label&quot;&gt;Az min °
+            &lt;input class=&quot;form-control&quot; id=&quot;awl-az-min&quot; type=&quot;number&quot; min=&quot;-180&quot; max=&quot;179&quot; step=&quot;5&quot; value=&quot;-180&quot;&gt;
+          &lt;/label&gt;
+          &lt;label class=&quot;form-label&quot;&gt;Az max °
+            &lt;input class=&quot;form-control&quot; id=&quot;awl-az-max&quot; type=&quot;number&quot; min=&quot;-179&quot; max=&quot;180&quot; step=&quot;5&quot; value=&quot;180&quot;&gt;
+          &lt;/label&gt;
+          &lt;label class=&quot;form-label&quot;&gt;El min °
+            &lt;input class=&quot;form-control&quot; id=&quot;awl-el-min&quot; type=&quot;number&quot; min=&quot;-90&quot; max=&quot;89&quot; step=&quot;5&quot; value=&quot;-90&quot;&gt;
+          &lt;/label&gt;
+          &lt;label class=&quot;form-label&quot;&gt;El max °
+            &lt;input class=&quot;form-control&quot; id=&quot;awl-el-max&quot; type=&quot;number&quot; min=&quot;-89&quot; max=&quot;90&quot; step=&quot;5&quot; value=&quot;90&quot;&gt;
+          &lt;/label&gt;
+          &lt;label class=&quot;form-label&quot;&gt;Cable turns ±
+            &lt;input class=&quot;form-control&quot; id=&quot;awl-cable-turns&quot; type=&quot;number&quot; min=&quot;0.5&quot; max=&quot;6&quot; step=&quot;0.25&quot; value=&quot;1.5&quot;&gt;
+          &lt;/label&gt;
+          &lt;label class=&quot;form-label&quot;&gt;Slew °/s
+            &lt;input class=&quot;form-control&quot; id=&quot;awl-rate&quot; type=&quot;number&quot; min=&quot;1&quot; max=&quot;180&quot; step=&quot;5&quot; value=&quot;55&quot;&gt;
+          &lt;/label&gt;
+        &lt;/div&gt;
+      &lt;/div&gt;
+
+      &lt;div&gt;
+        &lt;h3&gt;Point 1 / tracked point&lt;/h3&gt;
+        &lt;div class=&quot;awl-fields&quot;&gt;
+          &lt;label class=&quot;form-label&quot;&gt;Az °
+            &lt;input class=&quot;form-control&quot; id=&quot;awl-p1-az&quot; type=&quot;number&quot; min=&quot;-180&quot; max=&quot;180&quot; step=&quot;5&quot; value=&quot;170&quot;&gt;
+          &lt;/label&gt;
+          &lt;label class=&quot;form-label&quot;&gt;El °
+            &lt;input class=&quot;form-control&quot; id=&quot;awl-p1-el&quot; type=&quot;number&quot; min=&quot;-90&quot; max=&quot;90&quot; step=&quot;5&quot; value=&quot;35&quot;&gt;
+          &lt;/label&gt;
+          &lt;label class=&quot;form-label&quot;&gt;Track °/s
+            &lt;input class=&quot;form-control&quot; id=&quot;awl-track-rate&quot; type=&quot;number&quot; min=&quot;-50&quot; max=&quot;50&quot; step=&quot;1&quot; value=&quot;22&quot;&gt;
+          &lt;/label&gt;
+          &lt;label class=&quot;form-label&quot;&gt;Track s
+            &lt;input class=&quot;form-control&quot; id=&quot;awl-track-time&quot; type=&quot;number&quot; min=&quot;2&quot; max=&quot;30&quot; step=&quot;1&quot; value=&quot;16&quot;&gt;
+          &lt;/label&gt;
+        &lt;/div&gt;
+      &lt;/div&gt;
+
+      &lt;div&gt;
+        &lt;h3&gt;Point 2 / next task&lt;/h3&gt;
+        &lt;div class=&quot;awl-fields&quot;&gt;
+          &lt;label class=&quot;form-label&quot;&gt;Az °
+            &lt;input class=&quot;form-control&quot; id=&quot;awl-p2-az&quot; type=&quot;number&quot; min=&quot;-180&quot; max=&quot;180&quot; step=&quot;5&quot; value=&quot;-150&quot;&gt;
+          &lt;/label&gt;
+          &lt;label class=&quot;form-label&quot;&gt;El °
+            &lt;input class=&quot;form-control&quot; id=&quot;awl-p2-el&quot; type=&quot;number&quot; min=&quot;-90&quot; max=&quot;90&quot; step=&quot;5&quot; value=&quot;55&quot;&gt;
+          &lt;/label&gt;
+        &lt;/div&gt;
+      &lt;/div&gt;
+    &lt;/div&gt;
+
+    &lt;div class=&quot;awl-stage card&quot;&gt;
+      &lt;canvas id=&quot;awl-canvas&quot; width=&quot;960&quot; height=&quot;560&quot; role=&quot;img&quot;
+        aria-label=&quot;Three-dimensional sensor direction sphere, cable-wrap gauge, and unwrapped azimuth history&quot;&gt;&lt;/canvas&gt;
+      &lt;div class=&quot;viz-row awl-status text-small&quot; aria-live=&quot;polite&quot;&gt;
+        &lt;span id=&quot;awl-phase&quot;&gt;Manual drag&lt;/span&gt;
+        &lt;span id=&quot;awl-angles&quot;&gt;Az 0° · El 20°&lt;/span&gt;
+        &lt;span id=&quot;awl-cable&quot;&gt;0.00 turns · 540° margin&lt;/span&gt;
+        &lt;span id=&quot;awl-error&quot;&gt;Error 0°&lt;/span&gt;
+      &lt;/div&gt;
+    &lt;/div&gt;
+  &lt;/div&gt;
+&lt;/section&gt;
+
+&lt;script&gt;
+(function () {
+  &quot;use strict&quot;;
+
+  var root = document.getElementById(&quot;azel-wrap-lab&quot;);
+  var canvas = document.getElementById(&quot;awl-canvas&quot;);
+  var ctx = canvas.getContext(&quot;2d&quot;);
+  var runButton = document.getElementById(&quot;awl-run&quot;);
+  var resetButton = document.getElementById(&quot;awl-reset&quot;);
+  var rotateButton = document.getElementById(&quot;awl-rotate&quot;);
+  var phaseEl = document.getElementById(&quot;awl-phase&quot;);
+  var anglesEl = document.getElementById(&quot;awl-angles&quot;);
+  var cableEl = document.getElementById(&quot;awl-cable&quot;);
+  var errorEl = document.getElementById(&quot;awl-error&quot;);
+  var modeButtons = Array.prototype.slice.call(root.querySelectorAll(&quot;[data-mode]&quot;));
+
+  var inputs = {
+    azMin: document.getElementById(&quot;awl-az-min&quot;),
+    azMax: document.getElementById(&quot;awl-az-max&quot;),
+    elMin: document.getElementById(&quot;awl-el-min&quot;),
+    elMax: document.getElementById(&quot;awl-el-max&quot;),
+    cableTurns: document.getElementById(&quot;awl-cable-turns&quot;),
+    rate: document.getElementById(&quot;awl-rate&quot;),
+    p1Az: document.getElementById(&quot;awl-p1-az&quot;),
+    p1El: document.getElementById(&quot;awl-p1-el&quot;),
+    trackRate: document.getElementById(&quot;awl-track-rate&quot;),
+    trackTime: document.getElementById(&quot;awl-track-time&quot;),
+    p2Az: document.getElementById(&quot;awl-p2-az&quot;),
+    p2El: document.getElementById(&quot;awl-p2-el&quot;)
+  };
+
+  var p = readParameters();
+  var mode = &quot;manual&quot;;
+  var running = false;
+  var lastFrame = 0;
+  var historyClock = 0;
+  var drag = null;
+  var rotateMode = false;
+  var view = { yawDeg: -35, pitchDeg: 20 };
+  var state;
+
+  function finiteValue(input, fallback) {
+    var n = Number(input.value);
+    return isFinite(n) ? n : fallback;
+  }
+
+  function clamp(v, lo, hi) {
+    return Math.max(lo, Math.min(hi, v));
+  }
+
+  function wrap180(deg) {
+    var value = ((deg + 180) % 360 + 360) % 360 - 180;
+    return value === -180 ? 180 : value;
+  }
+
+  function rawAzMin() {
+    return -p.cableTurns * 360;
+  }
+
+  function rawAzMax() {
+    return p.cableTurns * 360;
+  }
+
+  function geometryAllowsAz(raw) {
+    var wrapped = wrappedForEnvelope(raw);
+    return wrapped &gt;= p.azMin - 1e-9 &amp;&amp; wrapped &lt;= p.azMax + 1e-9;
+  }
+
+  function wrappedForEnvelope(raw) {
+    var wrapped = wrap180(raw);
+    if (Math.abs(wrapped - 180) &lt; 1e-9 &amp;&amp; p.azMax &lt; 180 &amp;&amp; p.azMin &lt;= -180) return -180;
+    return wrapped;
+  }
+
+  function applyAzLimits(raw) {
+    var wrapped = wrappedForEnvelope(raw);
+    var limitedWrapped = clamp(wrapped, p.azMin, p.azMax);
+    var turn = Math.round((raw - limitedWrapped) / 360);
+    return clamp(limitedWrapped + turn * 360, rawAzMin(), rawAzMax());
+  }
+
+  function applyManualAzLimits(current, requested) {
+    if (p.azMax - p.azMin &gt;= 360 - 1e-9) {
+      return clamp(requested, rawAzMin(), rawAzMax());
+    }
+    var turn = Math.floor((current - p.azMin + 1e-9) / 360);
+    var low = Math.max(rawAzMin(), p.azMin + turn * 360);
+    var high = Math.min(rawAzMax(), p.azMax + turn * 360);
+    return clamp(requested, low, high);
+  }
+
+  function readParameters() {
+    var previous = p || {
+      azMin: -180, azMax: 180, elMin: -90, elMax: 90,
+      cableTurns: 1.5, rate: 55,
+      p1Az: 170, p1El: 35, trackRate: 22, trackTime: 16,
+      p2Az: -150, p2El: 55
+    };
+    var next = {};
+    Object.keys(inputs).forEach(function (key) {
+      next[key] = finiteValue(inputs[key], previous[key]);
+    });
+    next.azMin = clamp(next.azMin, -180, 179);
+    next.azMax = clamp(next.azMax, next.azMin + 1, 180);
+    next.elMin = clamp(next.elMin, -90, 89);
+    next.elMax = clamp(next.elMax, next.elMin + 1, 90);
+    next.cableTurns = clamp(next.cableTurns, 0.5, 6);
+    next.rate = clamp(next.rate, 1, 180);
+    next.p1Az = clamp(next.p1Az, -180, 180);
+    next.p1El = clamp(next.p1El, -90, 90);
+    next.trackRate = clamp(next.trackRate, -50, 50);
+    next.trackTime = clamp(next.trackTime, 2, 30);
+    next.p2Az = clamp(next.p2Az, -180, 180);
+    next.p2El = clamp(next.p2El, -90, 90);
+    return next;
+  }
+
+  function syncParameterFields() {
+    Object.keys(inputs).forEach(function (key) {
+      inputs[key].value = String(p[key]);
+    });
+  }
+
+  function equivalentAngles(wrapped) {
+    var base = clamp(wrappedForEnvelope(wrapped), p.azMin, p.azMax);
+    var values = [];
+    for (var k = -8; k &lt;= 8; k++) {
+      var value = base + 360 * k;
+      if (value &gt;= rawAzMin() - 1e-9 &amp;&amp; value &lt;= rawAzMax() + 1e-9) values.push(value);
+    }
+    if (!values.length) values.push(clamp(base, rawAzMin(), rawAzMax()));
+    return values;
+  }
+
+  function nearestEquivalent(wrapped, from) {
+    return equivalentAngles(wrapped).reduce(function (best, candidate) {
+      return Math.abs(candidate - from) &lt; Math.abs(best - from) ? candidate : best;
+    });
+  }
+
+  function trackGeometryFeasible(start, end) {
+    var samples = Math.max(2, Math.ceil(Math.abs(end - start) / 2));
+    for (var i = 0; i &lt;= samples; i++) {
+      if (!geometryAllowsAz(start + (end - start) * i / samples)) return false;
+    }
+    return true;
+  }
+
+  function planTrack(includeNext) {
+    var starts = equivalentAngles(p.p1Az);
+    var mechanicalMin = rawAzMin();
+    var mechanicalMax = rawAzMax();
+    var span = Math.max(1, mechanicalMax - mechanicalMin);
+    var center = 0;
+    var best = null;
+
+    starts.forEach(function (start) {
+      var end = start + p.trackRate * p.trackTime;
+      var low = Math.min(start, end);
+      var high = Math.max(start, end);
+      var trackGeometryAllowed = trackGeometryFeasible(start, end);
+      var feasible = low &gt;= mechanicalMin &amp;&amp; high &lt;= mechanicalMax &amp;&amp; trackGeometryAllowed;
+      var margin = Math.min(low - mechanicalMin, mechanicalMax - high);
+      var violation = Math.max(0, mechanicalMin - low) + Math.max(0, high - mechanicalMax);
+      if (!trackGeometryAllowed) violation += 360;
+      var acquire = Math.abs(start) / p.rate;
+      var trackCost = acquire + (feasible ? 80 / (margin + 20) : 1000 + violation * 4);
+
+      var p2Candidates = includeNext ? equivalentAngles(p.p2Az) : [null];
+      p2Candidates.forEach(function (p2Raw) {
+        var cost = trackCost;
+        if (p2Raw == null) {
+          cost += Math.abs(end - center) / span * 5;
+        } else {
+          cost += Math.abs(p2Raw - end) / p.rate;
+          cost += Math.abs(p2Raw - center) / span * 5;
+          cost += 35 / (Math.min(p2Raw - mechanicalMin, mechanicalMax - p2Raw) + 20);
+        }
+        if (!best || cost &lt; best.cost) {
+          best = {
+            p1Raw: start,
+            p1EndRaw: end,
+            p2Raw: p2Raw,
+            feasible: feasible,
+            margin: margin,
+            cost: cost
+          };
+        }
+      });
+    });
+    return best;
+  }
+
+  function resetSimulation() {
+    running = false;
+    lastFrame = 0;
+    historyClock = 0;
+    var initialAz = applyAzLimits(0);
+    state = {
+      time: 0,
+      az: initialAz,
+      el: clamp(20, p.elMin, p.elMax),
+      azVel: 0,
+      elVel: 0,
+      cmdAz: initialAz,
+      cmdEl: clamp(20, p.elMin, p.elMax),
+      requestedAz: 0,
+      phase: &quot;Manual drag&quot;,
+      dwell: 0,
+      trackElapsed: 0,
+      limitHit: false,
+      history: [],
+      plan: null
+    };
+
+    if (mode === &quot;slew&quot;) {
+      state.phase = &quot;Slew to P1&quot;;
+      state.plan = { p1Raw: nearestEquivalent(p.p1Az, state.az), p2Raw: null, feasible: true };
+    } else if (mode === &quot;track&quot; || mode === &quot;lookahead&quot;) {
+      state.phase = &quot;Acquire P1&quot;;
+      state.plan = planTrack(mode === &quot;lookahead&quot;);
+    }
+    pushHistory();
+    updateRunButton();
+    draw();
+  }
+
+  function updateRunButton() {
+    runButton.disabled = mode === &quot;manual&quot;;
+    runButton.textContent = mode === &quot;manual&quot; ? &quot;Drag vector&quot; : (running ? &quot;Pause&quot; : &quot;Run&quot;);
+    modeButtons.forEach(function (button) {
+      button.setAttribute(&quot;aria-pressed&quot;, String(button.getAttribute(&quot;data-mode&quot;) === mode));
+    });
+    rotateButton.setAttribute(&quot;aria-pressed&quot;, String(rotateMode));
+    canvas.style.cursor = rotateMode ? &quot;grab&quot; : (mode === &quot;manual&quot; ? &quot;crosshair&quot; : &quot;default&quot;);
+  }
+
+  function axisStep(position, velocity, target, maxRate, acceleration, dt) {
+    var error = target - position;
+    if (Math.abs(error) &lt; 1e-6 &amp;&amp; Math.abs(velocity) &lt; 1e-6) {
+      return { position: target, velocity: 0 };
+    }
+    var brakeRate = Math.sqrt(Math.max(0, 2 * acceleration * Math.abs(error)));
+    var desiredVelocity = Math.sign(error) * Math.min(maxRate, brakeRate);
+    var velocityDelta = clamp(desiredVelocity - velocity, -acceleration * dt, acceleration * dt);
+    var nextVelocity = velocity + velocityDelta;
+    var nextPosition = position + nextVelocity * dt;
+    if ((target - position) * (target - nextPosition) &lt;= 0) {
+      nextPosition = target;
+      nextVelocity = 0;
+    }
+    return { position: nextPosition, velocity: nextVelocity };
+  }
+
+  function settled(azTarget, elTarget) {
+    var az = applyAzLimits(azTarget);
+    var el = clamp(elTarget, p.elMin, p.elMax);
+    return Math.abs(az - state.az) &lt; 0.7 &amp;&amp;
+      Math.abs(el - state.el) &lt; 0.7 &amp;&amp;
+      Math.abs(state.azVel) &lt; 1.5 &amp;&amp; Math.abs(state.elVel) &lt; 1.5;
+  }
+
+  function p1Elevation(trackElapsed) {
+    if (mode !== &quot;track&quot; &amp;&amp; mode !== &quot;lookahead&quot;) return p.p1El;
+    var wave = Math.sin(Math.PI * clamp(trackElapsed / p.trackTime, 0, 1));
+    return p.p1El + 12 * wave;
+  }
+
+  function updateCommand(dt) {
+    if (mode === &quot;slew&quot;) {
+      if (state.phase === &quot;Slew to P1&quot; || state.phase === &quot;Hold P1&quot;) {
+        state.requestedAz = state.plan.p1Raw;
+        state.cmdEl = p.p1El;
+        if (settled(state.requestedAz, state.cmdEl)) {
+          state.dwell += dt;
+          state.phase = &quot;Hold P1&quot;;
+          if (state.dwell &gt;= 1.5) {
+            state.plan.p2Raw = nearestEquivalent(p.p2Az, state.az);
+            state.phase = &quot;Slew to P2&quot;;
+            state.dwell = 0;
+          }
+        }
+      } else if (state.phase === &quot;Slew to P2&quot;) {
+        state.requestedAz = state.plan.p2Raw;
+        state.cmdEl = p.p2El;
+        if (settled(state.requestedAz, state.cmdEl)) {
+          state.phase = &quot;P2 acquired&quot;;
+          running = false;
+        }
+      }
+    } else if (mode === &quot;track&quot; || mode === &quot;lookahead&quot;) {
+      if (state.phase === &quot;Acquire P1&quot;) {
+        state.requestedAz = state.plan.p1Raw;
+        state.cmdEl = p.p1El;
+        if (settled(state.requestedAz, state.cmdEl)) {
+          state.phase = &quot;Track P1&quot;;
+          state.trackElapsed = 0;
+        }
+      } else if (state.phase === &quot;Track P1&quot;) {
+        state.trackElapsed += dt;
+        state.requestedAz = state.plan.p1Raw + p.trackRate * state.trackElapsed;
+        state.cmdEl = p1Elevation(state.trackElapsed);
+        if (state.trackElapsed &gt;= p.trackTime) {
+          if (mode === &quot;lookahead&quot;) {
+            state.phase = &quot;Slew to known P2&quot;;
+          } else {
+            state.phase = &quot;P1 track complete&quot;;
+            running = false;
+          }
+        }
+      } else if (state.phase === &quot;Slew to known P2&quot;) {
+        state.requestedAz = state.plan.p2Raw;
+        state.cmdEl = p.p2El;
+        if (settled(state.requestedAz, state.cmdEl)) {
+          state.phase = &quot;P2 acquired&quot;;
+          running = false;
+        }
+      }
+    }
+
+    var limitedAz = applyAzLimits(state.requestedAz);
+    state.limitHit = Math.abs(limitedAz - state.requestedAz) &gt; 1e-6 ||
+      !geometryAllowsAz(state.requestedAz) ||
+      state.cmdEl &lt; p.elMin || state.cmdEl &gt; p.elMax;
+    state.cmdAz = limitedAz;
+    state.cmdEl = clamp(state.cmdEl, p.elMin, p.elMax);
+  }
+
+  function update(dt) {
+    state.time += dt;
+    updateCommand(dt);
+    var acceleration = Math.max(20, p.rate * 2.5);
+    var azStep = axisStep(state.az, state.azVel, state.cmdAz, p.rate, acceleration, dt);
+    var elStep = axisStep(state.el, state.elVel, state.cmdEl, p.rate, acceleration, dt);
+    state.az = clamp(azStep.position, rawAzMin(), rawAzMax());
+    state.el = clamp(elStep.position, p.elMin, p.elMax);
+    state.azVel = azStep.velocity;
+    state.elVel = elStep.velocity;
+    historyClock += dt;
+    if (historyClock &gt;= 0.08) {
+      historyClock = 0;
+      pushHistory();
+    }
+  }
+
+  function pushHistory() {
+    state.history.push({
+      t: state.time,
+      az: state.az,
+      el: state.el,
+      cmd: state.cmdAz
+    });
+    if (state.history.length &gt; 420) state.history.shift();
+  }
+
+  function simulationFrame(now) {
+    if (!running) {
+      updateRunButton();
+      draw();
+      return;
+    }
+    if (!lastFrame) lastFrame = now;
+    var dt = Math.min(0.04, Math.max(0.001, (now - lastFrame) / 1000));
+    lastFrame = now;
+    update(dt);
+    draw();
+    if (running) requestAnimationFrame(simulationFrame);
+    else updateRunButton();
+  }
+
+  function cssToken(name, fallback) {
+    var value = getComputedStyle(root).getPropertyValue(name).trim();
+    return value || fallback;
+  }
+
+  function theme() {
+    var foreground = cssToken(&quot;--foreground&quot;, &quot;CanvasText&quot;);
+    var primary = cssToken(&quot;--viz-series-1&quot;, cssToken(&quot;--primary&quot;, foreground));
+    return {
+      foreground: foreground,
+      muted: cssToken(&quot;--muted-foreground&quot;, foreground),
+      border: cssToken(&quot;--border&quot;, foreground),
+      card: cssToken(&quot;--card&quot;, &quot;Canvas&quot;),
+      primary: primary,
+      series2: cssToken(&quot;--viz-series-2&quot;, primary),
+      series3: cssToken(&quot;--viz-series-3&quot;, primary),
+      destructive: cssToken(&quot;--destructive&quot;, foreground)
+    };
+  }
+
+  function direction(azDeg, elDeg) {
+    var az = azDeg * Math.PI / 180;
+    var el = elDeg * Math.PI / 180;
+    var c = Math.cos(el);
+    return { x: c * Math.sin(az), y: c * Math.cos(az), z: Math.sin(el) };
+  }
+
+  function geometry(w, h) {
+    var yaw = view.yawDeg * Math.PI / 180;
+    var pitch = view.pitchDeg * Math.PI / 180;
+    return {
+      cx: w * 0.24,
+      cy: h * 0.36,
+      radius: Math.min(h * 0.28, w * 0.21),
+      east: [-Math.sin(yaw), Math.cos(yaw), 0],
+      north: [-Math.sin(pitch) * Math.cos(yaw), -Math.sin(pitch) * Math.sin(yaw), Math.cos(pitch)],
+      forward: [Math.cos(pitch) * Math.cos(yaw), Math.cos(pitch) * Math.sin(yaw), Math.sin(pitch)]
+    };
+  }
+
+  function project(v, g) {
+    return {
+      x: g.cx + (v.x * g.east[0] + v.y * g.east[1] + v.z * g.east[2]) * g.radius,
+      y: g.cy - (v.x * g.north[0] + v.y * g.north[1] + v.z * g.north[2]) * g.radius,
+      depth: v.x * g.forward[0] + v.y * g.forward[1] + v.z * g.forward[2]
+    };
+  }
+
+  function strokeCurve(points, front, color, alpha, width, g) {
+    ctx.strokeStyle = color;
+    ctx.globalAlpha = alpha;
+    ctx.lineWidth = width;
+    ctx.beginPath();
+    var penDown = false;
+    points.forEach(function (v) {
+      var point = project(v, g);
+      var visible = front ? point.depth &gt;= 0 : point.depth &lt; 0;
+      if (!visible) {
+        penDown = false;
+      } else if (!penDown) {
+        ctx.moveTo(point.x, point.y);
+        penDown = true;
+      } else {
+        ctx.lineTo(point.x, point.y);
+      }
+    });
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+
+  function drawAllowedSurface(g, colors) {
+    var azSpan = p.azMax - p.azMin;
+    var azStart = azSpan &gt;= 360 ? 0 : p.azMin;
+    var azEnd = azSpan &gt;= 360 ? 360 : p.azMax;
+    var step = 10;
+    ctx.fillStyle = colors.primary;
+    for (var el = p.elMin; el &lt; p.elMax; el += step) {
+      var el2 = Math.min(p.elMax, el + step);
+      for (var az = azStart; az &lt; azEnd; az += step) {
+        var az2 = Math.min(azEnd, az + step);
+        var vectors = [direction(az, el), direction(az2, el),
+          direction(az2, el2), direction(az, el2)];
+        var points = vectors.map(function (v) { return project(v, g); });
+        var depth = points.reduce(function (sum, point) { return sum + point.depth; }, 0) / 4;
+        if (depth &lt; 0) continue;
+        ctx.globalAlpha = 0.10;
+        ctx.beginPath();
+        ctx.moveTo(points[0].x, points[0].y);
+        for (var i = 1; i &lt; points.length; i++) ctx.lineTo(points[i].x, points[i].y);
+        ctx.closePath();
+        ctx.fill();
+      }
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  function drawSphere(g, colors) {
+    ctx.fillStyle = colors.card;
+    ctx.globalAlpha = 0.42;
+    ctx.beginPath();
+    ctx.arc(g.cx, g.cy, g.radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+
+    drawAllowedSurface(g, colors);
+
+    var curves = [];
+    for (var el = -75; el &lt;= 75; el += 15) {
+      var lat = [];
+      for (var az = 0; az &lt;= 360; az += 3) lat.push(direction(az, el));
+      curves.push(lat);
+    }
+    for (var lon = 0; lon &lt; 360; lon += 30) {
+      var meridian = [];
+      for (var elev = -90; elev &lt;= 90; elev += 3) meridian.push(direction(lon, elev));
+      curves.push(meridian);
+    }
+    curves.forEach(function (curve) {
+      strokeCurve(curve, false, colors.border, 0.12, 1, g);
+    });
+    curves.forEach(function (curve) {
+      strokeCurve(curve, true, colors.border, 0.32, 1, g);
+    });
+
+    ctx.strokeStyle = colors.border;
+    ctx.globalAlpha = 0.72;
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.arc(g.cx, g.cy, g.radius, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+
+    ctx.fillStyle = colors.muted;
+    ctx.textAlign = &quot;left&quot;;
+    ctx.textBaseline = &quot;top&quot;;
+    ctx.fillText(&quot;3D DIRECTION SPHERE&quot;, 14, 12);
+    var geometricSpan = Math.min(360, Math.max(0, p.azMax - p.azMin));
+    ctx.fillText(&quot;Allowed az &quot; + geometricSpan.toFixed(0) + &quot;° · el &quot; +
+      p.elMin.toFixed(0) + &quot;°…&quot; + p.elMax.toFixed(0) + &quot;°&quot;, 14, 28);
+  }
+
+  function drawTrail(g, colors) {
+    if (state.history.length &lt; 2) return;
+    ctx.strokeStyle = colors.series2;
+    ctx.lineWidth = 2;
+    ctx.globalAlpha = 0.62;
+    ctx.beginPath();
+    state.history.forEach(function (sample, index) {
+      var point = project(direction(sample.az, sample.el), g);
+      if (index === 0) ctx.moveTo(point.x, point.y);
+      else ctx.lineTo(point.x, point.y);
+    });
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+
+  function targetP1() {
+    var raw = p.p1Az;
+    var el = p.p1El;
+    if (state.plan &amp;&amp; (mode === &quot;track&quot; || mode === &quot;lookahead&quot;)) {
+      raw = state.plan.p1Raw;
+      if (state.phase === &quot;Track P1&quot; || state.trackElapsed &gt; 0) {
+        raw += p.trackRate * state.trackElapsed;
+        el = p1Elevation(state.trackElapsed);
+      }
+    }
+    return { az: raw, el: el };
+  }
+
+  function drawTarget(label, az, el, color, g) {
+    var point = project(direction(az, el), g);
+    ctx.fillStyle = color;
+    ctx.globalAlpha = point.depth &gt;= 0 ? 1 : 0.42;
+    ctx.beginPath();
+    ctx.arc(point.x, point.y, 5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = color;
+    ctx.textAlign = &quot;left&quot;;
+    ctx.textBaseline = &quot;bottom&quot;;
+    ctx.fillText(label, point.x + 8, point.y - 5);
+  }
+
+  function drawVector(g, colors) {
+    var point = project(direction(state.az, state.el), g);
+    ctx.strokeStyle = state.limitHit ? colors.destructive : colors.primary;
+    ctx.fillStyle = state.limitHit ? colors.destructive : colors.primary;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(g.cx, g.cy);
+    ctx.lineTo(point.x, point.y);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(point.x, point.y, 7, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = colors.foreground;
+    ctx.textAlign = &quot;left&quot;;
+    ctx.textBaseline = &quot;top&quot;;
+    ctx.fillText(&quot;RAW &quot; + state.az.toFixed(1) + &quot;°&quot;, point.x + 10, point.y + 7);
+    ctx.fillStyle = colors.muted;
+    ctx.fillText(&quot;WRAPPED &quot; + wrap180(state.az).toFixed(1) + &quot;°&quot;, point.x + 10, point.y + 23);
+  }
+
+  function drawAzElFrame(w, h, colors) {
+    var left = w * 0.59;
+    var right = w - 18;
+    var top = 48;
+    var bottom = h * 0.64;
+
+    function xFor(az) {
+      return left + (clamp(az, -180, 180) + 180) / 360 * (right - left);
+    }
+    function yFor(el) {
+      return bottom - (clamp(el, -90, 90) + 90) / 180 * (bottom - top);
+    }
+
+    ctx.fillStyle = colors.muted;
+    ctx.textAlign = &quot;left&quot;;
+    ctx.textBaseline = &quot;top&quot;;
+    ctx.fillText(&quot;2D AZ / EL FRAME&quot;, left, 12);
+    ctx.fillText(&quot;wrapped pointing coordinates&quot;, left, 28);
+
+    ctx.fillStyle = colors.primary;
+    ctx.globalAlpha = 0.10;
+    ctx.fillRect(xFor(p.azMin), yFor(p.elMax),
+      xFor(p.azMax) - xFor(p.azMin), yFor(p.elMin) - yFor(p.elMax));
+    ctx.globalAlpha = 1;
+
+    ctx.strokeStyle = colors.border;
+    ctx.lineWidth = 1;
+    [-180, -90, 0, 90, 180].forEach(function (az) {
+      var x = xFor(az);
+      ctx.globalAlpha = az === 0 ? 0.42 : 0.24;
+      ctx.beginPath();
+      ctx.moveTo(x, top);
+      ctx.lineTo(x, bottom);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = colors.muted;
+      ctx.textAlign = &quot;center&quot;;
+      ctx.textBaseline = &quot;top&quot;;
+      ctx.fillText(az + &quot;°&quot;, x, bottom + 5);
+    });
+    [-90, -45, 0, 45, 90].forEach(function (el) {
+      var y = yFor(el);
+      ctx.globalAlpha = el === 0 ? 0.42 : 0.24;
+      ctx.beginPath();
+      ctx.moveTo(left, y);
+      ctx.lineTo(right, y);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = colors.muted;
+      ctx.textAlign = &quot;right&quot;;
+      ctx.textBaseline = &quot;middle&quot;;
+      ctx.fillText(el + &quot;°&quot;, left - 6, y);
+    });
+
+    ctx.strokeStyle = colors.primary;
+    ctx.globalAlpha = 0.72;
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(xFor(p.azMin), yFor(p.elMax),
+      xFor(p.azMax) - xFor(p.azMin), yFor(p.elMin) - yFor(p.elMax));
+    ctx.globalAlpha = 1;
+
+    if (state.history.length &gt; 1) {
+      ctx.strokeStyle = colors.series2;
+      ctx.globalAlpha = 0.58;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      state.history.forEach(function (sample, index) {
+        var x = xFor(wrap180(sample.az));
+        var y = yFor(sample.el);
+        if (index === 0 || Math.abs(wrap180(sample.az) - wrap180(state.history[index - 1].az)) &gt; 180) {
+          ctx.moveTo(x, y);
+        } else {
+          ctx.lineTo(x, y);
+        }
+      });
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+
+    function mark(label, az, el, color, shape) {
+      var x = xFor(wrap180(az));
+      var y = yFor(el);
+      ctx.strokeStyle = color;
+      ctx.fillStyle = color;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      if (shape === &quot;cross&quot;) {
+        ctx.moveTo(x - 5, y);
+        ctx.lineTo(x + 5, y);
+        ctx.moveTo(x, y - 5);
+        ctx.lineTo(x, y + 5);
+        ctx.stroke();
+      } else {
+        ctx.arc(x, y, shape === &quot;current&quot; ? 7 : 5, 0, Math.PI * 2);
+        if (shape === &quot;current&quot;) ctx.fill();
+        else ctx.stroke();
+      }
+      if (label) {
+        ctx.fillStyle = colors.foreground;
+        ctx.textAlign = &quot;left&quot;;
+        ctx.textBaseline = &quot;bottom&quot;;
+        ctx.fillText(label, x + 8, y - 5);
+      }
+    }
+
+    var p1 = targetP1();
+    mark(&quot;P1&quot;, p1.az, p1.el, colors.series3, &quot;target&quot;);
+    mark(&quot;P2&quot;, p.p2Az, p.p2El, colors.series2, &quot;target&quot;);
+    mark(&quot;&quot;, state.cmdAz, state.cmdEl, colors.series3, &quot;cross&quot;);
+    mark(&quot;VECTOR&quot;, state.az, state.el,
+      state.limitHit ? colors.destructive : colors.primary, &quot;current&quot;);
+  }
+
+  function azToGaugeY(az, top, bottom) {
+    return bottom - (az - rawAzMin()) / Math.max(1, rawAzMax() - rawAzMin()) * (bottom - top);
+  }
+
+  function drawCableGauge(w, h, colors) {
+    var x = w * 0.49;
+    var top = 48;
+    var bottom = h * 0.66;
+    var y = azToGaugeY(state.az, top, bottom);
+    var commandY = azToGaugeY(state.cmdAz, top, bottom);
+    var centerY = azToGaugeY(0, top, bottom);
+
+    ctx.fillStyle = colors.muted;
+    ctx.textAlign = &quot;center&quot;;
+    ctx.textBaseline = &quot;bottom&quot;;
+    ctx.fillText(&quot;CABLE AZ&quot;, x, top - 12);
+
+    ctx.strokeStyle = colors.border;
+    ctx.globalAlpha = 0.32;
+    ctx.lineWidth = 8;
+    ctx.beginPath();
+    ctx.moveTo(x, top);
+    ctx.lineTo(x, bottom);
+    ctx.stroke();
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(x - 10, centerY);
+    ctx.lineTo(x + 10, centerY);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+
+    ctx.strokeStyle = colors.series3;
+    ctx.globalAlpha = 0.78;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(x - 16, commandY);
+    ctx.lineTo(x + 16, commandY);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.globalAlpha = 1;
+
+    ctx.fillStyle = state.limitHit ? colors.destructive : colors.primary;
+    ctx.beginPath();
+    ctx.arc(x, y, 6, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = colors.muted;
+    ctx.textAlign = &quot;left&quot;;
+    ctx.textBaseline = &quot;middle&quot;;
+    ctx.fillText(rawAzMax().toFixed(0) + &quot;°&quot;, x + 14, top);
+    ctx.fillText(&quot;0°&quot;, x + 14, centerY);
+    ctx.fillText(rawAzMin().toFixed(0) + &quot;°&quot;, x + 14, bottom);
+
+    var coilX = w * 0.55;
+    var coilMid = (top + bottom) / 2;
+    var currentTurns = state.az / 360;
+    var coilEndY = azToGaugeY(state.az, top, bottom);
+    ctx.strokeStyle = colors.border;
+    ctx.globalAlpha = 0.35;
+    ctx.beginPath();
+    ctx.moveTo(coilX, top);
+    ctx.lineTo(coilX, bottom);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+
+    var samples = Math.max(2, Math.ceil(Math.abs(currentTurns) * 48));
+    ctx.strokeStyle = colors.series2;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    for (var i = 0; i &lt;= samples; i++) {
+      var f = i / samples;
+      var angle = state.az * Math.PI / 180 * f;
+      var px = coilX + Math.sin(angle) * 15;
+      var py = coilMid + (coilEndY - coilMid) * f;
+      if (i === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+    ctx.fillStyle = colors.muted;
+    ctx.textAlign = &quot;center&quot;;
+    ctx.textBaseline = &quot;top&quot;;
+    ctx.fillText(&quot;CABLE&quot;, coilX, bottom + 10);
+    ctx.fillText(currentTurns.toFixed(2) + &quot; turns&quot;, coilX, bottom + 26);
+  }
+
+  function drawHistory(w, h, colors) {
+    var left = 18;
+    var right = w - 18;
+    var top = h - 82;
+    var bottom = h - 18;
+    var rows = state.history.length ? state.history : [{ t: 0, az: state.az, cmd: state.cmdAz }];
+    var tMax = rows[rows.length - 1].t;
+    var tMin = Math.max(0, tMax - 30);
+    var visible = rows.filter(function (row) { return row.t &gt;= tMin; });
+    if (visible.length === 1) visible = [visible[0], visible[0]];
+
+    function hx(t) {
+      return left + (t - tMin) / Math.max(1, tMax - tMin) * (right - left);
+    }
+    function hy(az) {
+      return bottom - (az - rawAzMin()) / Math.max(1, rawAzMax() - rawAzMin()) * (bottom - top);
+    }
+
+    ctx.strokeStyle = colors.border;
+    ctx.globalAlpha = 0.28;
+    ctx.lineWidth = 1;
+    [top, bottom, hy(0)].forEach(function (y) {
+      ctx.beginPath();
+      ctx.moveTo(left, y);
+      ctx.lineTo(right, y);
+      ctx.stroke();
+    });
+    ctx.globalAlpha = 1;
+
+    ctx.strokeStyle = colors.series3;
+    ctx.globalAlpha = 0.62;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    visible.forEach(function (row, index) {
+      if (index === 0) ctx.moveTo(hx(row.t), hy(row.cmd));
+      else ctx.lineTo(hx(row.t), hy(row.cmd));
+    });
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.globalAlpha = 1;
+
+    ctx.strokeStyle = colors.series2;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    visible.forEach(function (row, index) {
+      if (index === 0) ctx.moveTo(hx(row.t), hy(row.az));
+      else ctx.lineTo(hx(row.t), hy(row.az));
+    });
+    ctx.stroke();
+
+    ctx.fillStyle = colors.muted;
+    ctx.textAlign = &quot;left&quot;;
+    ctx.textBaseline = &quot;bottom&quot;;
+    ctx.fillText(&quot;RAW AZ HISTORY · solid actual / dashed command&quot;, left, top - 7);
+  }
+
+  function updateStatus() {
+    var margin = Math.min(state.az - rawAzMin(), rawAzMax() - state.az);
+    var error = Math.hypot(state.cmdAz - state.az, state.cmdEl - state.el);
+    phaseEl.textContent = state.phase + (state.limitHit ? &quot; · LIMIT&quot; : &quot;&quot;);
+    anglesEl.textContent = &quot;Raw az &quot; + state.az.toFixed(1) + &quot;° · wrapped &quot; +
+      wrap180(state.az).toFixed(1) + &quot;° · el &quot; + state.el.toFixed(1) + &quot;°&quot;;
+    cableEl.textContent = (state.az / 360).toFixed(2) + &quot; / ±&quot; +
+      p.cableTurns.toFixed(2) + &quot; turns · &quot; + Math.max(0, margin).toFixed(0) + &quot;° margin&quot;;
+    errorEl.textContent = &quot;Error &quot; + error.toFixed(1) + &quot;°&quot;;
+  }
+
+  function draw() {
+    var rect = canvas.getBoundingClientRect();
+    var w = Math.max(320, rect.width || 960);
+    var h = w * 7 / 12;
+    var dpr = window.devicePixelRatio || 1;
+    if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
+      canvas.width = Math.round(w * dpr);
+      canvas.height = Math.round(h * dpr);
+    }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    var colors = theme();
+    var g = geometry(w, h);
+    drawSphere(g, colors);
+    drawTrail(g, colors);
+    var p1 = targetP1();
+    drawTarget(&quot;P1&quot;, p1.az, p1.el, colors.series3, g);
+    drawTarget(&quot;P2&quot;, p.p2Az, p.p2El, colors.series2, g);
+    drawVector(g, colors);
+    drawCableGauge(w, h, colors);
+    drawAzElFrame(w, h, colors);
+    drawHistory(w, h, colors);
+    updateStatus();
+  }
+
+  modeButtons.forEach(function (button) {
+    button.addEventListener(&quot;click&quot;, function () {
+      mode = button.getAttribute(&quot;data-mode&quot;);
+      resetSimulation();
+    });
+  });
+
+  runButton.addEventListener(&quot;click&quot;, function () {
+    if (mode === &quot;manual&quot;) return;
+    running = !running;
+    updateRunButton();
+    if (running) {
+      lastFrame = 0;
+      requestAnimationFrame(simulationFrame);
+    }
+  });
+
+  rotateButton.addEventListener(&quot;click&quot;, function () {
+    rotateMode = !rotateMode;
+    updateRunButton();
+    draw();
+  });
+
+  resetButton.addEventListener(&quot;click&quot;, function () {
+    view.yawDeg = -35;
+    view.pitchDeg = 20;
+    resetSimulation();
+  });
+
+  Object.keys(inputs).forEach(function (key) {
+    inputs[key].addEventListener(&quot;change&quot;, function () {
+      p = readParameters();
+      syncParameterFields();
+      resetSimulation();
+    });
+  });
+
+  canvas.addEventListener(&quot;pointerdown&quot;, function (event) {
+    if (!rotateMode &amp;&amp; mode !== &quot;manual&quot;) return;
+    drag = { kind: rotateMode ? &quot;camera&quot; : &quot;vector&quot;, x: event.clientX, y: event.clientY };
+    canvas.setPointerCapture(event.pointerId);
+    canvas.style.cursor = &quot;grabbing&quot;;
+  });
+
+  canvas.addEventListener(&quot;pointermove&quot;, function (event) {
+    if (!drag) return;
+    var dx = event.clientX - drag.x;
+    var dy = event.clientY - drag.y;
+    drag.x = event.clientX;
+    drag.y = event.clientY;
+    if (drag.kind === &quot;camera&quot;) {
+      view.yawDeg += dx * 0.55;
+      view.pitchDeg = clamp(view.pitchDeg - dy * 0.4, -85, 85);
+      draw();
+      return;
+    }
+    var requested = state.az + dx * 1.35;
+    state.az = applyManualAzLimits(state.az, requested);
+    state.el = clamp(state.el - dy * 0.75, p.elMin, p.elMax);
+    state.cmdAz = state.az;
+    state.requestedAz = requested;
+    state.cmdEl = state.el;
+    state.limitHit = Math.abs(state.az - requested) &gt; 1e-6;
+    state.time += 0.04;
+    state.phase = state.limitHit ? &quot;Manual drag · AZ STOP&quot; : &quot;Manual drag&quot;;
+    pushHistory();
+    draw();
+  });
+
+  function endDrag() {
+    drag = null;
+    updateRunButton();
+  }
+  canvas.addEventListener(&quot;pointerup&quot;, endDrag);
+  canvas.addEventListener(&quot;pointercancel&quot;, endDrag);
+
+  if (typeof ResizeObserver !== &quot;undefined&quot;) {
+    new ResizeObserver(draw).observe(canvas);
+  } else {
+    window.addEventListener(&quot;resize&quot;, draw);
+  }
+
+  syncParameterFields();
+  resetSimulation();
+})();
+&lt;/script&gt;
+
+&lt;script src=&quot;https://unpkg.com/@floating-ui/core@1.7.3/dist/floating-ui.core.umd.min.js&quot;&gt;&lt;/script&gt;
+&lt;script src=&quot;https://unpkg.com/@floating-ui/dom@1.7.4/dist/floating-ui.dom.umd.min.js&quot;&gt;&lt;/script&gt;
+&lt;script&gt;
+(() =&gt; {
+  if (window.FloatingUIDOM == null) {
+    return;
+  }
+  const { autoUpdate, computePosition, flip, offset, shift, size } =
+    window.FloatingUIDOM;
+  const tooltipPlacements = new Set([&quot;top&quot;, &quot;right&quot;, &quot;bottom&quot;, &quot;left&quot;]);
+  const tooltipId = `codex-visualization-tooltip-${
+    window.crypto?.randomUUID?.() ?? Date.now().toString(36)
+  }`;
+  const tooltipGap = 5;
+  const hoverDelay = 700;
+  const skipDelay = 300;
+  let activeTrigger = null;
+  let pendingTrigger = null;
+  let tooltip = null;
+  let openTimeout = null;
+  let autoUpdateCleanup = null;
+  let positionRequest = 0;
+  let skipDelayUntil = 0;
+
+  const getTrigger = (target) =&gt;
+    target?.nodeType === Node.ELEMENT_NODE
+      ? target.closest(&quot;[data-tooltip]&quot;)
+      : null;
+  const containsTarget = (trigger, target) =&gt;
+    target?.nodeType != null &amp;&amp; trigger.contains(target);
+  const getContent = (trigger) =&gt;
+    trigger.getAttribute(&quot;data-tooltip&quot;)?.trim() ?? &quot;&quot;;
+  const getPlacement = (trigger) =&gt; {
+    const placement = trigger.getAttribute(&quot;data-tooltip-placement&quot;);
+    return tooltipPlacements.has(placement) ? placement : &quot;top&quot;;
+  };
+  const getTooltip = () =&gt; {
+    if (tooltip == null) {
+      tooltip = document.createElement(&quot;div&quot;);
+      tooltip.id = tooltipId;
+      tooltip.className = &quot;tooltip&quot;;
+      tooltip.setAttribute(&quot;role&quot;, &quot;tooltip&quot;);
+    }
+    return tooltip;
+  };
+  const setDescribedBy = (trigger, described) =&gt; {
+    const ids = new Set(
+      (trigger.getAttribute(&quot;aria-describedby&quot;) ?? &quot;&quot;)
+        .split(/\s+/)
+        .filter(Boolean),
+    );
+    if (described) {
+      ids.add(tooltipId);
+    } else {
+      ids.delete(tooltipId);
+    }
+    if (ids.size === 0) {
+      trigger.removeAttribute(&quot;aria-describedby&quot;);
+    } else {
+      trigger.setAttribute(&quot;aria-describedby&quot;, [...ids].join(&quot; &quot;));
+    }
+  };
+  const clearOpenTimeout = () =&gt; {
+    if (openTimeout != null) {
+      window.clearTimeout(openTimeout);
+      openTimeout = null;
+    }
+    pendingTrigger = null;
+  };
+  const closeTooltip = (activateSkipDelay = true) =&gt; {
+    clearOpenTimeout();
+    positionRequest += 1;
+    autoUpdateCleanup?.();
+    autoUpdateCleanup = null;
+    if (activeTrigger == null) {
+      return;
+    }
+    setDescribedBy(activeTrigger, false);
+    activeTrigger = null;
+    tooltip?.remove();
+    if (activateSkipDelay) {
+      skipDelayUntil = Date.now() + skipDelay;
+    }
+  };
+  const updatePosition = (trigger, floating) =&gt; {
+    const request = ++positionRequest;
+    void computePosition(trigger, floating, {
+      middleware: [
+        offset(tooltipGap),
+        flip({ padding: tooltipGap }),
+        shift({ padding: tooltipGap }),
+        size({
+          padding: tooltipGap,
+          apply({ availableHeight, availableWidth, elements }) {
+            elements.floating.style.setProperty(
+              &quot;--tooltip-available-width&quot;,
+              `${Math.max(0, availableWidth)}px`,
+            );
+            elements.floating.style.setProperty(
+              &quot;--tooltip-available-height&quot;,
+              `${Math.max(0, availableHeight)}px`,
+            );
+          },
+        }),
+      ],
+      placement: getPlacement(trigger),
+      strategy: &quot;fixed&quot;,
+    })
+      .then(({ x, y }) =&gt; {
+        if (activeTrigger !== trigger || request !== positionRequest) {
+          return;
+        }
+        const scale = window.devicePixelRatio || 1;
+        floating.style.transform = `translate(${Math.round(x * scale) / scale}px, ${Math.round(y * scale) / scale}px)`;
+        floating.style.visibility = &quot;visible&quot;;
+      })
+      .catch(() =&gt; {
+        if (activeTrigger === trigger &amp;&amp; request === positionRequest) {
+          closeTooltip(false);
+        }
+      });
+  };
+  const openTooltip = (trigger) =&gt; {
+    const content = getContent(trigger);
+    if (!trigger.isConnected || content.length === 0) {
+      return;
+    }
+    clearOpenTimeout();
+    if (activeTrigger === trigger) {
+      return;
+    }
+    closeTooltip();
+    const floating = getTooltip();
+    floating.textContent = content;
+    floating.style.visibility = &quot;hidden&quot;;
+    floating.style.transform = &quot;translate(0, 0)&quot;;
+    document.body.appendChild(floating);
+    activeTrigger = trigger;
+    setDescribedBy(trigger, true);
+    autoUpdateCleanup = autoUpdate(trigger, floating, () =&gt; {
+      updatePosition(trigger, floating);
+    });
+  };
+  const requestOpen = (trigger, immediate = false) =&gt; {
+    if (
+      getContent(trigger).length === 0 ||
+      activeTrigger === trigger ||
+      pendingTrigger === trigger
+    ) {
+      return;
+    }
+    clearOpenTimeout();
+    pendingTrigger = trigger;
+    const delay =
+      immediate || activeTrigger != null || Date.now() &lt; skipDelayUntil
+        ? 0
+        : hoverDelay;
+    if (delay === 0) {
+      openTooltip(trigger);
+      return;
+    }
+    openTimeout = window.setTimeout(() =&gt; {
+      openTimeout = null;
+      pendingTrigger = null;
+      openTooltip(trigger);
+    }, delay);
+  };
+  const handlePointerOpen = (event) =&gt; {
+    if (event.pointerType === &quot;touch&quot;) {
+      return;
+    }
+    const trigger = getTrigger(event.target);
+    if (trigger == null || containsTarget(trigger, event.relatedTarget)) {
+      return;
+    }
+    requestOpen(trigger);
+  };
+  const handleLeave = (event) =&gt; {
+    const trigger = getTrigger(event.target);
+    if (trigger == null || containsTarget(trigger, event.relatedTarget)) {
+      return;
+    }
+    if (activeTrigger === trigger || pendingTrigger === trigger) {
+      closeTooltip();
+    }
+  };
+  const handleFocusIn = (event) =&gt; {
+    const trigger = getTrigger(event.target);
+    if (trigger?.matches(&quot;:focus-visible&quot;)) {
+      requestOpen(trigger, true);
+    }
+  };
+  const handleKeyDown = (event) =&gt; {
+    if (event.key === &quot;Escape&quot;) {
+      closeTooltip();
+    }
+  };
+  const handleContextMenu = (event) =&gt; {
+    const trigger = getTrigger(event.target);
+    if (activeTrigger === trigger || pendingTrigger === trigger) {
+      closeTooltip();
+    }
+  };
+  const destroy = () =&gt; {
+    closeTooltip(false);
+    document.removeEventListener(&quot;pointerover&quot;, handlePointerOpen);
+    document.removeEventListener(&quot;pointerout&quot;, handleLeave);
+    document.removeEventListener(&quot;focusin&quot;, handleFocusIn);
+    document.removeEventListener(&quot;focusout&quot;, handleLeave);
+    document.removeEventListener(&quot;keydown&quot;, handleKeyDown);
+    document.removeEventListener(&quot;contextmenu&quot;, handleContextMenu);
+    tooltip = null;
+  };
+
+  document.addEventListener(&quot;pointerover&quot;, handlePointerOpen);
+  document.addEventListener(&quot;pointerout&quot;, handleLeave);
+  document.addEventListener(&quot;focusin&quot;, handleFocusIn);
+  document.addEventListener(&quot;focusout&quot;, handleLeave);
+  document.addEventListener(&quot;keydown&quot;, handleKeyDown);
+  document.addEventListener(&quot;contextmenu&quot;, handleContextMenu);
+  window.addEventListener(&quot;pagehide&quot;, destroy, { once: true });
+})();
+&lt;/script&gt;
+&lt;script id=&quot;codex-visualization-lucide&quot; async src=&quot;https://unpkg.com/lucide@1.17.0/dist/umd/lucide.js&quot;&gt;&lt;/script&gt;
+&lt;script&gt;
+(() =&gt; {
+  const initialize = () =&gt; {
+    globalThis.lucide?.createIcons({ attrs: { width: 16, height: 16 } });
+  };
+  if (globalThis.lucide != null) {
+    initialize();
+    return;
+  }
+  document
+    .getElementById(&quot;codex-visualization-lucide&quot;)
+    ?.addEventListener(&quot;load&quot;, initialize, { once: true });
+})();
+&lt;/script&gt;
+
+&lt;/body&gt;
+&lt;/html&gt;
+"></iframe>
+</body>
+</html>
