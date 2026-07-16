@@ -710,11 +710,12 @@ window.Orbit = window.Orbit || {};
     return -Math.sin(rot) * sun.x + Math.cos(rot) * sun.y;
   }
 
-  // Sun cue: a directional glyph outside the globe plus a subsolar surface
-  // marker when the lit point faces the camera. The subsolar location comes
-  // from the same source as the shading (backend samples when available).
-  function drawSunIndicator(ctx, cam, sun, state, rot) {
-    var sp = cam.project({ x: sun.x * R, y: sun.y * R, z: sun.z * R });
+  // Place a display-scaled Sun near the outer viewport in its true projected
+  // direction. A literal 1-AU scene would make the body unusably small in an
+  // Earth-centered view, so (like STK model scaling) distance and radius are
+  // exaggerated while the Orekit direction, lighting, and subsolar point stay
+  // authoritative.
+  function sunIndicatorLayout(cam, sun, w, h) {
     var sx = sun.x * cam.east[0] + sun.y * cam.east[1] + sun.z * cam.east[2];
     var sy = -(sun.x * cam.north[0] + sun.y * cam.north[1] + sun.z * cam.north[2]);
     var len = Math.hypot(sx, sy);
@@ -725,54 +726,103 @@ window.Orbit = window.Orbit || {};
       len = Math.hypot(sx, sy);
     }
     var ux = sx / len, uy = sy / len;
-    var outer = Math.max(42, Math.min(76, cam.radiusPx * 0.18));
-    var sunX = cam.cx + ux * (cam.radiusPx + outer);
-    var sunY = cam.cy + uy * (cam.radiusPx + outer);
+    var diskRadius = Math.max(30, Math.min(54, cam.radiusPx * 0.17));
+    var glowRadius = diskRadius * 2.45;
+    var margin = glowRadius + 8;
+    var maxDistance = Infinity;
+    if (Math.abs(ux) > 1e-6) {
+      maxDistance = Math.min(maxDistance, ux > 0
+        ? (w - margin - cam.cx) / ux : (margin - cam.cx) / ux);
+    }
+    if (Math.abs(uy) > 1e-6) {
+      maxDistance = Math.min(maxDistance, uy > 0
+        ? (h - margin - cam.cy) / uy : (margin - cam.cy) / uy);
+    }
+    var preferredDistance = Math.max(cam.radiusPx * 2.15, Math.min(w, h) * 0.43);
+    var distance = Math.max(0, Math.min(preferredDistance, maxDistance));
+    return {
+      x: cam.cx + ux * distance,
+      y: cam.cy + uy * distance,
+      ux: ux,
+      uy: uy,
+      distance: distance,
+      diskRadius: diskRadius,
+      glowRadius: glowRadius,
+      frontDot: frontDot,
+    };
+  }
+
+  // STK-style scaled celestial body plus a subsolar surface marker when the
+  // lit point faces the camera. The subsolar location comes from the same
+  // source as the shading (backend samples when available).
+  function drawSunIndicator(ctx, cam, sun, state, rot) {
+    var sp = cam.project({ x: sun.x * R, y: sun.y * R, z: sun.z * R });
     var w = ctx.canvas.clientWidth || ctx.canvas.width;
     var h = ctx.canvas.clientHeight || ctx.canvas.height;
-    var margin = 24;
-    sunX = Math.max(margin, Math.min(w - margin, sunX));
-    sunY = Math.max(margin, Math.min(h - margin, sunY));
+    var layout = sunIndicatorLayout(cam, sun, w, h);
+    var sunX = layout.x, sunY = layout.y;
+    var ux = layout.ux, uy = layout.uy;
+    var diskRadius = layout.diskRadius;
+    var glowRadius = layout.glowRadius;
+    var frontDot = layout.frontDot;
     var rayAlpha = frontDot >= 0 ? 0.24 : 0.11;
-    var diskAlpha = frontDot >= 0 ? 1 : 0.58;
+    var diskAlpha = frontDot >= 0 ? 1 : 0.68;
 
     ctx.save();
     ctx.lineCap = "round";
     ctx.strokeStyle = "rgba(255, 218, 135, " + rayAlpha + ")";
-    ctx.lineWidth = 1;
-    var tx = -uy, ty = ux;
-    for (var r = -1; r <= 1; r++) {
-      var off = r * 9;
+    ctx.lineWidth = 1.2;
+    ctx.setLineDash([5, 7]);
+    ctx.beginPath();
+    ctx.moveTo(sunX - ux * (diskRadius + 8), sunY - uy * (diskRadius + 8));
+    ctx.lineTo(cam.cx + ux * (cam.radiusPx + 10),
+      cam.cy + uy * (cam.radiusPx + 10));
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Broad corona and radial rays make the scaled body read as a distant
+    // Sun rather than a map marker.
+    for (var ray = 0; ray < 16; ray++) {
+      var angle = ray * Math.PI / 8;
+      var inner = diskRadius * 1.15;
+      var outer = diskRadius * (ray % 2 === 0 ? 1.65 : 1.42);
+      ctx.strokeStyle = "rgba(255, 213, 120, " + (0.28 * diskAlpha) + ")";
       ctx.beginPath();
-      ctx.moveTo(sunX - ux * 16 + tx * off, sunY - uy * 16 + ty * off);
-      ctx.lineTo(cam.cx + ux * cam.radiusPx * 0.90 + tx * off,
-        cam.cy + uy * cam.radiusPx * 0.90 + ty * off);
+      ctx.moveTo(sunX + Math.cos(angle) * inner, sunY + Math.sin(angle) * inner);
+      ctx.lineTo(sunX + Math.cos(angle) * outer, sunY + Math.sin(angle) * outer);
       ctx.stroke();
     }
 
-    var glow = ctx.createRadialGradient(sunX, sunY, 3, sunX, sunY, 44);
+    var glow = ctx.createRadialGradient(sunX, sunY, diskRadius * 0.15,
+      sunX, sunY, glowRadius);
     glow.addColorStop(0, "rgba(255, 232, 165, " + (0.46 * diskAlpha) + ")");
     glow.addColorStop(0.38, "rgba(255, 181, 74, " + (0.22 * diskAlpha) + ")");
     glow.addColorStop(1, "rgba(255, 181, 74, 0)");
     ctx.fillStyle = glow;
     ctx.beginPath();
-    ctx.arc(sunX, sunY, 44, 0, 2 * Math.PI);
+    ctx.arc(sunX, sunY, glowRadius, 0, 2 * Math.PI);
     ctx.fill();
 
-    var disk = ctx.createRadialGradient(sunX - 3, sunY - 3, 1, sunX, sunY, 11);
+    var disk = ctx.createRadialGradient(sunX - diskRadius * 0.28,
+      sunY - diskRadius * 0.28, diskRadius * 0.05,
+      sunX, sunY, diskRadius);
     disk.addColorStop(0, "rgba(255, 248, 208, " + diskAlpha + ")");
     disk.addColorStop(0.7, "rgba(255, 204, 105, " + diskAlpha + ")");
     disk.addColorStop(1, "rgba(224, 126, 47, " + (0.95 * diskAlpha) + ")");
     ctx.fillStyle = disk;
     ctx.beginPath();
-    ctx.arc(sunX, sunY, 11, 0, 2 * Math.PI);
+    ctx.arc(sunX, sunY, diskRadius, 0, 2 * Math.PI);
     ctx.fill();
 
     ctx.fillStyle = "rgba(255, 224, 150, " + (0.85 * diskAlpha) + ")";
-    ctx.font = "9px Consolas, monospace";
-    ctx.textAlign = ux >= 0 ? "left" : "right";
+    ctx.font = "bold 10px Consolas, monospace";
+    ctx.textAlign = ux >= 0 ? "right" : "left";
     ctx.textBaseline = "middle";
-    ctx.fillText("SUN", sunX + (ux >= 0 ? 16 : -16), sunY);
+    var labelX = sunX + (ux >= 0 ? -(diskRadius + 12) : diskRadius + 12);
+    ctx.fillText("SUN", labelX, sunY - 5);
+    ctx.font = "8px Consolas, monospace";
+    ctx.fillStyle = "rgba(255, 224, 150, " + (0.62 * diskAlpha) + ")";
+    ctx.fillText("149.6M km  DISPLAY SCALE", labelX, sunY + 8);
     ctx.restore();
 
     if (sp.depth > 0) {
@@ -1259,6 +1309,7 @@ window.Orbit = window.Orbit || {};
     // exposed for the self tests
     frameMode: frameMode,
     earthRotation: earthRotation,
+    sunIndicatorLayout: sunIndicatorLayout,
     webglAvailable: function () { return !!initWebgl(); },
   };
 })();

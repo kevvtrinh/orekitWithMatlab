@@ -29,6 +29,8 @@ satellite sensor and an area target, add the access request, and Re-run. MATLAB
 and Orekit compute the FOR/FOV windows plus the WGS-84-clipped area boundary in
 the moving sensor az/el frame. The adjacent FOR pane shows the current boundary,
 centroid command, FOV/FOR bands, and representative outlines across the pass.
+The shipped demo includes an **Ohio** area target, and the `+ Area` dialog can
+prefill editable rectangular envelopes for common U.S. states and countries.
 
 ## Run With MATLAB
 
@@ -105,6 +107,12 @@ renormalizes; it never re-derives frames. A documented analytic fallback
 (Astronomical Almanac low-precision sun + IAU-1982 GMST in `js/data.js`)
 covers offline sample mode and payloads that predate these fields, and the
 HUD tags it "(approx)" when it is in effect.
+
+The 3D Sun uses STK-style display scaling: it is drawn as a large celestial
+body near the outer viewport with its nominal 149.6-million-kilometre distance
+label, because a literal Earth-to-Sun scale would be a sub-pixel object in this
+Earth-centered camera. Its direction, Earth lighting, and subsolar point remain
+driven by the unscaled Orekit geometry.
 
 The 3D globe offers two display frames from the View menu: **Earth fixed
 (ECEF)** - geography stationary, the Sun and inertial orbit lines sweep with

@@ -238,6 +238,30 @@
           "area group did not fold");
       });
 
+      check("area presets include editable Ohio, state, and country envelopes", function () {
+        var presets = Orbit.spec.areaTargetPresets();
+        var ohio = Orbit.spec.areaTargetPreset("state-ohio");
+        assert(presets.filter(function (p) { return p.group === "U.S. state"; }).length >= 8,
+          "state preset list is too small");
+        assert(presets.filter(function (p) { return p.group === "Country"; }).length >= 8,
+          "country preset list is too small");
+        assert(ohio && ohio.name === "Ohio", "Ohio preset missing");
+        var grid = Orbit.spec.expandAreaGrid(ohio);
+        assert(grid.length > 1 && grid.length <= Orbit.spec.MAX_AREA_GRID_POINTS,
+          "Ohio preset produces an invalid grid");
+        ohio.name = "Changed";
+        assert(Orbit.spec.areaTargetPreset("state-ohio").name === "Ohio",
+          "preset lookup leaked mutable state");
+      });
+
+      check("shipped default scenario contains the Ohio area target", function () {
+        var spec = Orbit.spec.normalizeSpecShape(raw.spec);
+        var ohio = Orbit.spec.areaGroup(spec, "Ohio");
+        assert(ohio && ohio.points.length > 1, "Ohio area missing from sample");
+        near(ohio.points[0].area.centerLatDeg, 40.25, 1e-9, "Ohio latitude");
+        near(ohio.points[0].area.centerLonDeg, -82.75, 1e-9, "Ohio longitude");
+      });
+
       check("validateSpec accepts sensors, tasks, and access requests together", function () {
         var spec = Orbit.spec.deriveSpecFromScenario(raw);
         var sat = Orbit.spec.keplerianSatelliteTemplate("SensorSat");
@@ -1408,6 +1432,20 @@
         var rot = Orbit.globe3d.earthRotation(stEci);
         near(rot, Orbit.data.gmstAt(merged, 3600), 1e-12, "ECI uses gmstAt");
         assert(Math.abs(rot) > 0.01, "ECI rotation should be nonzero");
+      });
+
+      check("3D Sun uses a large distant STK-style display layout", function () {
+        var cam = {
+          cx: 400, cy: 300, radiusPx: 170,
+          east: [1, 0, 0], north: [0, 1, 0], fwd: [0, 0, 1],
+        };
+        var layout = Orbit.globe3d.sunIndicatorLayout(
+          cam, { x: 1, y: 0, z: 0 }, 800, 600);
+        assert(layout.diskRadius >= 30, "Sun disk is still a small glyph");
+        assert(layout.distance > cam.radiusPx * 1.7,
+          "Sun is not separated far enough from Earth");
+        assert(layout.glowRadius > layout.diskRadius * 2,
+          "Sun corona is too small");
       });
 
       var summary = document.getElementById("summary");

@@ -295,17 +295,21 @@
     refreshStatusBar();
   }
 
-  function deriveLocalSpec() {
-    if (!state.raw) return null;
+  function editableSpecFromPayload(raw) {
+    if (!raw) return null;
     // Payloads from run-scenario / the bundled sample embed the exact spec
     // they were built from; adopting it keeps the fresh payload authoritative
     // (a lossy re-derivation would mark everything edited/previewed).
-    if (state.raw.spec) {
+    if (raw.spec) {
       var echoed = Orbit.spec.normalizeSpecShape(
-        JSON.parse(JSON.stringify(state.raw.spec)));
+        JSON.parse(JSON.stringify(raw.spec)));
       if (Orbit.spec.validateSpec(echoed).length === 0) return echoed;
     }
-    return Orbit.spec.deriveSpecFromScenario(state.raw);
+    return Orbit.spec.deriveSpecFromScenario(raw);
+  }
+
+  function deriveLocalSpec() {
+    return editableSpecFromPayload(state.raw);
   }
 
   function saveSpecToBridge() {
@@ -732,10 +736,17 @@
       tpl = Orbit.spec.areaTargetTemplate(nextExpandedBase(
         "Area", function (candidate) { return candidate + "-R"; }));
     }
+    var presetOptions = [["custom", "Custom rectangle"]].concat(
+      Orbit.spec.areaTargetPresets().map(function (preset) {
+        return [preset.id, preset.group + " - " + preset.name];
+      }));
     Orbit.modal.form({
       title: editing ? "Edit Area Target - " + groupName : "Insert Area Target",
       submitLabel: editing ? "Regenerate Grid" : "Insert",
       fields: [
+        { key: "preset", label: "Coverage preset", type: "select", value: "custom",
+          options: presetOptions,
+          hint: "Approximate country/state envelope; selecting one fills the editable fields below" },
         { key: "name", label: "Name", type: "text", value: tpl.name,
           hint: "Grid points are named <Name>-R01C01 etc." },
         { key: "centerLatDeg", label: "Center latitude (deg)", type: "number",
@@ -754,10 +765,26 @@
         { key: "priority", label: "Priority", type: "number",
           value: tpl.priority, min: 0, hint: "Applied to every grid point" },
       ],
+      onChange: function (values, changedKey, setValues) {
+        if (changedKey !== "preset" || values.preset === "custom") return;
+        var preset = Orbit.spec.areaTargetPreset(values.preset);
+        if (!preset) return;
+        setValues({
+          name: preset.name,
+          centerLatDeg: preset.centerLatDeg,
+          centerLonDeg: preset.centerLonDeg,
+          altitudeM: preset.altitudeM,
+          widthKm: preset.widthKm,
+          heightKm: preset.heightKm,
+          spacingKm: preset.spacingKm,
+          priority: preset.priority,
+        });
+      },
       preview: function (v) {
         var points = Orbit.spec.expandAreaGrid(v);
         return points.length + " grid points will be " +
-          (editing ? "regenerated" : "inserted");
+          (editing ? "regenerated" : "inserted") +
+          (v.preset === "custom" ? "" : " from the editable preset values");
       },
       onSubmit: function (v) {
         var points;
@@ -1873,7 +1900,7 @@
       return;
     }
     Orbit.api.loadSampleScenario().then(function (res) {
-      var demoSpec = Orbit.spec.deriveSpecFromScenario(res.scenario);
+      var demoSpec = editableSpecFromPayload(res.scenario);
       return applySpec(demoSpec);
     }).then(function (result) {
       if (result.errors) {

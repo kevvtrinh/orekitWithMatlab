@@ -77,9 +77,22 @@ window.Orbit = window.Orbit || {};
     return values;
   }
 
+  function writeValues(overlay, fields, values) {
+    fields.forEach(function (field) {
+      if (!Object.prototype.hasOwnProperty.call(values, field.key)) return;
+      var el = overlay.querySelector("#modal-field-" + field.key);
+      if (!el) return;
+      if (field.type === "checkbox") el.checked = !!values[field.key];
+      else el.value = values[field.key] == null ? "" : String(values[field.key]);
+    });
+  }
+
   // options: { title, submitLabel, fields: [...], onSubmit(values),
-  //   preview(values) } - `preview` (optional) returns a live footer line
+  //   preview(values), onChange(values, changedKey, setValues) } - `preview`
+  // (optional) returns a live footer line
   // recomputed as the user types (e.g. "12 satellites will be inserted").
+  // `onChange` may fill related controls through setValues({ key: value }),
+  // which is useful for presets while leaving every generated value editable.
   // onSubmit returns { errors: [...] } to keep the modal open with the errors
   // shown, anything else (or a promise of it) to close. Field spec:
   // { key, label, type: "text"|"number"|"select"|"datetime",
@@ -158,13 +171,24 @@ window.Orbit = window.Orbit || {};
     overlay.querySelector(".modal-close").addEventListener("click", close);
     overlay.querySelector("#modal-cancel").addEventListener("click", close);
     submitBtn.addEventListener("click", submit);
-    if (options.preview || hasConditionalFields) {
+    if (options.preview || hasConditionalFields || options.onChange) {
       var refreshDynamic = function () {
         refreshVisibility();
         refreshPreview();
       };
       overlay.querySelector(".modal-body").addEventListener("input", refreshDynamic);
-      overlay.querySelector(".modal-body").addEventListener("change", refreshDynamic);
+      overlay.querySelector(".modal-body").addEventListener("change", function (ev) {
+        if (options.onChange) {
+          try {
+            options.onChange(readValues(overlay, options.fields), ev.target.name,
+              function (values) { writeValues(overlay, options.fields, values); });
+            errorEl.textContent = "";
+          } catch (err) {
+            errorEl.textContent = err.message || String(err);
+          }
+        }
+        refreshDynamic();
+      });
       refreshDynamic();
     }
 

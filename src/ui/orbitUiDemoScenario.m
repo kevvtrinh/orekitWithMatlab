@@ -10,7 +10,8 @@ function payload = orbitUiDemoScenario(outputFile)
 % time-tagged pointing history, and the Orekit Sun/lighting/orientation
 % blocks. The mission: an ISS-like LEO satellite, a sun-synchronous imager
 % with a conic sensor, two ground stations, a point target the imager is
-% tasked to track, and an area target it is tasked to scan.
+% tasked to track, a reachable area it is tasked to scan, and an Ohio area
+% target ready for sensor-area access experiments.
 %
 % The point and area targets are placed on the imager's actual propagated
 % ground track (offset cross-track) so the scheduler always finds real
@@ -73,6 +74,8 @@ areaCenterLat = max(min(round(areaAnchor.latDeg, 1), 60), -60);
 areaCenterLon = round(areaAnchor.lonDeg, 1);
 objects = [objects, areaGridTargets("Scan Region", areaCenterLat, ...
     areaCenterLon, 160, 120, 40, 6)];
+objects = [objects, areaGridTargets("Ohio", 40.25, -82.75, ...
+    370, 400, 75, 5)];
 
 spec = struct();
 spec.version = 1;

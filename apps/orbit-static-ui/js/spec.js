@@ -28,6 +28,80 @@ window.Orbit = window.Orbit || {};
 
   var MAX_AREA_GRID_POINTS = 100;
 
+  // Ready-to-edit rectangular coverage presets. These are deliberately
+  // approximate mission-planning envelopes rather than political borders:
+  // selecting one fills the ordinary area form, where every value can still
+  // be refined before the grid is created. Spacing keeps each preset under
+  // MAX_AREA_GRID_POINTS.
+  var AREA_TARGET_PRESETS = [
+    { id: "state-ohio", group: "U.S. state", name: "Ohio",
+      centerLatDeg: 40.25, centerLonDeg: -82.75,
+      widthKm: 370, heightKm: 400, spacingKm: 75 },
+    { id: "state-california", group: "U.S. state", name: "California",
+      centerLatDeg: 37.25, centerLonDeg: -119.6,
+      widthKm: 900, heightKm: 1250, spacingKm: 250 },
+    { id: "state-colorado", group: "U.S. state", name: "Colorado",
+      centerLatDeg: 39.0, centerLonDeg: -105.5,
+      widthKm: 620, heightKm: 450, spacingKm: 125 },
+    { id: "state-florida", group: "U.S. state", name: "Florida",
+      centerLatDeg: 28.1, centerLonDeg: -82.1,
+      widthKm: 720, heightKm: 720, spacingKm: 180 },
+    { id: "state-georgia", group: "U.S. state", name: "Georgia",
+      centerLatDeg: 32.7, centerLonDeg: -83.3,
+      widthKm: 480, heightKm: 530, spacingKm: 120 },
+    { id: "state-hawaii", group: "U.S. state", name: "Hawaii",
+      centerLatDeg: 20.7, centerLonDeg: -157.5,
+      widthKm: 650, heightKm: 400, spacingKm: 130 },
+    { id: "state-new-york", group: "U.S. state", name: "New York",
+      centerLatDeg: 42.9, centerLonDeg: -75.0,
+      widthKm: 590, heightKm: 520, spacingKm: 130 },
+    { id: "state-texas", group: "U.S. state", name: "Texas",
+      centerLatDeg: 31.0, centerLonDeg: -99.3,
+      widthKm: 1250, heightKm: 1250, spacingKm: 250 },
+    { id: "state-virginia", group: "U.S. state", name: "Virginia",
+      centerLatDeg: 37.5, centerLonDeg: -78.8,
+      widthKm: 690, heightKm: 330, spacingKm: 110 },
+    { id: "state-washington", group: "U.S. state", name: "Washington",
+      centerLatDeg: 47.4, centerLonDeg: -120.7,
+      widthKm: 580, heightKm: 400, spacingKm: 120 },
+    { id: "country-united-states", group: "Country", name: "United States",
+      centerLatDeg: 39.5, centerLonDeg: -98.35,
+      widthKm: 4500, heightKm: 2600, spacingKm: 500 },
+    { id: "country-canada", group: "Country", name: "Canada",
+      centerLatDeg: 56.0, centerLonDeg: -106.0,
+      widthKm: 4800, heightKm: 3300, spacingKm: 600 },
+    { id: "country-mexico", group: "Country", name: "Mexico",
+      centerLatDeg: 23.6, centerLonDeg: -102.5,
+      widthKm: 1900, heightKm: 2700, spacingKm: 400 },
+    { id: "country-brazil", group: "Country", name: "Brazil",
+      centerLatDeg: -10.5, centerLonDeg: -52.5,
+      widthKm: 4200, heightKm: 4300, spacingKm: 550 },
+    { id: "country-united-kingdom", group: "Country", name: "United Kingdom",
+      centerLatDeg: 54.5, centerLonDeg: -3.3,
+      widthKm: 600, heightKm: 1050, spacingKm: 180 },
+    { id: "country-france", group: "Country", name: "France",
+      centerLatDeg: 46.5, centerLonDeg: 2.3,
+      widthKm: 950, heightKm: 1000, spacingKm: 200 },
+    { id: "country-germany", group: "Country", name: "Germany",
+      centerLatDeg: 51.0, centerLonDeg: 10.2,
+      widthKm: 700, heightKm: 900, spacingKm: 180 },
+    { id: "country-india", group: "Country", name: "India",
+      centerLatDeg: 22.5, centerLonDeg: 79.0,
+      widthKm: 3000, heightKm: 3200, spacingKm: 450 },
+    { id: "country-japan", group: "Country", name: "Japan",
+      centerLatDeg: 37.0, centerLonDeg: 138.0,
+      widthKm: 1700, heightKm: 2700, spacingKm: 400 },
+    { id: "country-australia", group: "Country", name: "Australia",
+      centerLatDeg: -25.3, centerLonDeg: 133.8,
+      widthKm: 4000, heightKm: 3200, spacingKm: 500 },
+    { id: "country-china", group: "Country", name: "China",
+      centerLatDeg: 35.9, centerLonDeg: 104.2,
+      widthKm: 5000, heightKm: 4000, spacingKm: 600 },
+    { id: "country-south-africa", group: "Country", name: "South Africa",
+      centerLatDeg: -30.5, centerLonDeg: 24.5,
+      widthKm: 1300, heightKm: 1200, spacingKm: 250 },
+  ];
+
   // Approximate km->deg conversion used for area grids.
   // 1 deg latitude ~ 111.32 km; longitude scaled by cos(latitude).
   var KM_PER_DEG_LAT = 111.32;
@@ -125,6 +199,35 @@ window.Orbit = window.Orbit || {};
       spacingKm: 50,
       priority: 5,
     };
+  }
+
+  function copyAreaPreset(preset) {
+    if (!preset) return null;
+    return {
+      id: preset.id,
+      group: preset.group,
+      name: preset.name,
+      centerLatDeg: preset.centerLatDeg,
+      centerLonDeg: preset.centerLonDeg,
+      altitudeM: 0,
+      widthKm: preset.widthKm,
+      heightKm: preset.heightKm,
+      spacingKm: preset.spacingKm,
+      priority: 5,
+    };
+  }
+
+  function areaTargetPresets() {
+    return AREA_TARGET_PRESETS.map(copyAreaPreset);
+  }
+
+  function areaTargetPreset(id) {
+    for (var i = 0; i < AREA_TARGET_PRESETS.length; i++) {
+      if (AREA_TARGET_PRESETS[i].id === id) {
+        return copyAreaPreset(AREA_TARGET_PRESETS[i]);
+      }
+    }
+    return null;
   }
 
   // Conic imaging sensor attached to a satellite. The cone half-angle is the
@@ -1290,6 +1393,8 @@ window.Orbit = window.Orbit || {};
     targetTemplate: targetTemplate,
     constellationTemplate: constellationTemplate,
     areaTargetTemplate: areaTargetTemplate,
+    areaTargetPresets: areaTargetPresets,
+    areaTargetPreset: areaTargetPreset,
     expandWalker: expandWalker,
     expandAreaGrid: expandAreaGrid,
     groupTargets: groupTargets,
