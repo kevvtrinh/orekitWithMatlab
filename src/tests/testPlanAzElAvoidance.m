@@ -44,7 +44,8 @@ verifyEqual(testCase, plan.velocity_deg_s(end, :), [0 0], ...
     "AbsTol", 1e-9);
 verifyEqual(testCase, plan.acceleration_deg_s2(end, :), [0 0], ...
     "AbsTol", 1e-9);
-verifyEqual(testCase, plan.internalSampleTime_s, 1);
+verifyEqual(testCase, plan.internalSampleTime_s, 10);
+verifyEqual(testCase, plan.planningAttempts(1).SampleTime_s, 10);
 end
 
 function testAvoidsExpandedPolygon(testCase)

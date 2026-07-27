@@ -53,7 +53,8 @@ options = struct( ...
     "SampleTime_s", 0.1, ...
     "GridStep_deg", 0.1, ...
     "SafetyMargin_deg", 1, ...
-    "AllowAzimuthWrap", true);
+    "AllowAzimuthWrap", true, ...
+    "MaxSearchTime_s", 30);
 
 plan = planAzElAvoidance( ...
     azElData, startState, stopState, limits, options);
@@ -63,6 +64,11 @@ The steering command is in `plan.time_s` and `plan.position_deg`.
 `plan.positionUnwrapped_deg` preserves continuous azimuth across the
 `-180/180` seam. Velocity, acceleration, waiting samples, search statistics,
 and the packed obstacle workspace are also returned.
+
+Long fixed-time requests use a coarse control-decision lattice first while
+retaining `SampleTime_s` for collision checks and returned steering samples.
+If that lattice cannot reach the requested terminal state, the planner tries
+finer lattices within `MaxSearchTime_s`.
 
 ## Workspace and collision queries
 

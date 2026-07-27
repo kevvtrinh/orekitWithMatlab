@@ -29,6 +29,7 @@ function result = planAzElKinodynamicAStar( ...
 % Important options:
 %   TimeStepSeconds, MaxPlanningTimeSeconds, AzimuthWrap
 %   CollisionCheckStepSeconds, TimePaddingSamples, MaxExpansions
+%   MaxWallTimeSeconds
 %
 % The planner is optimal on the configured finite lattice when it returns
 % success. The visual swept-envelope mesh is not used for collision tests.
@@ -76,7 +77,13 @@ expanded = 0;
 generated = 1;
 goalIndex = 0;
 reachedExpansionLimit = false;
+reachedWallTimeLimit = false;
+searchTimer = tic;
 while heap.Count > 0
+    if toc(searchTimer) >= options.MaxWallTimeSeconds
+        reachedWallTimeLimit = true;
+        break;
+    end
     [heap, currentIndex] = heapPop(heap);
     current = nodes.State(currentIndex, :);
     key = stateKey(current, limits, options);
@@ -142,7 +149,9 @@ while heap.Count > 0
 end
 
 if goalIndex == 0
-    if reachedExpansionLimit
+    if reachedWallTimeLimit
+        message = "Search reached MaxWallTimeSeconds before finding a path.";
+    elseif reachedExpansionLimit
         message = "Search reached MaxExpansions before finding a path.";
     else
         message = "No lattice path reaches the goal before LatestTime.";
@@ -220,6 +229,7 @@ defaults = struct( ...
     "BoundsMarginDeg", [0 0], ...
     "SafetyMarginDeg", 0, ...
     "MaxExpansions", 200000, ...
+    "MaxWallTimeSeconds", Inf, ...
     "InitialNodeCapacity", 4096);
 options = applyDefaults(options, defaults);
 validateattributes(options.MaxPlanningTimeSeconds, {'numeric'}, ...
@@ -248,6 +258,8 @@ validateattributes(options.SafetyMarginDeg, {'numeric'}, ...
     {'scalar', 'real', 'finite', 'nonnegative'});
 validateattributes(options.MaxExpansions, {'numeric'}, ...
     {'scalar', 'integer', 'positive'});
+validateattributes(options.MaxWallTimeSeconds, {'numeric'}, ...
+    {'scalar', 'real', 'positive'});
 validateattributes(options.InitialNodeCapacity, {'numeric'}, ...
     {'scalar', 'integer', 'positive'});
 mode = lower(string(options.CollisionMode));
