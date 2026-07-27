@@ -1,108 +1,52 @@
-%% Example 22: area target in a moving sensor az/el frame (Orekit)
-% Orekit replacement for the STK SmartSensor example.  The orbit is
-% propagated with zonal harmonics (Eckstein-Hechler J2..J6), the Vietnam
-% boundary is projected through WGS-84 horizon geometry, and the first
-% reachable pass is animated and accumulated into an az/el sweep print.
+function result = example_22_areaTargetAzElSweep(azElData)
+%EXAMPLE_22_AREATARGETAZELSWEEP Build and inspect an az/el/time obstacle.
+%
+% result = example_22_areaTargetAzElSweep(azElData)
+%
+% This version only needs the compact output from calculateAreaTargetAzEl:
+%   targetName, time_s, az_deg, el_deg, status
+%
+% It also accepts the native computeAreaTargetAzElSweep output. Compact
+% time_s values remain the numeric time coordinate used by
+% queryAzElTimeObstacle.
+
 suiteRoot = fileparts(fileparts(mfilename("fullpath")));
-addpath(suiteRoot);
-startupOrekitSuite();
+addpath(genpath(fullfile(suiteRoot, "src")));
 
-startTime = datetime(2023, 9, 17, 5, 31, 0, "TimeZone", "UTC");
-stopTime = datetime(2023, 9, 17, 9, 0, 0, "TimeZone", "UTC");
-cfg = ScenarioConfig("Name", "Area target sensor-frame sweep", ...
-    "Epoch", startTime, "StopTime", stopTime, ...
-    "TimeStep", seconds(10), "AnimationStep", seconds(1));
-scenario = MissionScenario(cfg);
+data = normalizeAzElTimeObstacleData(azElData);
+fprintf("Input target %s contains %d az/el slices from %.3f to %.3f s.\n", ...
+    data.TargetName, numel(data.Time), ...
+    data.ElapsedSeconds(1), data.ElapsedSeconds(end));
 
-earthEquatorialRadiusMeters = 6378137.0;
-sat = SatelliteObject.fromKeplerian("sat1", ...
-    earthEquatorialRadiusMeters + 900e3, 0, 98.6, 20, 0, 0);
-sat.PropagatorType = "EcksteinHechler";  % Orekit zonal J2..J6 analytical model
-sat.Attitude = "NadirSun";
-
-sensor = SensorObject.simpleConic("SatAEsensor", "sat1", 1);
-sensor.PointingMode = "Nadir";
-sensor.FieldOfRegardDeg = 70;             % elevation >= 20 deg
-sensor.MinElevationDeg = 5;               % ground-side access constraint
-sensor.AzimuthRateLimitDegPerSec = 2;
-sensor.ElevationRateLimitDegPerSec = 2;
-sensor.AzimuthAccelerationLimitDegPerSec2 = 0.2;
-sensor.ElevationAccelerationLimitDegPerSec2 = 0.2;
-sensor.MountOffsetMeters = [0 0 2000];
-sat = sat.addSensor(sensor);
-
-latitudeDeg = [ ...
-    21.6409, 23.2462, 22.4436, 20.8382, 19.8349, 18.4303, 15.6209, ...
-    13.0792, 10.2029, 8.66451, 10.6712, 11.6076, 15.3534, 19.0322, 21.0389];
-longitudeDeg = [ ...
-    107.993, 105.328, 102.664, 103.996, 104.44, 104.631, 107.105, ...
-    106.724, 104.821, 104.757, 106.851, 109.072, 108.945, 105.646, 106.724];
-vietnam = AreaTargetObject("Vietnam", latitudeDeg, longitudeDeg, 0);
-vietnam.Color = [0 0 1];
-
-scenario = scenario.addObject(sat);
-scenario = scenario.addObject(vietnam);
-scenario = scenario.propagate();
-
-projectionOptions = struct( ...
-    "TimeStepSeconds", 1, ...
-    "AccessIndex", 1, ...
-    "AccessPaddingSeconds", 1, ...
-    "MaximumBoundaryStepDeg", 0.15, ...
-    "AzimuthLimitsDeg", [-150 150], ...
-    "ElevationLimitsDeg", [20 90], ...
-    "HomeAzElDeg", [0 90], ...
-    "AttitudeMode", "NadirSun");
-azElData = computeAreaTargetAzElSweep( ...
-    scenario, "sat1", "SatAEsensor", "Vietnam", projectionOptions);
-
-fprintf("Selected access: %s to %s (%d projection samples).\n", ...
-    string(azElData.AccessWindow(1)), string(azElData.AccessWindow(2)), ...
-    numel(azElData.Time));
-
-%% Pack every 2-D slice into an implicit 3-D az/el/time obstacle
-% The packed workspace stores boundaries as single precision and uses a
-% precomputed rectangle for fast collision rejection. It does not allocate
-% a dense 360-by-90-by-N voxel array, so N can be 86400 or larger.
-obstacleOptions = struct( ...
+%% Pack every 2-D slice into an implicit 3-D obstacle
+% Storage remains proportional to boundary vertex count. No dense
+% azimuth-by-elevation-by-time voxel array is allocated.
+obstacleWorkspace = buildAzElTimeObstacleWorkspace(azElData, struct( ...
     "MaximumVerticesPerRegion", 64, ...
-    "PreserveCommandPath", true);
-obstacleWorkspace = buildAzElTimeObstacleWorkspace( ...
-    azElData, obstacleOptions);
+    "PreserveCommandPath", true));
 fprintf("Packed obstacle uses %.2f MB for %d time slices.\n", ...
     obstacleWorkspace.EstimatedStorageBytes / 1024^2, ...
     obstacleWorkspace.Obstacles(1).SampleCount);
 
-% Example collision query for a candidate path [azimuth, elevation, time].
-% Use CollisionMode="bounds" for the fastest conservative broad phase, or
-% "polygon" for the exact packed boundary. TimePaddingSamples=1 checks the
-% neighboring slices too, which is safer between discrete time samples.
-candidateAzimuthDeg = azElData.CommandAzimuthDeg;
-candidateElevationDeg = azElData.CommandElevationDeg;
+%% Query a representative centerline against the original packed slices
+% Replace these azimuth/elevation arrays with an actual boresight candidate
+% to test a proposed steering path. Numeric compact time_s can be passed
+% directly; datetime is used here so both supported input schemas share the
+% same code path.
+[candidateAzimuthDeg, candidateElevationDeg] = sliceCenters(data);
 [pathBlocked, hitObstacle, collisionDetails] = queryAzElTimeObstacle( ...
     obstacleWorkspace, candidateAzimuthDeg, candidateElevationDeg, ...
-    azElData.Time, struct( ...
+    data.Time, struct( ...
     "CollisionMode", "polygon", ...
     "TimePaddingSamples", 1));
-fprintf("%d of %d candidate path samples intersect the obstacle.\n", ...
-    nnz(pathBlocked), numel(pathBlocked));
+validCandidate = isfinite(candidateAzimuthDeg) & ...
+    isfinite(candidateElevationDeg);
+fprintf("%d of %d representative centerline samples are blocked.\n", ...
+    nnz(pathBlocked), nnz(validCandidate));
 
-% Multiple obstacles use the same builder:
-% obstacleWorkspace = buildAzElTimeObstacleWorkspace( ...
-%     {azElData, secondAzElData, thirdAzElData}, obstacleOptions);
-%
-% The older frame animation and accumulated 2-D sweep remain available,
-% but are intentionally not run for large data sets:
-% animateAreaTargetAzEl(azElData, struct("PauseSeconds", 0.001));
-% sweepResult = plotAreaTargetAzElSweep(azElData);
-
-%% Animate the 2-D sweep and build the 3-D obstacle beside it
-% The left pane follows the current az/el boundary. The right pane reveals
-% the corresponding time slices, then adds a translucent final envelope
-% while leaving the internal slices visible.
-% Display sampling keeps large runs responsive; collision queries still
-% retain every packed time sample.
-viewMode = "3d";  % Choose "2d", "3d", or "combined".
+%% Show the 3-D workspace
+% Change ViewMode to "2d" or "combined" when both views are useful.
+viewMode = "3d";
 obstacleView = animateAzElTimeObstacleWorkspace( ...
     azElData, obstacleWorkspace, struct( ...
     "ViewMode", viewMode, ...
@@ -114,4 +58,32 @@ obstacleView = animateAzElTimeObstacleWorkspace( ...
     "ShowCombinedSweep", true, ...
     "MaximumSweepSamples", 100, ...
     "ShowVisibilityControls", true, ...
-    "ShowCommandPath", true));
+    "ShowCommandPath", false));
+
+result = struct( ...
+    "Data", data, ...
+    "Workspace", obstacleWorkspace, ...
+    "CandidateAzimuthDeg", candidateAzimuthDeg, ...
+    "CandidateElevationDeg", candidateElevationDeg, ...
+    "PathBlocked", pathBlocked, ...
+    "HitObstacle", hitObstacle, ...
+    "CollisionDetails", collisionDetails, ...
+    "View", obstacleView);
+end
+
+function [azimuth, elevation] = sliceCenters(data)
+n = numel(data.Time);
+azimuth = nan(n, 1);
+elevation = nan(n, 1);
+for k = 1:n
+    azimuthSlice = double(data.AzimuthDeg{k}(:));
+    elevationSlice = double(data.ElevationDeg{k}(:));
+    valid = isfinite(azimuthSlice) & isfinite(elevationSlice);
+    if ~any(valid)
+        continue;
+    end
+    azimuth(k) = atan2d(mean(sind(azimuthSlice(valid))), ...
+        mean(cosd(azimuthSlice(valid))));
+    elevation(k) = mean(elevationSlice(valid));
+end
+end

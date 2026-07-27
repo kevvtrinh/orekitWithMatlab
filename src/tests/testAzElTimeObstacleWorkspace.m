@@ -34,6 +34,39 @@ verifyEqual(testCase, details.ObstacleName, ["Area-A" "Area-B" ""]);
 verifyEqual(testCase, workspace.ObstacleCount, 2);
 end
 
+function testCompactInputPreservesTimeSeconds(testCase)
+data = compactMovingRectangles("Compact Area", [0 2 4], [10 20 30]);
+workspace = buildAzElTimeObstacleWorkspace(data);
+
+verifyEqual(testCase, workspace.ReferenceTime, ...
+    datetime(1970, 1, 1, 0, 0, 0, "TimeZone", "UTC"));
+verifyEqual(testCase, workspace.Obstacles.TimeSeconds, [10; 20; 30]);
+verifyEqual(testCase, workspace.Obstacles.Name, "Compact Area");
+occupied = queryAzElTimeObstacle(workspace, [0 2 20], [30 30 30], ...
+    data.time_s);
+verifyEqual(testCase, occupied, [true true false]);
+end
+
+function testCompactInputWorksDirectlyWithQueryAndAnimation(testCase)
+data = compactMovingRectangles("Compact Area", [0 2 4], [0 1 2]);
+occupied = queryAzElTimeObstacle(data, [0 2 20], [30 30 30], data.time_s);
+verifyEqual(testCase, occupied, [true true false]);
+
+workspace = buildAzElTimeObstacleWorkspace(data);
+figureHandle = figure("Visible", "off");
+cleaner = onCleanup(@() close(figureHandle));
+handles = animateAzElTimeObstacleWorkspace(data, workspace, struct( ...
+    "Figure", figureHandle, ...
+    "ViewMode", "combined", ...
+    "MaximumAnimationFrames", 2, ...
+    "MaximumDisplayedSlices", 2, ...
+    "PauseSeconds", 0));
+verifyEqual(testCase, handles.ViewMode, "combined");
+verifyTrue(testCase, isgraphics(handles.TwoDimensionalAxes));
+verifyTrue(testCase, isgraphics(handles.ThreeDimensionalAxes));
+clear cleaner;
+end
+
 function testBoundsModeAndNeighborPadding(testCase)
 data = movingRectangles("Area", [0 10 20]);
 workspace = buildAzElTimeObstacleWorkspace(data);
@@ -208,4 +241,14 @@ data = struct( ...
     "AzimuthLimitsDeg", [-180 180], ...
     "ElevationLimitsDeg", [0 90], ...
     "HomeAzElDeg", [0 90]);
+end
+
+function data = compactMovingRectangles(name, centerAzimuth, timeSeconds)
+native = movingRectangles(name, centerAzimuth);
+data = struct( ...
+    "targetName", string(name), ...
+    "time_s", double(timeSeconds(:)), ...
+    "az_deg", {native.AzimuthDeg}, ...
+    "el_deg", {native.ElevationDeg}, ...
+    "status", native.Status);
 end

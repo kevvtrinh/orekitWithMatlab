@@ -94,10 +94,18 @@ exportSensorAccessReport(result, "sensor_access_report.csv");
 
 See `examples/example_08_sensorAccess.m` and `examples/headless/sensors/script_219_sensorFullDemo.m`.
 
-For a geographic polygon projected into a moving satellite sensor frame,
-including WGS-84 horizon clipping, animated az/el outlines, and an accumulated
-sweep print, run `examples/example_22_areaTargetAzElSweep.m`. The reusable
-analysis entry point is `computeAreaTargetAzElSweep`.
+For a geographic polygon already projected into a moving satellite sensor
+frame, pass its compact `targetName`, `time_s`, `az_deg`, `el_deg`, and
+`status` struct to `example_22_areaTargetAzElSweep`. The example builds the
+packed 3-D workspace, queries a representative path, and visualizes the
+result. The builder and query functions also accept this compact format
+directly.
+
+To plan a rate- and acceleration-limited boresight path through that
+az/el/time workspace, use `planAzElKinodynamicAStar`. Example 23 avoids the
+moving Vietnam polygon and returns an azimuth/elevation steering profile;
+Example 24 demonstrates a case where the minimum-time path must stop and wait
+for an obstacle to clear.
 
 ## Propagators and force models
 

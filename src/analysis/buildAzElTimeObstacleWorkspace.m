@@ -4,7 +4,8 @@ function workspace = buildAzElTimeObstacleWorkspace(azElData, options)
 % workspace = buildAzElTimeObstacleWorkspace(azElData)
 % workspace = buildAzElTimeObstacleWorkspace({data1, data2, ...}, options)
 %
-% Each input is the result of COMPUTEAREATARGETAZELSWEEP. The output is an
+% Inputs may be COMPUTEAREATARGETAZELSWEEP results or compact structs with
+% targetName, time_s, az_deg, el_deg, and status fields. The output is an
 % implicit 3-D obstacle workspace whose coordinates are sensor azimuth,
 % sensor elevation, and time. Boundaries are packed into contiguous
 % single-precision arrays and each time slice has a precomputed bounding
@@ -14,6 +15,7 @@ function workspace = buildAzElTimeObstacleWorkspace(azElData, options)
 %   MaximumVerticesPerRegion  Boundary cap per region (default 64). Use Inf
 %                             to retain every input vertex.
 %   PreserveCommandPath       Retain centroid commands (default true).
+%   ReferenceTime             Mission epoch for compact time_s input.
 %
 % Use QUERYAZELTIMEOBSTACLE for collision tests and
 % PLOTAZELTIMEOBSTACLEWORKSPACE for a decimated static 3-D view.
@@ -23,7 +25,8 @@ if nargin < 2
 end
 defaults = struct( ...
     "MaximumVerticesPerRegion", 64, ...
-    "PreserveCommandPath", true);
+    "PreserveCommandPath", true, ...
+    "ReferenceTime", []);
 options = applyDefaults(options, defaults);
 validateattributes(options.MaximumVerticesPerRegion, {'numeric'}, ...
     {'scalar', 'real', 'positive'});
@@ -35,7 +38,11 @@ validateattributes(options.PreserveCommandPath, {'logical', 'numeric'}, ...
     {'scalar'});
 
 dataList = normalizeInputs(azElData);
-referenceTime = earliestTime(dataList);
+referenceTime = chooseReferenceTime(dataList, options.ReferenceTime);
+for k = 1:numel(dataList)
+    dataList{k} = normalizeAzElTimeObstacleData(dataList{k}, struct( ...
+        "ReferenceTime", referenceTime));
+end
 obstacles = repmat(emptyObstacle(), numel(dataList), 1);
 for k = 1:numel(dataList)
     obstacles(k) = packObstacle(dataList{k}, referenceTime, options);
@@ -68,26 +75,49 @@ if isempty(dataList)
         "At least one az/el obstacle is required.");
 end
 for k = 1:numel(dataList)
-    required = ["Time", "AzimuthDeg", "ElevationDeg"];
-    if ~isstruct(dataList{k}) || ...
-            ~all(isfield(dataList{k}, cellstr(required)))
+    if ~isstruct(dataList{k}) || ~isscalar(dataList{k})
         error("buildAzElTimeObstacleWorkspace:InvalidInput", ...
-            "Obstacle %d is missing Time, AzimuthDeg, or ElevationDeg.", k);
+            "Obstacle %d must be a scalar az/el data struct.", k);
     end
 end
 end
 
-function referenceTime = earliestTime(dataList)
-firstTimes = NaT(numel(dataList), 1, "TimeZone", "UTC");
-for k = 1:numel(dataList)
-    times = ensureUtc(dataList{k}.Time);
-    if isempty(times) || any(isnat(times))
-        error("buildAzElTimeObstacleWorkspace:InvalidTime", ...
-            "Obstacle %d must contain finite datetime samples.", k);
+function referenceTime = chooseReferenceTime(dataList, requested)
+if ~isempty(requested)
+    referenceTime = ensureUtc(requested);
+    if ~isscalar(referenceTime) || isnat(referenceTime)
+        error("buildAzElTimeObstacleWorkspace:InvalidReferenceTime", ...
+            "ReferenceTime must be a finite datetime scalar.");
     end
-    firstTimes(k) = min(times);
+    return;
 end
-referenceTime = min(firstTimes);
+isCompact = false(numel(dataList), 1);
+isNative = false(numel(dataList), 1);
+for k = 1:numel(dataList)
+    isCompact(k) = all(isfield(dataList{k}, ...
+        {'time_s', 'az_deg', 'el_deg'}));
+    isNative(k) = all(isfield(dataList{k}, ...
+        {'Time', 'AzimuthDeg', 'ElevationDeg'}));
+end
+if all(isCompact & ~isNative)
+    referenceTime = datetime(1970, 1, 1, 0, 0, 0, ...
+        "TimeZone", "UTC");
+elseif all(isNative)
+    firstTimes = NaT(numel(dataList), 1, "TimeZone", "UTC");
+    for k = 1:numel(dataList)
+        times = ensureUtc(dataList{k}.Time);
+        if isempty(times) || any(isnat(times))
+            error("buildAzElTimeObstacleWorkspace:InvalidTime", ...
+                "Obstacle %d must contain finite datetime samples.", k);
+        end
+        firstTimes(k) = min(times);
+    end
+    referenceTime = min(firstTimes);
+else
+    error("buildAzElTimeObstacleWorkspace:MixedTimeFormats", ...
+        ["Mixed compact and native inputs require options.ReferenceTime " ...
+        "to define their common epoch."]);
+end
 end
 
 function obstacle = packObstacle(data, referenceTime, options)

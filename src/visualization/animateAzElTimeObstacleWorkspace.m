@@ -36,6 +36,8 @@ defaults = struct( ...
 options = applyDefaults(options, defaults);
 options.ViewMode = normalizeViewMode(options.ViewMode);
 validateOptions(options);
+data = normalizeAzElTimeObstacleData(data, struct( ...
+    "ReferenceTime", workspace.ReferenceTime));
 validateInput(data, workspace);
 
 obstacleIndex = matchingObstacle(data, workspace);

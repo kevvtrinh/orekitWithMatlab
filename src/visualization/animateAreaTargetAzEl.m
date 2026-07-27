@@ -3,6 +3,7 @@ function handles = animateAreaTargetAzEl(data, options)
 if nargin < 2
     options = struct();
 end
+data = normalizeAzElTimeObstacleData(data);
 if ~isfield(options, "PauseSeconds"), options.PauseSeconds = 0.001; end
 if ~isfield(options, "Figure"), options.Figure = []; end
 
