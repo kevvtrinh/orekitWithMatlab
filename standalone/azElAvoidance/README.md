@@ -39,7 +39,7 @@ startState = struct( ...
 
 stopState = struct( ...
     "time_s", 3000, ...
-    "position_deg", [80, 0], ...
+    "position_deg", [80, 80], ...
     "velocity_deg_s", [0, 0], ...
     "acceleration_deg_s2", [0, 0]);
 
@@ -54,6 +54,7 @@ options = struct( ...
     "GridStep_deg", 0.1, ...
     "SafetyMargin_deg", 1, ...
     "AllowAzimuthWrap", true, ...
+    "Objective", "minimumAngularDistance", ...
     "MaxSearchTime_s", 30);
 
 plan = planAzElAvoidance( ...
@@ -65,10 +66,15 @@ The steering command is in `plan.time_s` and `plan.position_deg`.
 `-180/180` seam. Velocity, acceleration, waiting samples, search statistics,
 and the packed obstacle workspace are also returned.
 
-Long fixed-time requests use a coarse control-decision lattice first while
-retaining `SampleTime_s` for collision checks and returned steering samples.
-If that lattice cannot reach the requested terminal state, the planner tries
-finer lattices within `MaxSearchTime_s`.
+`minimumAngularDistance` first tests the globally shortest straight segment,
+then searches dynamically feasible waypoint paths with coarse-to-fine
+refinement. `plan.angularLowerBound_deg` and `plan.suboptimalityBound`
+quantify how close a returned waypoint route is to the unknown global
+optimum. Every returned sample is checked at `SampleTime_s`.
+
+Set `Objective` to `minimumTime` to use kinodynamic A* on the finite motion
+lattice. Long fixed-time lattice requests start with coarse control decisions
+while retaining `SampleTime_s` for collision checks and returned commands.
 
 ## Animate the completed plan
 
@@ -100,6 +106,6 @@ occupied = queryAzElTimeObstacle( ...
 The workspace packs all time slices into contiguous arrays. Display
 decimation never affects collision queries.
 
-`planAzElAvoidance` uses unweighted kinodynamic A* on a finite motion
-lattice. A successful result is optimal on that configured lattice, not in
-continuous azimuth/elevation space.
+The continuous waypoint result reports a certified bound derived from the
+straight angular lower bound. A `minimumTime` A* result reports whether it is
+optimal on its configured finite lattice.

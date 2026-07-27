@@ -44,8 +44,12 @@ verifyEqual(testCase, plan.velocity_deg_s(end, :), [0 0], ...
     "AbsTol", 1e-9);
 verifyEqual(testCase, plan.acceleration_deg_s2(end, :), [0 0], ...
     "AbsTol", 1e-9);
-verifyEqual(testCase, plan.internalSampleTime_s, 10);
-verifyEqual(testCase, plan.planningAttempts(1).SampleTime_s, 10);
+verifyEqual(testCase, plan.objective, "minimumAngularDistance");
+verifyTrue(testCase, plan.optimalGlobally);
+verifyEqual(testCase, plan.angularPathLength_deg, 110, "AbsTol", 1e-9);
+verifyEqual(testCase, plan.angularLowerBound_deg, 110, "AbsTol", 1e-9);
+verifyEqual(testCase, plan.suboptimalityBound, 1, "AbsTol", 1e-12);
+verifyTrue(testCase, isnan(plan.internalSampleTime_s));
 end
 
 function testAvoidsExpandedPolygon(testCase)
@@ -82,6 +86,8 @@ blocked = queryAzElTimeObstacle(plan.workspace, ...
 verifyFalse(testCase, any(blocked));
 verifyGreaterThan(testCase, ...
     max(abs(plan.position_deg(:, 2) - 45)), 2);
+verifyEqual(testCase, plan.objective, "minimumAngularDistance");
+verifyGreaterThanOrEqual(testCase, plan.suboptimalityBound, 1);
 end
 
 function testAcceptsMultipleObstacles(testCase)
@@ -101,13 +107,16 @@ options = struct( ...
     "SampleTime_s", 1, ...
     "GridStep_deg", 0.25, ...
     "SafetyMargin_deg", 0, ...
-    "AllowAzimuthWrap", true);
+    "AllowAzimuthWrap", true, ...
+    "Objective", "minimumTime");
 
 plan = planAzElAvoidance( ...
     {left, right}, startState, stopState, limits, options);
 
 verifyTrue(testCase, plan.success);
 verifyEqual(testCase, plan.workspace.ObstacleCount, 2);
+verifyEqual(testCase, plan.objective, "minimumTime");
+verifyTrue(testCase, plan.optimalOnLattice);
 end
 
 function testAnimatorSupportsTwoAndThreeDimensionalViews(testCase)

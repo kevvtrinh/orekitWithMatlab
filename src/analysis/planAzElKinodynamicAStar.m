@@ -30,6 +30,8 @@ function result = planAzElKinodynamicAStar( ...
 %   TimeStepSeconds, MaxPlanningTimeSeconds, AzimuthWrap
 %   CollisionCheckStepSeconds, TimePaddingSamples, MaxExpansions
 %   MaxWallTimeSeconds
+%   Objective: "minimumTime" or "minimumAngularDistance"
+%   HeuristicWeight: 1 for exact A*, >1 for bounded weighted A*
 %
 % The planner is optimal on the configured finite lattice when it returns
 % success. The visual swept-envelope mesh is not used for collision tests.
@@ -62,8 +64,9 @@ if pointCollision(obstacleWorkspace, start.State, ...
 end
 
 nodes = initializeNodes(options.InitialNodeCapacity);
-startKey = stateKey(start.State, limits, options);
-startHeuristic = heuristic(start.State, goal, limits, options);
+startKey = stateKey(start.State, start.Acceleration, limits, options);
+startHeuristic = options.HeuristicWeight * ...
+    heuristic(start.State, goal, limits, options);
 startTie = motionTie(start.State, goal, limits, options);
 [nodes, startIndex] = appendNode(nodes, start.State, 0, ...
     start.Acceleration, 0, startHeuristic, startTie);
@@ -86,7 +89,8 @@ while heap.Count > 0
     end
     [heap, currentIndex] = heapPop(heap);
     current = nodes.State(currentIndex, :);
-    key = stateKey(current, limits, options);
+    key = stateKey(current, nodes.Acceleration(currentIndex, :), ...
+        limits, options);
     if ~isKey(bestNode, key) || bestNode(key) ~= currentIndex
         continue;
     end
@@ -102,6 +106,9 @@ while heap.Count > 0
     if current(5) >= goal.LatestStep
         continue;
     end
+    if ~canStillReach(current, goal, limits, options)
+        continue;
+    end
 
     controlCount = size(controls, 1);
     nextStates = zeros(controlCount, 5);
@@ -110,7 +117,8 @@ while heap.Count > 0
         acceleration = controls(controlIndex, :);
         [next, valid] = propagatePrimitive( ...
             current, acceleration, limits, options);
-        if valid && next(5) <= goal.LatestStep
+        if valid && next(5) <= goal.LatestStep && ...
+                canStillReach(next, goal, limits, options)
             nextStates(controlIndex, :) = next;
             validControl(controlIndex) = true;
         end
@@ -129,15 +137,17 @@ while heap.Count > 0
         controlIndex = candidateControls(candidateIndex);
         acceleration = controls(controlIndex, :);
         next = nextStates(controlIndex, :);
-        tentativeG = nodes.G(currentIndex) + options.TimeStepSeconds;
-        nextKey = stateKey(next, limits, options);
+        tentativeG = nodes.G(currentIndex) + ...
+            transitionCost(current, acceleration, options);
+        nextKey = stateKey(next, acceleration, limits, options);
         if isKey(bestNode, nextKey)
             oldIndex = bestNode(nextKey);
             if tentativeG >= nodes.G(oldIndex) - 1e-12
                 continue;
             end
         end
-        h = heuristic(next, goal, limits, options);
+        h = options.HeuristicWeight * ...
+            heuristic(next, goal, limits, options);
         tie = motionTie(next, goal, limits, options);
         [nodes, nextIndex] = appendNode(nodes, next, currentIndex, ...
             acceleration, tentativeG, h, tie);
@@ -165,9 +175,25 @@ path = makePathTable(nodes, nodePath, start.TimeSeconds, ...
     referenceTime, limits, options);
 result = struct();
 result.Success = true;
-result.Message = "Optimal lattice path found.";
-result.OptimalOnLattice = true;
-result.CostSeconds = nodes.G(goalIndex);
+result.OptimalOnLattice = options.HeuristicWeight == 1;
+if result.OptimalOnLattice
+    result.Message = "Optimal " + options.Objective + ...
+        " lattice path found.";
+else
+    result.Message = "Bounded " + options.Objective + ...
+        " weighted-A* lattice path found.";
+end
+result.Objective = options.Objective;
+result.HeuristicWeight = options.HeuristicWeight;
+result.SuboptimalityBound = options.HeuristicWeight;
+result.ObjectiveCost = nodes.G(goalIndex);
+result.ObjectiveCostUnits = objectiveCostUnits(options.Objective);
+result.CostSeconds = path.ElapsedSeconds(end);
+if options.Objective == "minimumAngularDistance"
+    result.AngularPathLengthDeg = nodes.G(goalIndex);
+else
+    result.AngularPathLengthDeg = pathAngularLength(path, options);
+end
 result.ExpandedNodeCount = expanded;
 result.GeneratedNodeCount = generated;
 result.Path = path;
@@ -213,6 +239,8 @@ validateattributes(options.TimeStepSeconds, {'numeric'}, ...
 dt = options.TimeStepSeconds;
 defaults = struct( ...
     "MaxPlanningTimeSeconds", 120, ...
+    "Objective", "minimumTime", ...
+    "HeuristicWeight", 1, ...
     "AzimuthWrap", diff(limits.AzimuthLimitsDeg) >= 360 - 1e-9, ...
     "AzimuthResolutionDeg", ...
     0.5 * limits.AzimuthAccelerationLimitDegPerSec2 * dt^2, ...
@@ -232,13 +260,17 @@ defaults = struct( ...
     "MaxWallTimeSeconds", Inf, ...
     "InitialNodeCapacity", 4096);
 options = applyDefaults(options, defaults);
+options.Objective = normalizeObjective(options.Objective);
 validateattributes(options.MaxPlanningTimeSeconds, {'numeric'}, ...
     {'scalar', 'real', 'finite', 'positive'});
+validateattributes(options.HeuristicWeight, {'numeric'}, ...
+    {'scalar', 'real', 'finite', '>=', 1});
 validateattributes(options.AzimuthWrap, {'logical', 'numeric'}, {'scalar'});
 if options.AzimuthWrap ~= 0 && options.AzimuthWrap ~= 1
     error("planAzElKinodynamicAStar:InvalidAzimuthWrap", ...
         "AzimuthWrap must be logical or numeric 0/1.");
 end
+
 options.AzimuthWrap = logical(options.AzimuthWrap);
 resolutionNames = ["AzimuthResolutionDeg", "ElevationResolutionDeg", ...
     "AzimuthRateResolutionDegPerSec", ...
@@ -277,6 +309,23 @@ if options.AzimuthWrap && ...
         abs(diff(limits.AzimuthLimitsDeg) - 360) > 1e-6
     error("planAzElKinodynamicAStar:InvalidWrapLimits", ...
         "AzimuthWrap requires azimuth limits spanning exactly 360 degrees.");
+end
+end
+
+function objective = normalizeObjective(value)
+value = lower(strtrim(string(value)));
+if ~isscalar(value)
+    error("planAzElKinodynamicAStar:InvalidObjective", ...
+        "Objective must be minimumTime or minimumAngularDistance.");
+end
+switch value
+    case {"minimumtime", "time"}
+        objective = "minimumTime";
+    case {"minimumangulardistance", "angulardistance", "distance"}
+        objective = "minimumAngularDistance";
+    otherwise
+        error("planAzElKinodynamicAStar:InvalidObjective", ...
+            "Objective must be minimumTime or minimumAngularDistance.");
 end
 end
 
@@ -523,22 +572,71 @@ blocked = queryAzElTimeObstacle(workspace, startState(1), startState(2), ...
 collision = any(blocked);
 end
 
+function cost = transitionCost(state, acceleration, options)
+if options.Objective == "minimumAngularDistance"
+    cost = primitiveAngularLength( ...
+        state(3:4), acceleration, options.TimeStepSeconds);
+else
+    cost = options.TimeStepSeconds;
+end
+end
+
+function lengthDeg = primitiveAngularLength(rate, acceleration, dt)
+sampleCount = 9;
+tau = linspace(0, dt, sampleCount).';
+velocity = rate + tau .* acceleration;
+speed = hypot(velocity(:, 1), velocity(:, 2));
+weights = [1; 4; 2; 4; 2; 4; 2; 4; 1];
+lengthDeg = (dt / (sampleCount - 1)) / 3 * sum(weights .* speed);
+end
+
+function lengthDeg = pathAngularLength(path, options)
+lengthDeg = 0;
+for k = 1:height(path) - 1
+    rate = [ ...
+        path.AzimuthRateDegPerSec(k), ...
+        path.ElevationRateDegPerSec(k)];
+    acceleration = [ ...
+        path.AzimuthAccelerationDegPerSec2(k + 1), ...
+        path.ElevationAccelerationDegPerSec2(k + 1)];
+    lengthDeg = lengthDeg + primitiveAngularLength( ...
+        rate, acceleration, options.TimeStepSeconds);
+end
+end
+
+function units = objectiveCostUnits(objective)
+if objective == "minimumAngularDistance"
+    units = "degrees";
+else
+    units = "seconds";
+end
+end
+
+function yes = canStillReach(state, goal, limits, options)
+[minimumTime, ~] = motionLowerBound(state, goal, limits, options);
+remainingTime = max(0, goal.LatestStep - state(5)) * ...
+    options.TimeStepSeconds;
+yes = minimumTime <= remainingTime + 1e-9;
+end
+
 function value = heuristic(state, goal, limits, options)
-[motionTime, ~] = motionLowerBound(state, goal, limits, options);
-currentTime = state(5) * options.TimeStepSeconds;
-earliestRelative = goal.EarliestStep * options.TimeStepSeconds;
-windowWait = max(0, earliestRelative - currentTime);
-value = max(motionTime, windowWait);
+if options.Objective == "minimumAngularDistance"
+    [azimuthDistance, elevationDistance] = ...
+        positionDistance(state, goal, limits, options);
+    value = hypot(azimuthDistance, elevationDistance);
+else
+    [motionTime, ~] = motionLowerBound(state, goal, limits, options);
+    currentTime = state(5) * options.TimeStepSeconds;
+    earliestRelative = goal.EarliestStep * options.TimeStepSeconds;
+    windowWait = max(0, earliestRelative - currentTime);
+    value = max(motionTime, windowWait);
+end
 end
 
 function [value, positionTime] = motionLowerBound( ...
         state, goal, limits, options)
-azimuthDistance = abs(azimuthDifference( ...
-    state(1), goal.AzimuthDeg, limits, options));
-azimuthDistance = max(0, ...
-    azimuthDistance - goal.PositionToleranceDeg(1));
-elevationDistance = max(0, ...
-    abs(state(2) - goal.ElevationDeg) - goal.PositionToleranceDeg(2));
+[azimuthDistance, elevationDistance] = ...
+    positionDistance(state, goal, limits, options);
 positionTime = max( ...
     azimuthDistance / limits.AzimuthRateLimitDegPerSec, ...
     elevationDistance / limits.ElevationRateLimitDegPerSec);
@@ -550,6 +648,16 @@ stoppingTime = max( ...
     goal.RateToleranceDegPerSec(2)) / ...
     limits.ElevationAccelerationLimitDegPerSec2);
 value = max(positionTime, stoppingTime);
+end
+
+function [azimuthDistance, elevationDistance] = ...
+        positionDistance(state, goal, limits, options)
+azimuthDistance = abs(azimuthDifference( ...
+    state(1), goal.AzimuthDeg, limits, options));
+azimuthDistance = max(0, ...
+    azimuthDistance - goal.PositionToleranceDeg(1));
+elevationDistance = max(0, ...
+    abs(state(2) - goal.ElevationDeg) - goal.PositionToleranceDeg(2));
 end
 
 function value = motionTie(state, goal, limits, options)
@@ -584,7 +692,7 @@ effort = sum(abs([azimuthLevel(:), elevationLevel(:)]), 2);
 controls = controls(order, :);
 end
 
-function key = stateKey(state, limits, options)
+function key = stateKey(state, acceleration, limits, options)
 azimuthBin = round((state(1) - limits.AzimuthLimitsDeg(1)) / ...
     options.AzimuthResolutionDeg);
 elevationBin = round((state(2) - limits.ElevationLimitsDeg(1)) / ...
@@ -593,8 +701,13 @@ azimuthRateBin = round(state(3) / ...
     options.AzimuthRateResolutionDegPerSec);
 elevationRateBin = round(state(4) / ...
     options.ElevationRateResolutionDegPerSec);
-key = sprintf('%d|%d|%d|%d|%d', azimuthBin, elevationBin, ...
-    azimuthRateBin, elevationRateBin, round(state(5)));
+azimuthAcceleration = acceleration(1) / ...
+    limits.AzimuthAccelerationLimitDegPerSec2;
+elevationAcceleration = acceleration(2) / ...
+    limits.ElevationAccelerationLimitDegPerSec2;
+key = sprintf('%d|%d|%d|%d|%d|%.12g|%.12g', ...
+    azimuthBin, elevationBin, azimuthRateBin, elevationRateBin, ...
+    round(state(5)), azimuthAcceleration, elevationAcceleration);
 end
 
 function azimuth = canonicalAzimuth(azimuth, limits, options)
@@ -805,7 +918,13 @@ result = struct( ...
     "Success", false, ...
     "Message", string(message), ...
     "OptimalOnLattice", false, ...
+    "Objective", options.Objective, ...
+    "HeuristicWeight", options.HeuristicWeight, ...
+    "SuboptimalityBound", options.HeuristicWeight, ...
+    "ObjectiveCost", Inf, ...
+    "ObjectiveCostUnits", objectiveCostUnits(options.Objective), ...
     "CostSeconds", Inf, ...
+    "AngularPathLengthDeg", Inf, ...
     "ExpandedNodeCount", expanded, ...
     "GeneratedNodeCount", generated, ...
     "Path", path, ...

@@ -105,14 +105,19 @@ To plan directly from that data, use
 `planAzElAvoidance(azElData, startState, stopState, limits, options)`. It
 returns the requested `time_s`, wrapped and continuous az/el positions,
 velocity, acceleration, and waiting samples. It accepts one compact obstacle,
-a struct array, or a cell array. `planAzElKinodynamicAStar` remains available
-as the lower-level lattice API.
+a struct array, or a cell array. The default `minimumAngularDistance`
+objective tests straight-path timing and then performs coarse-to-fine
+continuous waypoint refinement; the result reports its angular lower bound
+and certified suboptimality bound. Set `Objective` to `minimumTime` for the
+lower-level kinodynamic A* behavior.
 
 The Orekit-independent runtime is packaged in
 `standalone/azElAvoidance`. That folder contains the compact-data validator,
 workspace builder, collision query, planner, plotting helper, and a runnable
-example. Example 23 avoids the moving Vietnam polygon; Example 24 demonstrates
-a path that must stop and wait for an obstacle to clear.
+example. `animateAzElAvoidancePlan` plays the completed route in synchronized
+2-D and 3-D az/el/time views. Example 23 avoids the moving Vietnam polygon;
+Example 24 demonstrates a path that must stop and wait for an obstacle to
+clear.
 
 ## Propagators and force models
 
