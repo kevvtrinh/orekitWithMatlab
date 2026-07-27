@@ -67,6 +67,17 @@ verifyEqual(testCase, exact, [true true false]);
 verifyTrue(testCase, bounds);
 end
 
+function testEnvelopeDoesNotBridgeMissingTimeRun(testCase)
+data = movingRectangles("Area", 0:4);
+data.AzimuthDeg{3} = zeros(0, 1);
+data.ElevationDeg{3} = zeros(0, 1);
+workspace = buildAzElTimeObstacleWorkspace(data);
+mesh = computeAzElTimeObstacleEnvelopeMesh(workspace.Obstacles, struct( ...
+    "MaximumSlices", 5, "VerticesPerContour", 12));
+
+verifyEqual(testCase, mesh.ConnectedSlicePairs, [1 2; 4 5]);
+end
+
 function testStaticPlotUsesDecimatedSlices(testCase)
 data = movingRectangles("Area", 0:9);
 workspace = buildAzElTimeObstacleWorkspace(data);
@@ -77,7 +88,86 @@ handles = plotAzElTimeObstacleWorkspace(workspace, struct( ...
 
 verifyEqual(testCase, numel(handles.SliceHandles), 4);
 verifyTrue(testCase, isgraphics(handles.Axes));
+verifyTrue(testCase, isgraphics(handles.EnvelopeHandles));
+verifyLessThan(testCase, handles.EnvelopeHandles.FaceAlpha, 0.2);
+verifyEqual(testCase, handles.EnvelopeHandles.FaceColor, ...
+    [0.48 0.08 0.72], "AbsTol", 1e-12);
+verifyTrue(testCase, isgraphics(handles.SliceVisibilityControl));
+setControlValue(handles.SliceVisibilityControl, false);
+verifyTrue(testCase, all(string(get(handles.SliceHandles, "Visible")) == "off"));
+setControlValue(handles.SliceVisibilityControl, true);
 clear cleaner;
+end
+
+function testCombinedAnimationUsesTwoPanes(testCase)
+data = movingRectangles("Area", 0:9);
+workspace = buildAzElTimeObstacleWorkspace(data);
+figureHandle = figure("Visible", "off");
+cleaner = onCleanup(@() close(figureHandle));
+handles = animateAzElTimeObstacleWorkspace(data, workspace, struct( ...
+    "Figure", figureHandle, ...
+    "MaximumAnimationFrames", 4, ...
+    "MaximumDisplayedSlices", 3, ...
+    "PauseSeconds", 0));
+
+verifyTrue(testCase, isgraphics(handles.TwoDimensionalAxes));
+verifyTrue(testCase, isgraphics(handles.ThreeDimensionalAxes));
+verifyEqual(testCase, numel(handles.AnimationFrameSamples), 4);
+verifyEqual(testCase, numel(handles.DisplayedSliceSamples), 3);
+verifyTrue(testCase, all(string(get(handles.SliceHandles, "Visible")) == "on"));
+verifyTrue(testCase, isgraphics(handles.EnvelopeHandle));
+verifyEqual(testCase, string(handles.EnvelopeHandle.Visible), "on");
+verifyLessThan(testCase, handles.EnvelopeHandle.FaceAlpha, ...
+    handles.SliceHandles(1).FaceAlpha);
+verifyEqual(testCase, handles.EnvelopeHandle.FaceColor, ...
+    [0.48 0.08 0.72], "AbsTol", 1e-12);
+verifyTrue(testCase, isgraphics(handles.CombinedSweep));
+verifyTrue(testCase, isgraphics(handles.SliceVisibilityControl));
+verifyTrue(testCase, isgraphics(handles.SweepVisibilityControl));
+setControlValue(handles.SliceVisibilityControl, false);
+verifyTrue(testCase, all(string(get(handles.SliceHandles, "Visible")) == "off"));
+verifyEqual(testCase, string(handles.CurrentSlice3D.Visible), "off");
+setControlValue(handles.SweepVisibilityControl, false);
+verifyEqual(testCase, string(handles.CombinedSweep.Visible), "off");
+clear cleaner;
+end
+
+function testAnimationViewModes(testCase)
+data = movingRectangles("Area", 0:4);
+workspace = buildAzElTimeObstacleWorkspace(data);
+for mode = ["2d" "3d"]
+    figureHandle = figure("Visible", "off");
+    cleaner = onCleanup(@() close(figureHandle));
+    handles = animateAzElTimeObstacleWorkspace(data, workspace, struct( ...
+        "Figure", figureHandle, ...
+        "ViewMode", mode, ...
+        "MaximumAnimationFrames", 2, ...
+        "MaximumDisplayedSlices", 2, ...
+        "PauseSeconds", 0));
+    verifyEqual(testCase, handles.ViewMode, mode);
+    if mode == "2d"
+        verifyTrue(testCase, isgraphics(handles.TwoDimensionalAxes));
+        verifyEmpty(testCase, handles.ThreeDimensionalAxes);
+        verifyEmpty(testCase, handles.EnvelopeHandle);
+        verifyTrue(testCase, isgraphics(handles.CombinedSweep));
+        verifyEmpty(testCase, handles.SliceVisibilityControl);
+        verifyTrue(testCase, isgraphics(handles.SweepVisibilityControl));
+    else
+        verifyEmpty(testCase, handles.TwoDimensionalAxes);
+        verifyTrue(testCase, isgraphics(handles.ThreeDimensionalAxes));
+        verifyTrue(testCase, isgraphics(handles.EnvelopeHandle));
+        verifyEmpty(testCase, handles.CombinedSweep);
+        verifyTrue(testCase, isgraphics(handles.SliceVisibilityControl));
+        verifyEmpty(testCase, handles.SweepVisibilityControl);
+    end
+    clear cleaner;
+end
+end
+
+function setControlValue(control, value)
+control.Value = value;
+callback = control.Callback;
+callback(control, []);
 end
 
 function testLargePackingRemainsCompact(testCase)
@@ -112,5 +202,10 @@ data = struct( ...
     "AzimuthDeg", {azimuth}, ...
     "ElevationDeg", {elevation}, ...
     "CommandAzimuthDeg", centerAzimuth, ...
-    "CommandElevationDeg", repmat(30, n, 1));
+    "CommandElevationDeg", repmat(30, n, 1), ...
+    "Status", repmat("visible", n, 1), ...
+    "CommandInsidePositionLimits", true(n, 1), ...
+    "AzimuthLimitsDeg", [-180 180], ...
+    "ElevationLimitsDeg", [0 90], ...
+    "HomeAzElDeg", [0 90]);
 end
