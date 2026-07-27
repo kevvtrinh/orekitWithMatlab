@@ -1,0 +1,186 @@
+function handles = plotAzElTimeObstacleWorkspace(workspace, options)
+%PLOTAZELTIMEOBSTACLEWORKSPACE Plot packed az/el/time obstacles in 3-D.
+%
+% The plot deliberately displays a bounded number of representative
+% slices. Collision queries still use every packed time sample.
+
+if nargin < 2
+    options = struct();
+end
+defaults = struct( ...
+    "Figure", [], ...
+    "MaximumDisplayedSlices", 100, ...
+    "MaximumCommandPoints", 2000, ...
+    "FaceAlpha", 0.16, ...
+    "ShowCommandPath", true, ...
+    "TimeUnit", "auto");
+options = applyDefaults(options, defaults);
+validateattributes(options.MaximumDisplayedSlices, {'numeric'}, ...
+    {'scalar', 'integer', 'positive'});
+validateattributes(options.MaximumCommandPoints, {'numeric'}, ...
+    {'scalar', 'integer', 'positive'});
+validateattributes(options.FaceAlpha, {'numeric'}, ...
+    {'scalar', '>=', 0, '<=', 1});
+
+if isempty(options.Figure)
+    figureHandle = figure("Color", "w", ...
+        "Name", "Az/el/time obstacle workspace");
+else
+    figureHandle = options.Figure;
+end
+ax = axes(figureHandle);
+hold(ax, "on");
+grid(ax, "on");
+box(ax, "on");
+colors = lines(max(1, numel(workspace.Obstacles)));
+[timeScale, timeLabel] = chooseTimeScale(workspace, options.TimeUnit);
+sliceHandles = gobjects(0, 1);
+commandHandles = gobjects(0, 1);
+
+for obstacleNumber = 1:numel(workspace.Obstacles)
+    obstacle = workspace.Obstacles(obstacleNumber);
+    available = find(all(isfinite(obstacle.BoundsDeg), 2));
+    if isempty(available)
+        continue;
+    end
+    count = min(numel(available), options.MaximumDisplayedSlices);
+    selection = unique(round(linspace(1, numel(available), count)));
+    selection = available(selection);
+    firstPatch = true;
+    for sample = reshape(selection, 1, [])
+        [azimuthParts, elevationParts] = sliceRegions(obstacle, sample);
+        z = obstacle.TimeSeconds(sample) / timeScale;
+        for region = 1:numel(azimuthParts)
+            displayName = "";
+            visibility = "off";
+            if firstPatch
+                displayName = obstacle.Name;
+                visibility = "on";
+                firstPatch = false;
+            end
+            sliceHandles(end + 1, 1) = patch(ax, ...
+                azimuthParts{region}, elevationParts{region}, ...
+                repmat(z, size(azimuthParts{region})), ...
+                colors(obstacleNumber, :), ...
+                "FaceAlpha", options.FaceAlpha, ...
+                "EdgeColor", colors(obstacleNumber, :), ...
+                "LineWidth", 0.35, ...
+                "DisplayName", displayName, ...
+                "HandleVisibility", visibility); %#ok<AGROW>
+        end
+    end
+
+    if options.ShowCommandPath && ...
+            numel(obstacle.CommandAzimuthDeg) == obstacle.SampleCount
+        valid = isfinite(obstacle.CommandAzimuthDeg) & ...
+            isfinite(obstacle.CommandElevationDeg);
+        index = find(valid);
+        if ~isempty(index)
+            keepCount = min(numel(index), options.MaximumCommandPoints);
+            keep = unique(round(linspace(1, numel(index), keepCount)));
+            index = index(keep);
+            commandHandles(end + 1, 1) = plot3(ax, ...
+                obstacle.CommandAzimuthDeg(index), ...
+                obstacle.CommandElevationDeg(index), ...
+                obstacle.TimeSeconds(index) / timeScale, ...
+                "-", "Color", 0.65 .* colors(obstacleNumber, :), ...
+                "LineWidth", 1.4, "HandleVisibility", "off"); %#ok<AGROW>
+        end
+    end
+end
+
+xlabel(ax, "Sensor azimuth (deg)");
+ylabel(ax, "Sensor elevation (deg)");
+zlabel(ax, sprintf("Time from %s (%s)", ...
+    string(workspace.ReferenceTime), timeLabel));
+title(ax, sprintf("Az/el/time obstacle workspace (%d obstacle%s)", ...
+    workspace.ObstacleCount, pluralSuffix(workspace.ObstacleCount)));
+xlim(ax, [-180 180]);
+ylim(ax, [0 90]);
+view(ax, 3);
+axis(ax, "vis3d");
+if ~isempty(sliceHandles)
+    legend(ax, "Location", "best");
+end
+
+handles = struct( ...
+    "Figure", figureHandle, ...
+    "Axes", ax, ...
+    "SliceHandles", sliceHandles, ...
+    "CommandHandles", commandHandles, ...
+    "TimeScale", timeScale, ...
+    "TimeUnit", timeLabel);
+end
+
+function [azimuthParts, elevationParts] = sliceRegions(obstacle, sample)
+first = double(obstacle.SliceOffsets(sample));
+last = double(obstacle.SliceOffsets(sample + 1) - 1);
+if last < first
+    azimuthParts = {};
+    elevationParts = {};
+    return;
+end
+azimuth = double(obstacle.AzimuthDeg(first:last));
+elevation = double(obstacle.ElevationDeg(first:last));
+finite = isfinite(azimuth) & isfinite(elevation);
+changes = diff([false; finite; false]);
+starts = find(changes == 1);
+stops = find(changes == -1) - 1;
+azimuthParts = cell(numel(starts), 1);
+elevationParts = cell(numel(starts), 1);
+for region = 1:numel(starts)
+    index = starts(region):stops(region);
+    azimuthParts{region} = azimuth(index);
+    elevationParts{region} = elevation(index);
+end
+end
+
+function [scale, label] = chooseTimeScale(workspace, requested)
+requested = lower(string(requested));
+maximum = 0;
+for k = 1:numel(workspace.Obstacles)
+    if ~isempty(workspace.Obstacles(k).TimeSeconds)
+        maximum = max(maximum, max(workspace.Obstacles(k).TimeSeconds));
+    end
+end
+if requested == "auto"
+    if maximum >= 2 * 3600
+        requested = "hours";
+    elseif maximum >= 2 * 60
+        requested = "minutes";
+    else
+        requested = "seconds";
+    end
+end
+switch requested
+    case "seconds"
+        scale = 1;
+        label = "s";
+    case "minutes"
+        scale = 60;
+        label = "min";
+    case "hours"
+        scale = 3600;
+        label = "h";
+    otherwise
+        error("plotAzElTimeObstacleWorkspace:InvalidTimeUnit", ...
+            "TimeUnit must be auto, seconds, minutes, or hours.");
+end
+end
+
+function suffix = pluralSuffix(count)
+if count == 1
+    suffix = "";
+else
+    suffix = "s";
+end
+end
+
+function options = applyDefaults(options, defaults)
+names = fieldnames(defaults);
+for k = 1:numel(names)
+    if ~isfield(options, names{k}) || isempty(options.(names{k}))
+        options.(names{k}) = defaults.(names{k});
+    end
+end
+end
