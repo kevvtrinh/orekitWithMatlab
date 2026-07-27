@@ -19,7 +19,6 @@ defaults = struct( ...
     "ViewMode", "combined", ...
     "MaximumAnimationFrames", 600, ...
     "MaximumDisplayedSlices", 100, ...
-    "MaximumCommandPoints", 2000, ...
     "PauseSeconds", 0.005, ...
     "FaceAlpha", 0.18, ...
     "ShowEnvelope", true, ...
@@ -31,18 +30,16 @@ defaults = struct( ...
     "MaximumSweepVerticesPerPolygon", 120, ...
     "CombinedSweepFaceAlpha", 0.14, ...
     "ShowVisibilityControls", true, ...
-    "ShowCommandPath", true, ...
     "TimeUnit", "auto");
 options = applyDefaults(options, defaults);
 options.ViewMode = normalizeViewMode(options.ViewMode);
 validateOptions(options);
-data = normalizeAzElTimeObstacleData(data, struct( ...
-    "ReferenceTime", workspace.ReferenceTime));
+data = normalizeAzElTimeObstacleData(data);
 validateInput(data, workspace);
 
 obstacleIndex = matchingObstacle(data, workspace);
 obstacle = workspace.Obstacles(obstacleIndex);
-sampleCount = numel(data.Time);
+sampleCount = numel(data.time_s);
 if obstacle.SampleCount ~= sampleCount
     error("animateAzElTimeObstacleWorkspace:SampleMismatch", ...
         "The az/el data and packed obstacle must have the same sample count.");
@@ -59,7 +56,7 @@ else
 end
 if isempty(options.Figure)
     figureHandle = figure("Color", "w", "NumberTitle", "off", ...
-        "Name", char(string(data.TargetName) + " az/el obstacle workspace"), ...
+        "Name", char(data.targetName + " az/el obstacle workspace"), ...
         "Position", figurePosition);
 else
     figureHandle = options.Figure;
@@ -90,34 +87,15 @@ end
 
 frameCount = min(sampleCount, options.MaximumAnimationFrames);
 frameSamples = unique(round(linspace(1, sampleCount, frameCount)));
-commandSamples = selectedCommandSamples( ...
-    obstacle, options.MaximumCommandPoints);
 revealed = false(size(sliceHandles));
 
 for frame = 1:numel(frameSamples)
     sample = frameSamples(frame);
-    currentAzimuth = data.AzimuthDeg{sample};
-    currentElevation = data.ElevationDeg{sample};
+    currentAzimuth = data.az_deg{sample};
+    currentElevation = data.el_deg{sample};
     if showTwoDimensional
         set(left.Boundary, "XData", currentAzimuth, ...
             "YData", currentElevation);
-        set(left.Command, "XData", data.CommandAzimuthDeg(sample), ...
-            "YData", data.CommandElevationDeg(sample));
-    end
-
-    trailSamples = commandSamples(commandSamples <= sample);
-    if options.ShowCommandPath && ~isempty(trailSamples)
-        if showTwoDimensional
-            set(left.CommandTrail, ...
-                "XData", obstacle.CommandAzimuthDeg(trailSamples), ...
-                "YData", obstacle.CommandElevationDeg(trailSamples));
-        end
-        if showThreeDimensional
-            set(right.CommandTrail, ...
-                "XData", obstacle.CommandAzimuthDeg(trailSamples), ...
-                "YData", obstacle.CommandElevationDeg(trailSamples), ...
-                "ZData", obstacle.TimeSeconds(trailSamples) / timeScale);
-        end
     end
 
     if showThreeDimensional
@@ -137,8 +115,8 @@ for frame = 1:numel(frameSamples)
 
     if showTwoDimensional
         left.Status.String = statusMessage(data, sample);
-        left.Time.String = sprintf("%s | sample %d of %d", ...
-            string(data.Time(sample)), sample, sampleCount);
+        left.Time.String = sprintf("t = %.3f s | sample %d of %d", ...
+            data.time_s(sample), sample, sampleCount);
     end
     drawnow limitrate;
     if options.PauseSeconds > 0
@@ -172,8 +150,7 @@ if showTwoDimensional && options.ShowCombinedSweep
             "LineWidth", 1.2, ...
             "DisplayName", "Combined sweep");
         uistack(combinedSweep, "bottom");
-        legend(leftAxes, [left.Boundary left.Command left.CommandTrail ...
-            left.Home left.Limits combinedSweep], "Location", "best");
+        legend(leftAxes, [left.Boundary combinedSweep], "Location", "best");
     end
 end
 
@@ -200,10 +177,7 @@ handles = struct( ...
     "TwoDimensionalAxes", leftAxes, ...
     "ThreeDimensionalAxes", rightAxes, ...
     "Boundary", left.Boundary, ...
-    "Command", left.Command, ...
-    "CommandTrail2D", left.CommandTrail, ...
     "CurrentSlice3D", right.CurrentSlice, ...
-    "CommandTrail3D", right.CommandTrail, ...
     "EnvelopeHandle", right.Envelope, ...
     "SliceHandles", sliceHandles, ...
     "CombinedSweep", combinedSweep, ...
@@ -219,11 +193,7 @@ end
 function left = emptyTwoDimensionalHandles()
 empty = gobjects(0, 1);
 left = struct( ...
-    "Limits", empty, ...
-    "CommandTrail", empty, ...
     "Boundary", empty, ...
-    "Command", empty, ...
-    "Home", empty, ...
     "Status", empty, ...
     "Time", empty);
 end
@@ -231,17 +201,16 @@ end
 function right = emptyThreeDimensionalHandles()
 empty = gobjects(0, 1);
 right = struct( ...
-    "CommandTrail", empty, ...
     "CurrentSlice", empty, ...
     "Envelope", empty);
 end
 
 function [sweepShape, samples] = combinedSweepShape( ...
         data, maximumSamples, maximumVertices)
-hasBoundary = false(numel(data.Time), 1);
-for k = 1:numel(data.Time)
-    azimuth = data.AzimuthDeg{k}(:);
-    elevation = data.ElevationDeg{k}(:);
+hasBoundary = false(numel(data.time_s), 1);
+for k = 1:numel(data.time_s)
+    azimuth = data.az_deg{k}(:);
+    elevation = data.el_deg{k}(:);
     count = min(numel(azimuth), numel(elevation));
     hasBoundary(k) = nnz(isfinite(azimuth(1:count)) & ...
         isfinite(elevation(1:count))) >= 3;
@@ -258,8 +227,8 @@ samples = available(selection);
 shapes = cell(numel(samples), 1);
 shapeCount = 0;
 for sample = reshape(samples, 1, [])
-    instantaneous = boundaryShape(data.AzimuthDeg{sample}, ...
-        data.ElevationDeg{sample}, maximumVertices);
+    instantaneous = boundaryShape(data.az_deg{sample}, ...
+        data.el_deg{sample}, maximumVertices);
     if instantaneous.NumRegions > 0
         shapeCount = shapeCount + 1;
         shapes{shapeCount} = instantaneous;
@@ -357,33 +326,15 @@ xlim(ax, [-180 180]);
 ylim(ax, [0 90]);
 title(ax, "Current 2-D az/el slice");
 
-azimuthLimits = dataField(data, "AzimuthLimitsDeg", [-180 180]);
-elevationLimits = dataField(data, "ElevationLimitsDeg", [0 90]);
-home = dataField(data, "HomeAzElDeg", [0 90]);
-left.Limits = plot(ax, ...
-    [azimuthLimits(1) azimuthLimits(2) azimuthLimits(2) ...
-    azimuthLimits(1) azimuthLimits(1)], ...
-    [elevationLimits(1) elevationLimits(1) elevationLimits(2) ...
-    elevationLimits(2) elevationLimits(1)], ...
-    "k--", "LineWidth", 1.1, "DisplayName", "Position limits");
-left.CommandTrail = plot(ax, NaN, NaN, "-", ...
-    "Color", [0.10 0.35 0.85], "LineWidth", 1.2, ...
-    "DisplayName", "Command history");
 left.Boundary = plot(ax, NaN, NaN, "-", ...
     "Color", [0.85 0.15 0.10], "LineWidth", 2.2, ...
-    "DisplayName", char(string(data.TargetName) + " boundary"));
-left.Command = plot(ax, NaN, NaN, "+", ...
-    "Color", [0.05 0.20 0.75], "LineWidth", 2, "MarkerSize", 10, ...
-    "DisplayName", "Current command");
-left.Home = plot(ax, home(1), home(2), "ko", ...
-    "LineWidth", 1.3, "MarkerSize", 6, "DisplayName", "Home");
+    "DisplayName", char(data.targetName + " boundary"));
 left.Status = text(ax, 0.02, 0.97, "", "Units", "normalized", ...
     "VerticalAlignment", "top", "FontWeight", "bold", ...
     "FontSize", 9, "BackgroundColor", "w", "Margin", 1);
 left.Time = text(ax, 0.02, 0.02, "", "Units", "normalized", ...
     "VerticalAlignment", "bottom");
-legend(ax, [left.Boundary left.Command left.CommandTrail ...
-    left.Home left.Limits], "Location", "best");
+legend(ax, left.Boundary, "Location", "best");
 end
 
 function [right, sliceHandles, sliceSamples, timeScale, timeLabel] = ...
@@ -430,9 +381,6 @@ for sample = reshape(selection, 1, [])
     end
 end
 
-right.CommandTrail = plot3(ax, NaN, NaN, NaN, "-", ...
-    "Color", [0.05 0.25 0.75], "LineWidth", 1.5, ...
-    "DisplayName", "Command path");
 right.CurrentSlice = plot3(ax, NaN, NaN, NaN, "k-", ...
     "LineWidth", 1.8, "DisplayName", "Current slice");
 right.Envelope = gobjects(0, 1);
@@ -471,16 +419,6 @@ title(ax, "Accumulated 3-D slices");
 legend(ax, "Location", "best");
 end
 
-function samples = selectedCommandSamples(obstacle, maximumPoints)
-valid = isfinite(obstacle.CommandAzimuthDeg) & ...
-    isfinite(obstacle.CommandElevationDeg);
-samples = find(valid);
-if numel(samples) > maximumPoints
-    selection = unique(round(linspace(1, numel(samples), maximumPoints)));
-    samples = samples(selection);
-end
-end
-
 function [azimuthParts, elevationParts] = sliceRegions(obstacle, sample)
 first = double(obstacle.SliceOffsets(sample));
 last = double(obstacle.SliceOffsets(sample + 1) - 1);
@@ -505,40 +443,15 @@ end
 end
 
 function message = statusMessage(data, sample)
-if isfield(data, "Status") && numel(data.Status) >= sample
-    status = string(data.Status(sample));
-else
-    status = "slice";
-end
-if isfield(data, "CommandInsidePositionLimits") && ...
-        numel(data.CommandInsidePositionLimits) >= sample
-    if data.CommandInsidePositionLimits(sample)
-        limitStatus = "inside limits";
-    else
-        limitStatus = "outside limits";
-    end
-    message = sprintf("%s | command %s", status, limitStatus);
-else
-    message = char(status);
-end
-end
-
-function value = dataField(data, name, fallback)
-if isfield(data, name) && ~isempty(data.(name))
-    value = double(reshape(data.(name), 1, []));
-else
-    value = fallback;
-end
+message = char(data.status(sample));
 end
 
 function index = matchingObstacle(data, workspace)
 index = 1;
-if isfield(data, "TargetName")
-    names = string({workspace.Obstacles.Name});
-    match = find(names == string(data.TargetName), 1);
-    if ~isempty(match)
-        index = match;
-    end
+names = string({workspace.Obstacles.Name});
+match = find(names == data.targetName, 1);
+if ~isempty(match)
+    index = match;
 end
 end
 
@@ -574,11 +487,10 @@ end
 end
 
 function validateInput(data, workspace)
-requiredData = ["Time", "AzimuthDeg", "ElevationDeg", ...
-    "CommandAzimuthDeg", "CommandElevationDeg"];
+requiredData = ["targetName", "time_s", "az_deg", "el_deg", "status"];
 if ~isstruct(data) || ~all(isfield(data, cellstr(requiredData)))
     error("animateAzElTimeObstacleWorkspace:InvalidData", ...
-        "data must be a computeAreaTargetAzElSweep result.");
+        "data must be a calculateAreaTargetAzEl result.");
 end
 if ~isstruct(workspace) || ~isfield(workspace, "Format") || ...
         workspace.Format ~= "AzElTimeObstacleWorkspace" || ...
@@ -592,8 +504,6 @@ function validateOptions(options)
 validateattributes(options.MaximumAnimationFrames, {'numeric'}, ...
     {'scalar', 'integer', 'positive'});
 validateattributes(options.MaximumDisplayedSlices, {'numeric'}, ...
-    {'scalar', 'integer', 'positive'});
-validateattributes(options.MaximumCommandPoints, {'numeric'}, ...
     {'scalar', 'integer', 'positive'});
 validateattributes(options.PauseSeconds, {'numeric'}, ...
     {'scalar', 'real', 'finite', 'nonnegative'});

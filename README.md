@@ -101,11 +101,18 @@ packed 3-D workspace, queries a representative path, and visualizes the
 result. The builder and query functions also accept this compact format
 directly.
 
-To plan a rate- and acceleration-limited boresight path through that
-az/el/time workspace, use `planAzElKinodynamicAStar`. Example 23 avoids the
-moving Vietnam polygon and returns an azimuth/elevation steering profile;
-Example 24 demonstrates a case where the minimum-time path must stop and wait
-for an obstacle to clear.
+To plan directly from that data, use
+`planAzElAvoidance(azElData, startState, stopState, limits, options)`. It
+returns the requested `time_s`, wrapped and continuous az/el positions,
+velocity, acceleration, and waiting samples. It accepts one compact obstacle,
+a struct array, or a cell array. `planAzElKinodynamicAStar` remains available
+as the lower-level lattice API.
+
+The Orekit-independent runtime is packaged in
+`standalone/azElAvoidance`. That folder contains the compact-data validator,
+workspace builder, collision query, planner, plotting helper, and a runnable
+example. Example 23 avoids the moving Vietnam polygon; Example 24 demonstrates
+a path that must stop and wait for an obstacle to clear.
 
 ## Propagators and force models
 

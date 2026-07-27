@@ -14,19 +14,27 @@ time = scenario.Config.Epoch;
 data = computeAreaTargetAzElSweep(scenario, "Sat-1", "Cam", "Area", ...
     struct("TimeVector", time, "MaximumBoundaryStepDeg", 0.2));
 
-verifyEqual(testCase, data.Status, "visible");
-verifyGreaterThan(testCase, data.CommandElevationDeg, 89.0);
-verifyTrue(testCase, data.CommandInsidePositionLimits);
+verifyEqual(testCase, sort(string(fieldnames(data))), ...
+    sort(["targetName"; "time_s"; "az_deg"; "el_deg"; "status"]));
+verifyEqual(testCase, data.status, "visible");
+verifyEqual(testCase, data.time_s, 0);
 verifyGreaterThanOrEqual(testCase, ...
-    sum(isfinite(data.AzimuthDeg{1})), 4);
+    sum(isfinite(data.az_deg{1})), 4);
 end
 
-function testMechanicalLimitStatus(testCase)
-scenario = localScenario();
-data = computeAreaTargetAzElSweep(scenario, "Sat-1", "Cam", "Area", ...
-    struct("TimeVector", scenario.Config.Epoch, ...
-    "ElevationLimitsDeg", [0 80]));
-verifyFalse(testCase, data.CommandInsidePositionLimits);
+function testCalculateAreaTargetAzElIsCanonicalProducer(testCase)
+boundary = [-0.1 -0.1; -0.1 0.1; 0.1 0.1; 0.1 -0.1];
+sensorFixed_km = [7078.137 0 0];
+fixedToSensor = [0 1 0; 0 0 -1; -1 0 0];
+
+data = calculateAreaTargetAzEl( ...
+    "Area", boundary, 0, sensorFixed_km, fixedToSensor, 0.1);
+
+verifyEqual(testCase, sort(string(fieldnames(data))), ...
+    sort(["targetName"; "time_s"; "az_deg"; "el_deg"; "status"]));
+verifyEqual(testCase, data.targetName, "Area");
+verifyEqual(testCase, data.status, "visible");
+verifyGreaterThan(testCase, max(data.el_deg{1}, [], "omitnan"), 85);
 end
 
 function scenario = localScenario()
