@@ -70,6 +70,21 @@ retaining `SampleTime_s` for collision checks and returned steering samples.
 If that lattice cannot reach the requested terminal state, the planner tries
 finer lattices within `MaxSearchTime_s`.
 
+## Animate the completed plan
+
+```matlab
+view = animateAzElAvoidancePlan( ...
+    azElData, plan, struct( ...
+    "ViewMode", "combined", ...  % "2d", "3d", or "combined"
+    "MaximumAnimationFrames", 180, ...
+    "MaximumDisplayedSlices", 100));
+```
+
+The 2-D pane shows the current obstacle boundary, current boresight, traveled
+path, and future path. The 3-D pane places the route and accumulating
+obstacle slices in azimuth/elevation/time space. Display decimation does not
+change the plan or collision workspace.
+
 ## Workspace and collision queries
 
 Build once when many candidate paths will query the same obstacles:
