@@ -1,777 +1,1345 @@
-# Hybrid Near-Optimal Azimuth-Elevation Steering Through Time-Varying Obstacles
+# Unified Azimuth-Elevation Space-Time Funnel Planning
 
 **Technical white paper**
 
-Version 1.0<br>
-27 July 2026<br>
+Version 2.0
+
+28 July 2026
+
 OREKIT MATLAB Upgrade Project
 
 ## Abstract
 
-This paper describes a practical planner for steering a sensor boresight in
-azimuth-elevation coordinates while avoiding time-varying forbidden regions.
-The planner accepts polygonal obstacle slices indexed by time, fixed start and
-stop states, azimuth and elevation limits, and per-axis rate and acceleration
-limits. Its default objective is minimum azimuth-elevation coordinate-path
-length.
+This paper describes the unified planner implemented by
+`planAzElSpaceTimeFunnel` for steering a sensor boresight through forbidden
+regions in azimuth, elevation, and time. The planner accepts polygonal
+obstacle slices, fixed boundary states, angular limits, actuator rate and
+acceleration limits, and safety and discretization options. Its output is a
+time-tagged azimuth/elevation command with corresponding rate, acceleration,
+waiting, collision, search, and optimality metadata.
 
-The implementation is hybrid. It first searches a continuous family of
-rest-to-rest trajectories: retimed straight segments followed, when necessary,
-by dynamically feasible two-leg paths through one waypoint. The waypoint is
-selected with a vectorized coarse-to-fine search in azimuth, elevation, and
-time. If this search is inapplicable or unsuccessful, the planner falls back
-to A* over a finite kinodynamic state lattice whose edges are
-constant-acceleration motion primitives.
+The method is deliberately hybrid, but it presents one planner entry point.
+It first attempts a direct wait-and-slew trajectory whose angular length
+equals the wrapped endpoint lower bound. Static obstacle volumes are then
+compressed to one occupancy problem and solved by Theta*-style any-angle
+topology search, optional multiresolution refinement, visibility
+simplification, and analytic retiming. Dynamic volumes are handled by an
+event-compressed Safe Interval Path Planning search whose states pair lazy
+azimuth/elevation grid positions with run-length-compressed safe time
+intervals. A widening space-time funnel can subsequently constrain an
+Anytime Repairing A* search over a finite position, angular-rate, and time
+lattice with constant-acceleration primitives. Moving endpoints are handled
+by an interception wrapper that invokes the same planner at sampled feasible
+catch times.
 
-The method makes two distinct optimality statements. If a collision-free
-retiming of the shortest wrapped straight segment exists, that segment is a
-global minimum of the stated coordinate-length objective. For a returned
-waypoint route of length `L`, the straight endpoint distance `L_lb` is a lower
-bound on every feasible route. Therefore `L/L_lb` is a valid upper bound on
-the route's multiplicative suboptimality within the planner's sampled
-collision model. The Vietnam development benchmark produced a 143.092 degree
-route against a 136.015 degree lower bound, certifying a ratio no greater than
-1.052. This is a near-optimality certificate, not proof that the waypoint
-route is the exact continuous global optimum.
+The strongest guarantee is intentionally narrow: a successful direct
+certificate is a continuous-space global minimum for the wrapped
+azimuth/elevation coordinate-path-length objective. A completed ARA* pass
+provides its reported bound only on the configured finite lattice, and a
+corridor pass only within that corridor. Static and safe-interval guide
+solutions are feasible and densely validated but are not claimed to be
+continuous global optima. This separation of guarantees is central to the
+design.
 
-## 1. Scope and Design Goals
+## 1. Purpose and Scope
 
-The planner addresses a focused command-generation problem:
+The planning problem is:
 
-> Given moving forbidden regions in an azimuth-elevation-time workspace,
-> compute a rate- and acceleration-limited boresight command from a prescribed
-> initial state to a prescribed terminal state.
+> Given one or more time-indexed forbidden regions in an
+> azimuth/elevation workspace, compute a collision-free boresight command
+> between prescribed boundary states while respecting mount limits.
 
-The implementation was designed around five engineering goals:
+This is a configuration-space motion-planning problem in a time-varying
+environment [8, 9, 12].
 
-1. Work directly from compact `azElData`, without requiring Orekit at planning
-   time.
-2. Support long horizons and dense output, including tens of thousands of
-   obstacle time slices.
-3. Respect independent azimuth and elevation rate and acceleration limits.
-4. Treat azimuth as periodic when requested.
-5. Report the strength and scope of every optimality claim.
+The implementation is intended for:
 
-The planner is intended for analysis, scheduling studies, and command
-prototyping. It is not, by itself, a flight-qualified guidance or collision
-assurance system.
+- sensor scheduling and access studies;
+- slew feasibility analysis;
+- command prototyping;
+- obstacle-avoidance algorithm evaluation;
+- Orekit-independent work beginning with canonical `azElData`.
+
+It is not, by itself, a flight-qualified guidance or collision-assurance
+system. It assumes deterministic obstacle geometry and timing. Uncertainty
+must currently be represented through margins, time padding, or external
+robustification.
+
+The principal design goals are:
+
+1. Expose one high-level planner instead of requiring users to choose a
+   search algorithm.
+2. Avoid a full azimuth/elevation/rate/time lattice whenever a cheaper
+   certificate or topology guide is sufficient.
+3. Treat waiting as a first-class action for moving obstacles.
+4. Support periodic azimuth without discontinuous commands.
+5. Respect independent per-axis rate and acceleration limits.
+6. Preserve an explicit best feasible result when optional refinement runs
+   out of resources.
+7. State the exact scope of every optimality and collision claim.
 
 ## 2. Problem Formulation
 
-### 2.1 State and control
+### 2.1 Configuration, state, and control
 
-Let the unwrapped boresight coordinate be
+Let the unwrapped boresight configuration be
 
-```text
-q(t) = [a(t), e(t)]^T,
+```math
+q(t) =
+\begin{bmatrix}
+a(t) \\
+e(t)
+\end{bmatrix},
 ```
 
 where `a` is azimuth in degrees and `e` is elevation in degrees. The
 kinodynamic state and control are
 
-```text
-x(t) = [a(t), e(t), a_dot(t), e_dot(t)]^T
-u(t) = [a_ddot(t), e_ddot(t)]^T.
+```math
+x(t) =
+\begin{bmatrix}
+q(t) \\
+v(t)
+\end{bmatrix},
+\qquad
+u(t) = \dot{v}(t).
 ```
 
-The model is a pair of double integrators:
+The actuator model used by the planner is a pair of double integrators:
 
-```text
-q_dot(t)  = v(t)
-v_dot(t)  = u(t).
+```math
+\dot{q}(t) = v(t),
+\qquad
+\dot{v}(t) = u(t).
 ```
 
-The componentwise constraints are
+The componentwise limits are
 
-```text
-q_min <= q(t) <= q_max,
-|v(t)| <= v_max,
-|u(t)| <= u_max.
+```math
+q_{\min} \le q(t) \le q_{\max},
+\qquad
+|v(t)| \le v_{\max},
+\qquad
+|u(t)| \le u_{\max}.
 ```
 
-When azimuth wrapping is enabled, azimuth occupies a 360 degree periodic
-domain. Elevation remains bounded and nonperiodic.
-
-### 2.2 Boundary conditions
-
-The public API accepts position, velocity, and acceleration at fixed start
-and stop times:
+The public boundary state is
 
 ```matlab
-startState = struct( ...
-    "time_s", t0, ...
-    "position_deg", [a0, e0], ...
-    "velocity_deg_s", [va0, ve0], ...
-    "acceleration_deg_s2", [aa0, ae0]);
-
-stopState = struct( ...
-    "time_s", tf, ...
-    "position_deg", [af, ef], ...
-    "velocity_deg_s", [vaf, vef], ...
-    "acceleration_deg_s2", [aaf, aef]);
+state = struct( ...
+    "time_s", t, ...
+    "position_deg", [azimuth, elevation], ...
+    "velocity_deg_s", [azimuthRate, elevationRate], ...
+    "acceleration_deg_s2", [azimuthAcceleration, ...
+                            elevationAcceleration]);
 ```
 
-The continuous straight/waypoint stage currently requires zero boundary
-velocity and acceleration. Nonzero boundary derivatives are routed to the
-kinodynamic lattice.
+The current direct, static-topology, and safe-interval guide modes require
+zero boundary velocity and acceleration. The kinodynamic lattice supports
+nonzero boundary rates within its configured tolerances.
 
-### 2.3 Time-varying obstacles
+### 2.2 Periodic azimuth
 
-At each input time `t_k`, an obstacle is a polygon in the azimuth-elevation
-plane:
+When azimuth wrapping is enabled, the azimuth domain has span `S = 360 deg`.
+The shortest signed displacement from `a_1` to `a_2` is
 
-```text
-O_k subset of R^2.
+```math
+\Delta_a =
+\operatorname{mod}\left(a_2-a_1+\frac{S}{2}, S\right)-\frac{S}{2}.
 ```
 
-The sampled free-space condition is
+Elevation remains bounded and nonperiodic. The planner stores both:
 
-```text
-q(t_j) not in O_k expanded by the requested safety margin,
+- `position_deg`, wrapped to the configured azimuth interval; and
+- `positionUnwrapped_deg`, continuous across the seam.
+
+### 2.3 Time-varying forbidden set
+
+Obstacle `i` is supplied as polygon samples
+
+```math
+O_i(t_k) \subset \mathbb{R}^2.
 ```
 
-where the collision query maps `t_j` to the nearest obstacle slice and may
-also test neighboring slices. Multiple `azElData` objects form the union of
-all forbidden regions.
+The union of all forbidden regions at time `t` is
 
-This is a configuration-time representation of moving obstacles, a standard
-way to convert known obstacle motion into a static higher-dimensional
-planning problem [6].
-
-### 2.4 Objective
-
-The default cost is azimuth-elevation coordinate-path length:
-
-```text
-             tf
-J[q] = integral sqrt(a_dot(t)^2 + e_dot(t)^2) dt.
-             t0
+```math
+O(t) = \bigcup_i O_i(t).
 ```
 
-This objective measures travel in the flat azimuth-elevation chart. It is not
-the great-circle angle swept by the physical boresight unit vector. Section
-9.2 discusses that distinction.
+With safety margin `m`, feasibility requires
 
-The alternative objective is elapsed time. Because the public API prescribes
-the terminal time, minimum-time search is most useful through the lower-level
-lattice API when a goal time window is supplied.
+```math
+\operatorname{dist}(q(t), O(t)) > m
+```
 
-## 3. Packed Obstacle Workspace
+under the repository's sampled-time collision semantics. A query may also
+test adjacent obstacle slices, producing a conservative temporal padding
+around the nearest input sample.
 
-### 3.1 Data layout
+### 2.4 Objective functions
 
-`buildAzElTimeObstacleWorkspace` converts each input obstacle into contiguous
+The default objective is azimuth/elevation coordinate-path length:
+
+```math
+J_L[q] = \int_{t_0}^{t_f} \|\dot{q}(t)\|_2\,dt.
+```
+
+The fixed endpoints provide a lower bound:
+
+```math
+L_{\mathrm{lb}} =
+\sqrt{\Delta_a^2 + (e_f-e_0)^2}.
+```
+
+Every feasible curve between the endpoints has length at least
+`L_lb`. The low-level lattice planner also supports a minimum-time
+objective:
+
+```math
+J_T = t_{\mathrm{arrival}} - t_0.
+```
+
+That objective is meaningful when the low-level goal supplies an arrival
+window. The unified API fixes `stopState.time_s`; its safe-interval guide
+still favors early arrival before terminal waiting, but a lattice trajectory
+constrained to that exact terminal time has constant elapsed-time cost. The
+examples therefore use the angular-distance objective unless their behavior
+is specifically temporal.
+
+## 3. Data and Workspace Representation
+
+### 3.1 Canonical obstacle input
+
+Each independent obstacle is represented by:
+
+```matlab
+azElData = struct( ...
+    "targetName", "Obstacle name", ...
+    "time_s", time_s, ...
+    "az_deg", {azimuthPolygonByTime}, ...
+    "el_deg", {elevationPolygonByTime}, ...
+    "status", status);
+```
+
+Multiple obstacles may be passed as a struct array, a cell array, or the
+output of `combineAzElObstacles`.
+
+### 3.2 Packed workspace
+
+`buildAzElTimeObstacleWorkspace` converts every obstacle into contiguous
 arrays:
 
-- Time samples and uniform-sampling metadata
-- Packed single-precision azimuth and elevation vertices
-- Packed polygon edge endpoints
-- Per-slice vertex and edge offsets
-- Per-slice axis-aligned azimuth-elevation bounds
+- sample times;
+- slice offsets;
+- packed polygon vertices;
+- packed polygon edges;
+- per-slice bounding boxes;
+- edge offsets;
+- uniform-time metadata.
 
-The default builder retains at most 64 vertices per polygonal region. Setting
-`MaximumVerticesPerRegion` to `Inf` preserves every input vertex.
+This structure avoids repeatedly traversing MATLAB cell arrays during large
+collision-query batches. Broad-phase bounding-box rejection precedes exact
+point-in-polygon and edge-distance tests.
 
-Packing avoids one MATLAB cell-array traversal per collision query. Bounding
-boxes provide a broad phase, while packed edges support vectorized point-in-
-polygon and point-to-edge distance tests.
+The workspace can be reused across many planning calls. One limitation of
+the current unified implementation is that automatic static-volume
+acceleration requires raw `azElData`; a prebuilt workspace currently takes
+the dynamic guide path because the static branch rebuilds topology from the
+raw obstacle collection.
 
-### 3.2 Collision query
+## 4. Unified Planner Architecture
 
-`queryAzElTimeObstacle` performs:
-
-1. Time normalization and nearest-slice lookup
-2. Axis-aligned bounding-box rejection
-3. A ray-crossing polygon test for surviving points
-4. An optional Euclidean edge-clearance test for `SafetyMarginDeg`
-5. Optional testing of adjacent time slices through `TimePaddingSamples`
-
-For azimuth clearance, point-to-edge checks consider shifts of -360, 0, and
-360 degrees. This prevents the safety margin from becoming discontinuous at
-the wrap seam.
-
-The `"bounds"` collision mode stops after the broad phase and is
-conservative. The default `"polygon"` mode uses the actual packed edges.
-
-### 3.3 Complexity
-
-Let `V` be the total retained vertex count, `E` the packed edge count, `K`
-the number of time slices, and `Q` the number of collision queries.
-
-- Workspace construction is `O(V + E + K)`.
-- Uniform-time nearest-slice lookup is `O(Q)`.
-- Broad-phase testing is `O(Q)` per obstacle.
-- Narrow-phase work is proportional to the edges belonging to slices whose
-  bounds contain a query point.
-
-The exact runtime depends more strongly on broad-phase selectivity than on
-the total number of stored slices. This is why packing 86,400 time samples is
-practical while repeatedly rebuilding polygon objects is not.
-
-## 4. Continuous Minimum-Distance Stage
-
-### 4.1 Wrapped endpoint displacement
-
-For a 360 degree azimuth span, the requested goal azimuth is unwrapped to the
-shortest signed displacement from the start:
+The high-level control flow is:
 
 ```text
-Delta_a = mod(af - a0 + 180, 360) - 180.
+normalize inputs
+pack or reuse obstacle workspace
+compute wrapped endpoint lower bound
+
+if zero boundary rate/acceleration:
+    if raw obstacle volume is exactly static:
+        try direct certificate with a one-expansion probe
+        if direct certificate fails:
+            run static any-angle topology acceleration
+            return if successful
+    else:
+        run event-compressed safe-interval guide
+
+retain the guide as the best feasible trajectory
+
+if enabled, a guide exists, and the direct path is not certified:
+    run ARA* inside progressively wider space-time funnels
+
+if global fallback is enabled, resources remain, and no ARA* result was
+selected (or AlwaysTryGlobalSearch is true):
+    run unrestricted kinodynamic ARA*
+
+return the best densely validated trajectory
 ```
 
-The unwrapped endpoint displacement is
+### 4.1 Consolidated pseudocode
 
 ```text
-Delta = [Delta_a, ef - e0]^T,
+ALGORITHM UnifiedSpaceTimeFunnel(data, start, stop, limits, options)
+    options   <- Normalize(options)
+    workspace <- PackOrReuse(data)
+    lowerBound <- WrappedEndpointDistance(start, stop)
+
+    guide <- FAILURE
+
+    if BoundaryDerivativesAreZero(start, stop) then
+        if RawDataAvailable(data)
+           and IsExactlyStatic(workspace, start.time, stop.time)
+           and options.objective = angularDistance then
+
+            guide <- SafeIntervalSearch(maxExpansions = 1)
+
+            if not guide.hasGlobalDirectCertificate then
+                staticPlan <- StaticTopologyMode(
+                    data, start, stop, limits, options)
+
+                if staticPlan.success then
+                    return staticPlan
+                end if
+
+                guide <- SafeIntervalSearch(fullBudget)
+            end if
+        else
+            guide <- SafeIntervalSearch(fullBudget)
+        end if
+    end if
+
+    best <- guide if guide.success else FAILURE
+
+    if options.enableARA
+       and guide.success
+       and not guide.hasGlobalDirectCertificate then
+        for radius in options.corridorRadiusSchedule do
+            corridor <- BuildTimeIndexedTube(guide, radius)
+            candidate <- KinodynamicARAStar(workspace, corridor)
+            best <- BetterValidated(best, candidate)
+        end for
+    end if
+
+    if options.globalFallback
+       and ResourcesRemain()
+       and (not SelectedARAResult() or options.alwaysTryGlobal) then
+        candidate <- KinodynamicARAStar(workspace, noCorridor)
+        best <- BetterValidated(best, candidate)
+    end if
+
+    return best
+END
 ```
 
-and the straight coordinate distance is
+## 5. Direct Wait-and-Slew Certificate
+
+### 5.1 Normalized segment motion
+
+For a segment displacement
+
+```math
+d = q_1-q_0,
+```
+
+the guide uses one scalar progress variable `s(t)`:
+
+```math
+q(t) = q_0 + d\,s(t),
+\qquad
+s(0)=0,
+\qquad
+s(T)=1.
+```
+
+All active axes therefore start, cruise, and stop synchronously. Define the
+normalized rate and acceleration limits
+
+```math
+r = \min_{j:|d_j|>0}\frac{v_{\max,j}}{|d_j|},
+\qquad
+\alpha = \min_{j:|d_j|>0}\frac{u_{\max,j}}{|d_j|}.
+```
+
+If
+
+```math
+\frac{r^2}{\alpha} \ge 1,
+```
+
+the profile is triangular:
+
+```math
+t_a = \sqrt{\frac{1}{\alpha}},
+\qquad
+\dot{s}_{\mathrm{peak}} = \sqrt{\alpha},
+\qquad
+T = 2t_a.
+```
+
+Otherwise the profile is trapezoidal:
+
+```math
+t_a = \frac{r}{\alpha},
+\qquad
+t_c = \frac{1-\alpha t_a^2}{r},
+\qquad
+T = 2t_a+t_c.
+```
+
+During the accelerating interval,
+
+```math
+s(\tau) = \frac{1}{2}\alpha\tau^2.
+```
+
+The cruise interval is linear, and the deceleration interval is its
+time-reversed counterpart:
+
+```math
+s(\tau) =
+1-\frac{1}{2}\alpha(T-\tau)^2.
+```
+
+The construction is the two-axis rest-to-rest specialization of
+rate/acceleration-bounded path timing; related general path-retiming methods
+are developed in [10, 11].
+
+### 5.2 Departure-time search
+
+The planner identifies intervals during which the start and stop positions
+are safe. It searches candidate departure events that permit:
+
+1. safe waiting at the start;
+2. a collision-free synchronized slew;
+3. safe waiting at the stop until the prescribed terminal time.
+
+### 5.3 Global angular-distance proof
+
+The direct path has length
+
+```math
+L_{\mathrm{direct}} = L_{\mathrm{lb}}.
+```
+
+Because no curve joining the same endpoints can have length less than the
+Euclidean wrapped endpoint distance,
+
+```math
+L^* \ge L_{\mathrm{lb}},
+```
+
+and therefore
+
+```math
+L_{\mathrm{direct}} = L^*.
+```
+
+This is the only continuous-space global-optimality certificate currently
+reported by the planner. It applies to the coordinate-path-length objective,
+not necessarily to spherical pointing angle, energy, jerk, or elapsed time.
+
+### 5.4 Direct-certificate pseudocode
 
 ```text
-L_lb = ||Delta||_2.
+ALGORITHM DirectCertificate(start, stop, safeStart, safeStop)
+    delta <- WrappedDifference(start.position, stop.position)
+    motion <- MinimumRestToRestProfile(delta, limits)
+
+    for departure in RelevantSafeEvents() do
+        arrival <- departure + motion.duration
+
+        if departure lies in safeStart
+           and arrival lies in safeStop
+           and SegmentIsCollisionFree(departure, motion) then
+            return CERTIFIED_GLOBAL_PATH
+        end if
+    end for
+
+    return NO_CERTIFICATE
+END
 ```
 
-### 4.2 Synchronized rest-to-rest motion
+## 6. Static-Topology Mode
 
-For one geometric segment with displacement `d`, the trajectory is
+The dynamic safe-interval search is intentionally not forced to solve a
+large number of identical time slices. If every obstacle polygon is exactly
+unchanged over the requested interval, the unified planner invokes a static
+topology accelerator.
+
+### 6.1 Exact static-volume detection
+
+For each obstacle, the detector verifies:
+
+1. its sample interval covers `[t_0,t_f]`;
+2. every slice contains the same packed vertex count;
+3. every azimuth vertex equals the first slice;
+4. every elevation vertex equals the first slice.
+
+This is an exact equality test on the packed single-precision geometry. It
+does not classify approximately static motion as static.
+
+### 6.2 Inflated occupancy raster
+
+One time slice is sampled on an azimuth/elevation grid. Grid node `c` is
+occupied when its sampled coordinate lies inside an obstacle or within the
+configured safety margin:
+
+```math
+\operatorname{occupied}(c) =
+\mathbf{1}\left[
+c \in O \;\lor\;
+\operatorname{dist}(c,\partial O)\le m
+\right].
+```
+
+When azimuth wraps, grid adjacency also wraps between the first and last
+azimuth columns.
+
+### 6.3 Theta*-style any-angle topology search
+
+The search combines A* [1] with the parent line-of-sight relaxation used by
+Theta*-family any-angle planning [2, 3]. It expands an eight-connected grid.
+Let `p(s)` be the parent of state `s`. For neighbor `s'`, it compares:
+
+```math
+g(s)+c(s,s')
+```
+
+with
+
+```math
+g(p(s))+c(p(s),s')
+```
+
+when the segment from `p(s)` to `s'` has line of sight. This allows headings
+that are not restricted to the eight grid directions and substantially
+reduces staircase artifacts.
+
+The heuristic is wrapped Euclidean endpoint distance. The production static
+mode uses heuristic weight one for route quality.
+
+### 6.4 Multiresolution refinement
+
+An optional second search creates a finer grid only inside a tube around the
+coarse route:
+
+```math
+\mathcal{C}_\rho =
+\{q:\operatorname{dist}(q,P_{\mathrm{coarse}})\le\rho\}.
+```
+
+Cells outside the tube are treated as occupied. This concentrates the fine
+search on the discovered homotopy class and is used by the U-trap example.
+
+### 6.5 Visibility simplification
+
+Starting from each retained waypoint, the simplifier tests progressively
+farther waypoints. A chord replaces the intervening route only when dense
+samples along that chord clear the original polygons with the requested
+margin. This removes unnecessary waypoint stops without changing the
+discovered topology.
+
+### 6.6 Dynamic retiming
+
+Every simplified segment receives the synchronized triangular or
+trapezoidal profile from Section 5, and the segments run contiguously.
+Their durations are summed, then a common route-start offset is sampled over
+the available horizon slack. This allows waiting before the first segment
+and leaves any remaining slack as waiting at the final state. Each offset
+candidate is collision-checked.
+
+### 6.7 Static-mode pseudocode
 
 ```text
-q(t) = q_start + s(t)d,
+ALGORITHM StaticTopologyMode(data, start, stop, limits, options)
+    occupancy <- RasterizeAndInflate(data.firstSlice)
+
+    coarse <- AnyAngleAStar(
+        occupancy, start.position, stop.position)
+    if not coarse.success then return FAILURE
+
+    route <- coarse.route
+
+    if options.enableTopologyRefinement then
+        tube <- TubeAround(route, options.refinementRadius)
+        fine <- AnyAngleAStar(FineGridInside(tube), start, stop)
+        if fine.success then route <- fine.route
+    end if
+
+    route <- VisibilitySimplify(route, originalPolygons)
+    profile <- RetimeRestToRest(route, limits, start.time, stop.time)
+
+    if DenseValidate(profile, originalPolygons) then
+        return SUCCESS(profile, method = staticTopology)
+    end if
+
+    return FAILURE
+END
 ```
 
-where scalar progress `s` increases monotonically from 0 to 1. Per-axis
-limits induce scalar progress limits
+## 7. Event-Compressed Safe-Interval Mode
+
+Moving obstacle volumes require explicit timing decisions, a broader problem
+studied through both global space-time planning and local velocity-obstacle
+methods [12, 13]. A conventional time-expanded grid can create one waiting
+state for every spatial point and time sample. The implementation instead
+follows the Safe Interval Path Planning idea of representing maximal
+collision-free time intervals at each visited spatial state [4].
+
+### 7.1 Safe intervals
+
+For a guide position `q`, define
+
+```math
+\mathcal{S}(q) =
+\{[l_1,u_1], [l_2,u_2], \ldots\}
+```
+
+as the maximal sampled-time intervals during which `q` is free. These
+intervals are computed lazily and cached by snapped position.
+
+The event grid is assembled from obstacle sample times and the two planning
+horizon endpoints, then capped by `MaximumSafeIntervalSamples`. Safe
+interval boundaries are derived from occupancy changes on that grid. Long
+periods with unchanged occupancy do not generate one search node per time
+sample.
+
+### 7.2 Search state
+
+A guide state is
+
+```math
+y = (q_g, k),
+```
+
+where `q_g` is a snapped azimuth/elevation grid point and `k` identifies one
+safe interval at that point. The node stores its earliest known arrival time,
+parent, departure time, and analytic segment duration.
+
+### 7.3 Spatial successors
+
+Successors are generated from symmetric direction angles and one or more
+primitive radii. The default direction spacing is 45 degrees; no example
+provides a preferred direction. A direct goal primitive is considered in
+addition to grid moves.
+
+### 7.4 Feasible transition window
+
+Suppose the current safe interval is `[l_c,u_c]`, the successor interval is
+`[l_n,u_n]`, and the analytic motion duration is `T`. A candidate departure
+must satisfy:
+
+```math
+t_d \ge \max(t_{\mathrm{arrival}}, l_n-T)
+```
+
+and
+
+```math
+t_d \le \min(u_c, u_n-T).
+```
+
+Within this interval, the implementation tests batches of relevant event
+times and checks the complete rest-to-rest segment on a dense collision
+grid.
+
+### 7.5 Search ordering
+
+The guide orders nodes by earliest arrival time plus a configurable
+inflation of the obstacle-free minimum segment duration to the goal:
+
+```math
+f(y) = t_{\mathrm{arrival}}(y) +
+w_h T_{\min}(q_y,q_f).
+```
+
+This ordering is used for both public objectives because the guide's job is
+to find a useful feasible space-time topology. Angular path length is
+evaluated when the unified planner compares complete candidates. With the
+default `w_h = 1.25`, finite spatial primitives, event capping, and finite
+departure trials, the guide is not an optimal angular-distance or
+earliest-arrival search.
+
+### 7.6 Safe-interval pseudocode
 
 ```text
-V = min_i(v_max,i / |d_i|)
-A = min_i(u_max,i / |d_i|),
+ALGORITHM SafeIntervalGuide(workspace, start, stop)
+    events <- CompressRelevantTimes(workspace)
+    startIntervals <- SafeIntervals(start.position, events)
+    goalIntervals  <- SafeIntervals(stop.position, events)
+
+    if start.time not in startIntervals then return FAILURE
+    if stop.time not in goalIntervals then return FAILURE
+
+    direct <- DirectCertificate(...)
+    if objective = angularDistance and direct.certified then return direct
+
+    OPEN <- earliest-arrival start interval
+
+    while OPEN not empty and resources remain do
+        current <- PopBest(OPEN)
+
+        for nextPosition in SymmetricSuccessors(current.position) do
+            nextIntervals <- CachedSafeIntervals(nextPosition)
+            motion <- MinimumRestToRestProfile(
+                nextPosition-current.position)
+
+            for nextInterval in nextIntervals do
+                window <- FeasibleDepartureWindow(
+                    current.interval, nextInterval, motion.duration)
+
+                departure <- FirstCollisionFreeEvent(window, motion)
+                if departure exists then
+                    Relax(nextPosition, nextInterval,
+                          departure + motion.duration)
+                end if
+            end for
+        end for
+    end while
+
+    return ReconstructEarliestFeasibleGuide()
+END
 ```
 
-with zero-displacement axes omitted from the minimum.
+## 8. Widening Kinodynamic ARA* Funnel
 
-The planner uses a symmetric triangular or trapezoidal velocity profile:
+The safe-interval guide is dynamically feasible but consists of
+rest-to-rest segments. Optional refinement searches a finite lattice whose
+key is:
+
+```math
+z_k =
+(a_k,e_k,\dot{a}_k,\dot{e}_k,k,u^-_{a,k},u^-_{e,k}).
+```
+
+The first five entries are position, angular rate, and discrete time.
+The final two entries record the acceleration used on the incoming
+primitive so a requested terminal acceleration can be represented exactly
+on the configured control set. They do not impose a jerk limit: the next
+primitive may select any configured acceleration action. This follows the
+state-lattice view of encoding dynamically feasible local motions in a
+finite search graph [6, 7].
+
+### 8.1 Constant-acceleration primitive
+
+For decision interval `h` and acceleration action `u_k`,
+
+```math
+q_{k+1} = q_k + v_k h + \frac{1}{2}u_k h^2,
+```
+
+```math
+v_{k+1} = v_k + u_k h.
+```
+
+Positions and rates are snapped to configured resolutions. Every primitive
+is collision-checked at a finer interval than `h`.
+
+### 8.2 Primitive cost
+
+For minimum time:
+
+```math
+c_k = h.
+```
+
+For angular distance:
+
+```math
+c_k =
+\int_0^h \|v_k+u_k\tau\|_2\,d\tau.
+```
+
+The implementation estimates this integral using nine-point Simpson
+quadrature and takes the maximum of that estimate and the primitive endpoint
+displacement. Consequently, the graph edge cost never falls below its
+straight endpoint chord, which preserves the admissibility of the wrapped
+Euclidean angular-distance heuristic.
+
+### 8.3 Admissible lower bounds
+
+The angular-distance heuristic is wrapped Euclidean distance to the goal
+tolerance. The minimum-time lower bound is the maximum of:
+
+```math
+\frac{|\Delta_a|}{v_{\max,a}},
+\qquad
+\frac{|\Delta_e|}{v_{\max,e}},
+```
+
+and the time required to remove excess terminal-rate error under the
+acceleration limits. These bounds ignore obstacles and are therefore lower
+bounds on the corresponding lattice objective.
+
+### 8.4 Space-time corridor
+
+Let the guide be `q_g(t)`. A funnel of radius `rho` retains states satisfying
+
+```math
+\|q_k-q_g(t_k)\|_2
+\le
+\rho+\delta_{\mathrm{snap}},
+```
+
+where `delta_snap` covers half the diagonal of one angular lattice cell.
+
+The planner evaluates an increasing radius schedule such as
 
 ```text
-If V^2/A >= 1:
-    t_acc = sqrt(1/A)
-    v_peak = sqrt(A)
-    t_cruise = 0
-
-Otherwise:
-    t_acc = V/A
-    v_peak = V
-    t_cruise = (1 - A*t_acc^2)/v_peak
-
-T_segment = 2*t_acc + t_cruise.
+[2, 4, 8] deg.
 ```
 
-Because every axis uses the same `s(t)`, all axes start and stop together and
-their individual limits are respected. Since `s(t)` is monotone, the
-coordinate-path length of the segment is exactly `||d||_2`, independent of
-its timing.
+A narrow pass is cheaper. Wider passes recover alternatives excluded by the
+first corridor. An unrestricted pass is optional.
 
-### 4.3 Straight-path retiming
+### 8.5 ARA* repair
 
-The globally shortest geometric candidate is the wrapped straight segment.
-The planner computes its minimum dynamically feasible duration and tests
-different motion start times over the available interval. Waiting may occur
-before the slew or after arrival, but does not add coordinate length.
+ARA* [5] begins with heuristic inflation `epsilon > 1` and reuses state
+costs, OPEN, CLOSED, and INCONS while reducing epsilon. After a completed
+pass:
 
-At most 200 straight-path start times are tested. An obstacle-free workspace
-requires only one timing candidate.
+```math
+C_{\mathrm{returned}}
+\le
+\epsilon C^*_{\mathrm{lattice}}.
+```
 
-### 4.4 One-waypoint family
+For a corridor-restricted pass, `C^*` is the optimum inside that corridor.
+Only an unrestricted epsilon-one pass can report exact optimality on the
+configured global finite lattice.
 
-If every tested straight timing is blocked, the planner searches paths
+### 8.6 Funnel-refinement pseudocode
 
 ```text
-q0 -> w -> qf
+ALGORITHM RefineGuideWithARAStar(guide, radiusSchedule)
+    best <- guide
+
+    for radius in radiusSchedule do
+        corridor <- TimeIndexedTube(guide, radius)
+        candidate <- ARAStar(
+            key = [az, el, azRate, elRate, time,
+                   incomingAzAccel, incomingElAccel],
+            actions = constantAccelerationPrimitives,
+            constraint = corridor)
+
+        if candidate.valid and candidate.objective < best.objective then
+            best <- candidate
+        end if
+
+        if candidate.certified
+           and candidate.nearEndpointLowerBound then
+            break
+        end if
+    end for
+
+    if globalFallbackEnabled and resources remain then
+        candidate <- ARAStar(constraint = none)
+        best <- BetterValidated(best, candidate)
+    end if
+
+    return best
+END
 ```
 
-through waypoint
+## 9. Moving-Target Interception
+
+`planAzElMovingTargetIntercept` is a goal-time wrapper around the unified
+funnel. It does not use a separate path planner.
+
+For target trajectory `g(t)`, candidate times are sampled over
+`[t_min,t_max]`. A candidate is discarded when:
+
+1. `g(t)` lies outside the angular limits;
+2. `g(t)` is occupied at that time;
+3. a conservative kinematic lower bound exceeds `t-t_0`.
+
+The current permissive pruning lower bound uses
+
+```math
+T_v =
+\max_j \frac{|g_j(t)-q_{0,j}|}{v_{\max,j}},
+```
+
+```math
+T_u =
+\max_j
+\sqrt{\frac{2|g_j(t)-q_{0,j}|}{u_{\max,j}}},
+```
+
+and requires
+
+```math
+\max(T_v,T_u) \le t-t_0.
+```
+
+Eligible times are attempted from earliest to latest. When too many are
+eligible, the configured maximum number is selected uniformly over the
+eligible index range. Every attempt calls `planAzElSpaceTimeFunnel`.
+
+Because this filter ignores the terminal rest condition and obstacles, it
+can admit a candidate that later proves unreachable. Its purpose is only to
+discard obviously impossible catch times before invoking the full planner.
 
 ```text
-w = [a_w, e_w] at time t_w.
+ALGORITHM MovingTargetIntercept(data, start, target)
+    times <- SampleCandidateInterceptTimes()
+    eligible <- []
+
+    for t in times do
+        goal <- Interpolate(target, t)
+        if InBounds(goal)
+           and IsFree(goal, t)
+           and KinematicallyReachable(start, goal, t) then
+            eligible.append(t)
+        end if
+    end for
+
+    for t in EarliestToLatest(DecimateIfNeeded(eligible)) do
+        stop <- RestState(target(t), t)
+        candidate <- UnifiedSpaceTimeFunnel(data, start, stop)
+        if candidate.success and CatchError(candidate, target) <= tolerance
+            return candidate
+        end if
+    end for
+
+    return FAILURE
+END
 ```
 
-Both legs are synchronized rest-to-rest profiles. The first leg ends at rest
-at `t_w`; the second begins from rest at the same time. A candidate is
-dynamically feasible only if
+The interception-time sampling means this wrapper can miss a feasible catch
+between candidate times. It does not claim continuous-time interception
+completeness.
 
-```text
-t_w - T_1 >= t0
-t_w + T_2 <= tf.
+## 10. Collision Detection and Validation
+
+### 10.1 Time semantics
+
+For query time `t`, the collision engine selects the nearest obstacle sample.
+For nonuniform input times, nearest-neighbor interpolation is used on the
+sample index. With `TimePaddingSamples = p`, it also tests `p` neighboring
+slices on each side.
+
+This is conservative with respect to sampled slices but does not reconstruct
+continuous swept polygons between samples.
+
+### 10.2 Spatial broad and narrow phases
+
+For every obstacle:
+
+1. Reject points outside the slice bounding box enlarged by margins.
+2. Apply a packed-edge point-in-polygon test.
+3. When `SafetyMarginDeg > 0`, compute point-to-segment distance for packed
+   polygon edges and reject points within the margin.
+
+NaN-separated regions are packed as separate closed edge loops and evaluated
+with one combined even-odd crossing rule for that obstacle slice. Separate
+top-level obstacle structs are combined by logical union.
+
+### 10.3 Multiple validation scales
+
+The planner checks:
+
+- guide primitives at `GuideCollisionCheckStep_s`;
+- lattice primitives at `CollisionCheckStepSeconds`;
+- the requested output grid at `SampleTime_s`;
+- a final dense validation grid at `ValidationStep_s`;
+- neighboring obstacle slices when time padding is enabled.
+
+Display decimation in the 2-D/3-D animator never changes collision queries.
+
+### 10.4 Safety interpretation
+
+A successful result means no checked sample lies inside or within the
+configured margin of any checked obstacle slice. It is not a formal
+continuous-time collision proof unless the input sampling, time padding, and
+validation spacing are themselves conservative for the physical problem.
+
+## 11. Returned Plan and Diagnostics
+
+A successful high-level plan includes the following core fields.
+Mode-specific diagnostic fields can be absent or empty when their
+corresponding stage did not run:
+
+| Field | Meaning |
+|---|---|
+| `time_s` | Output command times |
+| `position_deg` | Wrapped azimuth/elevation command |
+| `positionUnwrapped_deg` | Continuous azimuth/elevation command |
+| `velocity_deg_s` | Per-axis angular rates |
+| `acceleration_deg_s2` | Per-axis angular accelerations |
+| `isWaiting` | Samples with zero rate and acceleration |
+| `method` | Selected unified-planner mode |
+| `angularPathLength_deg` | Returned coordinate-path length |
+| `angularLowerBound_deg` | Wrapped endpoint lower bound |
+| `suboptimalityBound` | `L/L_lb`, when finite and meaningful |
+| `optimalGlobally` | True only for the direct certificate |
+| `optimalOnLattice` | Exactness on the selected finite lattice |
+| `optimalOnUnrestrictedLattice` | Lattice exactness without a funnel |
+| `safeIntervalGuide` | Dynamic guide diagnostics |
+| `staticTopologySearch` | Static-mode search diagnostics |
+| `corridorAttempts` | ARA* radius and result history |
+| `workspace` | Reusable packed obstacle data |
+
+## 12. Correctness and Optimality Statements
+
+### 12.1 Feasibility
+
+Every returned plan has passed the planner's final sampled collision and
+limit checks. This is the primary invariant.
+
+### 12.2 Direct global optimum
+
+When `optimalGlobally` is true, the returned route reaches the continuous
+wrapped endpoint-distance lower bound. It is globally shortest for
+`J_L` under the coordinate metric.
+
+### 12.3 A posteriori angular-length ratio
+
+For any returned route of length `L`,
+
+```math
+L^* \ge L_{\mathrm{lb}}.
 ```
 
-Its objective value is
+Therefore, when `L_lb > 0`,
 
-```text
-L(w) = ||w - q0||_2 + ||qf - w||_2.
+```math
+\frac{L}{L^*}
+\le
+\frac{L}{L_{\mathrm{lb}}}.
 ```
 
-This restricted family is deliberately simple. It produces smooth position
-and continuous velocity commands, is easy to inspect, and is much cheaper
-than searching an unrestricted continuous trajectory space.
+The reported `L/L_lb` is a valid upper bound on multiplicative
+suboptimality for the same angular coordinate-length objective. It may be
+loose because the lower bound ignores obstacles and dynamics.
 
-### 4.5 Coarse-to-fine search
+### 12.4 Static search
 
-The initial spatial grid covers the start, goal, and observed obstacle
-bounds, with 20 degrees of additional room, clipped to the configured
-coordinate limits. Its spacing is 10 degrees. Candidate waypoint times cover
-approximately 20 percent through 95 percent of the planning interval, with a
-spacing of `max(5 s, horizon/30)`.
+The any-angle topology stage is not claimed to be globally shortest in
+continuous free space. Grid resolution, obstacle inflation, line-of-sight
+sampling, optional refinement, and visibility simplification define the
+candidate set.
 
-After the best coarse waypoint is found, three local refinement levels are
-used:
+### 12.5 Safe-interval guide
 
-| Level | Az/el radius | Az/el spacing | Time radius | Time spacing |
-|---:|---:|---:|---:|---:|
-| 1 | 12 deg | 2 deg | 20 s | 2 s |
-| 2 | 3 deg | 1 deg | 5 s | 1 s |
-| 3 | 1.5 deg | 0.5 deg | 3 s | 0.5 s |
+The event-compressed guide is a feasibility-oriented search. Heuristic
+inflation, event capping, finite spatial primitives, departure trials, and
+wall-clock limits prevent a general optimality claim.
 
-Only a refinement that shortens the best feasible path is accepted. Search
-stops when all levels finish or `MaxSearchTime_s` is reached.
+### 12.6 ARA* bound
 
-### 4.6 Vectorized candidate evaluation
+The ARA* epsilon bound applies only after a completed repair pass and only
+to the finite lattice searched. A corridor pass does not certify the global
+lattice outside that corridor.
 
-Candidate waypoints are generated with an `ndgrid` over waypoint time,
-azimuth, and elevation. The planner then:
+### 12.7 Completeness
 
-1. Computes both legs' minimum durations in vector form.
-2. Rejects candidates that cannot fit in the fixed time interval.
-3. Evaluates remaining trajectories in batches of 600.
-4. Uses a preliminary collision grid no finer than 0.5 seconds.
-5. Sorts surviving candidates by geometric length.
-6. Reconstructs candidates in that order and rechecks the selected profile at
-   the requested `SampleTime_s`.
+All nondirect modes are resolution-complete at best, subject to resource
+limits. None is complete in the unconstrained continuous
+azimuth/elevation/rate/time space.
 
-This arrangement spends most computation in vectorized numeric kernels and
-does not construct one MATLAB object per candidate.
-
-## 5. Kinodynamic A* Fallback
-
-Kinodynamic planning combines obstacle avoidance with velocity and
-acceleration constraints [2]. The fallback follows the state-lattice pattern
-of encoding only dynamically feasible local connections [3].
-
-### 5.1 Finite lattice
-
-Each search node contains
-
-```text
-[a, e, a_dot, e_dot, time_step]
-```
-
-and its incoming azimuth and elevation accelerations. Acceleration is part of
-the state key because the terminal acceleration can be constrained.
-
-The default control set is the Cartesian product of normalized acceleration
-levels `[-1, 0, 1]` on both axes. Each edge applies constant acceleration for
-one lattice time step:
-
-```text
-q_next = q + v*dt + 0.5*u*dt^2
-v_next = v + u*dt.
-```
-
-Position and velocity resolutions must be compatible with these primitives
-so that every propagated state lands on the lattice. Wrapped azimuth must
-also contain an integer number of position bins.
-
-### 5.2 Edge validation
-
-Each primitive is sampled at
-
-```text
-max(2, ceil(dt/CollisionCheckStepSeconds) + 1)
-```
-
-points. All samples are checked against coordinate limits and the packed
-obstacles. The public wrapper sets the collision-check step to the requested
-output `SampleTime_s` and uses one neighboring obstacle slice as temporal
-padding.
-
-### 5.3 Search costs and heuristics
-
-For minimum time, every edge costs `dt`. The heuristic is the maximum of:
-
-- A per-axis position/rate lower bound
-- The time needed to change the current rates toward the goal rates
-- Any wait required before the goal time window opens
-
-For minimum coordinate distance, edge cost is
-
-```text
-integral ||v(t)||_2 dt
-```
-
-approximated by nine-point composite Simpson quadrature. The heuristic is the
-straight wrapped coordinate distance remaining to the goal. A* uses
-
-```text
-f(n) = g(n) + w*h(n),
-```
-
-where `w = 1` is ordinary A* and `w > 1` is bounded weighted A*. The
-foundational A* optimality conditions are described by Hart, Nilsson, and
-Raphael [1]. Inflated heuristics and their solution-quality bounds are
-discussed by Likhachev, Gordon, and Thrun [5].
-
-### 5.4 Coarse planning strides
-
-Long public requests do not immediately create one lattice layer per output
-sample. The wrapper selects a coarse internal time step targeting roughly 30
-search decisions, capped at 10 seconds, and then tries progressively finer
-divisors of the output horizon. Collision checking and returned commands
-still use the requested output sample time.
-
-This policy reduces graph depth, but it also means lattice optimality applies
-to the successful internal lattice, not to every finer lattice that could be
-constructed.
-
-## 6. Optimality and Certification
-
-### 6.1 Exact straight-path result
-
-**Proposition 1.** If a dynamically feasible, collision-free retiming of the
-shortest wrapped straight segment exists, that segment globally minimizes the
-azimuth-elevation coordinate-length objective.
-
-**Reason.** Every continuous curve from `q0` to the selected unwrapped `qf`
-satisfies
-
-```text
-J[q] >= ||qf - q0||_2
-```
-
-by the triangle inequality. The straight segment has length exactly
-`||qf - q0||_2`, so no other feasible curve can be shorter. Retiming and
-waiting do not change geometric length.
-
-For this case the implementation reports:
-
-```text
-optimalGlobally = true
-suboptimalityBound = 1
-```
-
-### 6.2 Waypoint-route bound
+## 13. Complexity and Performance Model
 
 Let:
 
-- `L` be the length of the returned feasible waypoint route
-- `L*` be the unknown globally optimal feasible route length
-- `L_lb = ||qf - q0||_2`
+- `T` be the number of obstacle time samples;
+- `P` be the total packed polygon vertices;
+- `N` be static occupancy-grid cells;
+- `V` be lazily visited dynamic guide positions;
+- `I` be the average number of safe intervals per visited position;
+- `B` be the average number of tested departure events per transition;
+- `K` be the number of kinodynamic lattice states in a funnel.
 
-Every feasible route obeys
+Workspace construction is approximately:
 
-```text
-L* >= L_lb.
+```math
+O(P)
 ```
 
-Therefore
+in time and storage.
 
-```text
-L/L* <= L/L_lb.
+Static topology search is approximately:
+
+```math
+O(N\log N)
 ```
 
-The implementation reports
+for heap-based search, plus line-of-sight and polygon-query costs. Fine
+refinement replaces a global fine grid with the subset inside the route
+tube.
 
-```text
-suboptimalityBound = L/L_lb.
+The safe-interval guide stores approximately:
+
+```math
+O(VI)
 ```
 
-For example, a value of 1.052 proves that the returned route is no more than
-5.2 percent longer than the global optimum under the same objective,
-coordinate representation, obstacle discretization, and feasibility model.
+state and cached-interval information. Its practical transition cost also
+depends on `B` and collision samples per analytic primitive. Event
+compression prevents long waits from automatically becoming `O(T)` states
+at every visited position.
 
-This certificate does **not** prove that `L = L*`. It may be conservative
-because the endpoint distance ignores obstacles and dynamics.
+Kinodynamic ARA* is approximately:
 
-The certificate assumes `L_lb > 0` and that the returned trajectory is
-feasible in the model being certified. With sampled collision tests,
-"feasible" means no tested sample is occupied; it is not a continuous-time
-collision proof.
-
-### 6.3 Lattice optimality
-
-With `HeuristicWeight = 1`, positive edge costs, an admissible heuristic, no
-premature resource-limit termination, and the configured finite graph, A*
-returns an optimal graph path [1]. This is:
-
-- Exact on the configured lattice
-- Relative to its motion primitives and collision samples
-- Not an exact optimum over all continuous trajectories
-
-For `HeuristicWeight = w > 1`, the reported factor `w` is the standard
-weighted-A* graph bound under the corresponding heuristic assumptions [5].
-
-For the angular-distance lattice objective, Simpson quadrature is a numerical
-approximation to edge arc length. The code uses a fine fixed rule, but a
-formal lattice-optimality proof would additionally need to establish that
-quadrature error cannot invalidate heuristic admissibility. This caveat does
-not affect the continuous waypoint certificate, whose segment lengths are
-analytic.
-
-## 7. Validation and Development Benchmark
-
-### 7.1 Automated verification
-
-At implementation commit `add1b89`, verification produced:
-
-| Verification | Result |
-|---|---:|
-| Focused planner/workspace tests | 21 passed, 0 failed |
-| Full MATLAB suite | 134 passed, 0 failed, 0 incomplete |
-| MATLAB Code Analyzer | Clean for changed planner files |
-| Standalone source comparison | Byte-identical to repository planner |
-| Standalone path-isolation run | Passed |
-
-The focused tests cover:
-
-- Globally shortest unobstructed straight motion
-- Polygon avoidance with a safety margin
-- Multiple obstacles
-- Azimuth wrapping across the -180/180 degree seam
-- A moving gate that requires waiting
-- Low-level minimum-distance A* cost
-- Primitive-level collision checking between lattice nodes
-- Synchronized 2-D and 3-D animation modes
-
-### 7.2 Vietnam case
-
-The development case used the following boundary conditions:
-
-| Quantity | Value |
-|---|---|
-| Start time | 2700 s |
-| Stop time | 3000 s |
-| Start az/el | [-30, 0] deg |
-| Stop az/el | [80, 80] deg |
-| Boundary rates | [0, 0] deg/s |
-| Boundary accelerations | [0, 0] deg/s^2 |
-| Maximum rates | [1, 1] deg/s |
-| Maximum accelerations | [3, 3] deg/s^2 |
-| Output sample time | 0.1 s |
-| Safety margin | 1 deg |
-| Azimuth wrapping | Enabled |
-
-Observed results on the development machine were:
-
-| Metric | Result |
-|---|---:|
-| Previous route | 192.534 deg |
-| Hybrid waypoint route | 143.092 deg |
-| Reduction from previous route | 25.7 percent |
-| Straight endpoint lower bound | 136.015 deg |
-| Certified multiplicative bound | 1.0520 |
-| Maximum excess over global optimum | 5.2 percent |
-| Source-tree runtime | 19.773 s |
-| Standalone-only runtime | 19.468 s |
-| Returned command samples | 3001 |
-| Occupied returned samples | 0 |
-| Maximum observed per-axis rate | 1 deg/s |
-| Maximum observed per-axis acceleration | 3 deg/s^2 |
-
-The selected waypoint was approximately:
-
-```text
-time       = 2927.5 s
-azimuth    = 8.60 deg
-elevation  = 55.50 deg.
+```math
+O(K\log K)
 ```
 
-These figures are a reproducibility record for one development data set, not
-a broad statistical performance claim.
+per repair structure in the usual heap model, with collision checking often
+dominating. Funnel radius, angular and rate resolution, control levels, and
+decision time step determine `K`.
 
-## 8. Why the Method Is Fast
+No single asymptotic expression predicts wall time well because polygon
+complexity, safe-window density, and collision-query rejection rates vary
+strongly by scenario.
 
-The method avoids a prohibitively fine search over the full state-time space
-in its most common operating regime.
+## 14. Development Examples
 
-1. The straight segment is tested first because it has an immediate global
-   optimality proof.
-2. The fallback continuous family has only one spatial waypoint and one
-   waypoint time.
-3. Dynamic feasibility is computed analytically before collision testing.
-4. Candidate profiles are evaluated in vectorized batches.
-5. Obstacles are packed once and reused.
-6. Bounding boxes reject most point-polygon tests.
-7. Coarse search is followed by local refinement instead of uniform global
-   refinement.
-8. The high-dimensional A* lattice is used only when the simpler family
-   cannot solve the request.
+All numbered examples now use `planAzElSpaceTimeFunnel` directly, through
+`runAzElGauntletCase`, or through the moving-target wrapper that calls the
+same funnel.
 
-The dominant continuous-stage cost is approximately proportional to
+The following values are illustrative development-machine observations, not
+portable performance guarantees:
 
-```text
-N_candidate * N_collision_time_samples,
+| Example | Selected mode | Observed result |
+|---:|---|---|
+| 01 custom input | Direct certificate | 136.015 deg on the empty-input verification |
+| 02 Vietnam and China [15] | Static topology | 138.111 deg, at most 1.015 times endpoint lower bound |
+| 03 static blocker | Static topology | 13.447 deg, 39 topology expansions |
+| 04 moving walls | Safe interval plus ARA* | 15.076 deg, 68 combined expansions |
+| 05 five-turn spiral | Static topology | 241.860 deg, 4.06 net turns |
+| 06 stop-go gates | Safe interval plus ARA* | 24.000 deg, goal settled at 36.5 s |
+| 07 wrapped seam | Static topology | 26.892 deg, continuous unwrapped azimuth |
+| 08 alternating slalom | Static topology | 33.982 deg with all four required crossing signs |
+| 09 U-trap | Refined static topology | 32.778 deg compact wall-hugging escape |
+| 10 rotating slots | Safe intervals | 17.971 deg with planner-selected chamber waits |
+| 11 pursued boresight | Safe intervals | Goal opened at 72.0 s and reached at 73.6 s |
+| 12 synchronized windmills | Safe intervals | 67.657 deg and 110.5 deg maximum following angle |
+| 13 blinking interception | Interception wrapper | Previously failing fixed batch 5/5; subsequent fresh batch 5/5 |
+
+The randomized results are regression observations, not an estimated
+population success probability. The runner retains every generated seed and
+never replaces a failed case.
+
+## 15. Verification Strategy
+
+The standalone verification covers:
+
+- direct wait-and-slew certification;
+- moving-volume safe-interval detours;
+- multiple obstacle unions;
+- wrapped azimuth;
+- static spiral topology with no guide path;
+- static seam and multiresolution refinement;
+- rotating slots and waiting chambers;
+- pursued-boresight behavior;
+- synchronized windmill traversal;
+- stochastic blinking-board reproducibility and unfiltered batches;
+- moving-target rendering in both 2-D and 3-D;
+- collision-free output samples;
+- rate and acceleration limits;
+- consecutive numbered examples;
+- enforcement that every example uses the unified funnel;
+- enforcement that examples inject no route, state corridor, or preferred
+  direction.
+
+At Version 2.0 preparation, MATLAB Code Analyzer reported zero findings
+across the 50 standalone `.m` files. The deterministic focused suites passed.
+The exact randomized batch that exposed an invalid initial-state generator
+case passed 5/5 after the generator was corrected to keep the start safe
+through its first transfer window; a new unfiltered batch also passed 5/5.
+
+## 16. Practical Configuration
+
+### 16.1 Spatial resolution
+
+Choose `GuideGridStep_deg` smaller than the narrowest passage that must be
+resolved, while allowing for safety margin. Reducing it quadratically
+increases the potential number of 2-D positions.
+
+### 16.2 Temporal validation
+
+Choose `ValidationStep_s` so the fastest legal boresight cannot cross a thin
+forbidden region between checks:
+
+```math
+\Delta t_{\mathrm{validation}}
+\ll
+\frac{w_{\min}}{\|v_{\max}\|_2},
 ```
 
-after dynamic rejection. The batch size limits peak temporary-array growth,
-while `MaxSearchTime_s` bounds wall-clock effort.
+where `w_min` is the smallest relevant angular obstacle thickness or
+clearance.
 
-## 9. Limitations
+### 16.3 Safety margin
 
-### 9.1 No exact global proof for a blocked straight path
+`SafetyMargin_deg` should cover:
 
-The one-waypoint search is not exhaustive over arbitrary curves, multiple
-waypoints, or all waypoint coordinates and times. The returned ratio is a
-global upper bound on relative path length, but the route itself is not
-proved to equal the continuous optimum.
+- obstacle polygon approximation;
+- sensor pointing error;
+- mount tracking error;
+- ephemeris and attitude uncertainty;
+- timing latency;
+- command interpolation error.
 
-### 9.2 Flat az/el metric
+These terms should not be assumed statistically independent without an
+explicit uncertainty model.
 
-The implemented objective is
+### 16.4 Funnel refinement
 
-```text
-ds_flat^2 = da^2 + de^2.
-```
+Start with a modest increasing corridor schedule. Disable ARA* refinement
+when the rest-to-rest guide is operationally sufficient. Include epsilon one
+only when exactness on the selected finite lattice is worth the additional
+search.
 
-For a physical boresight unit vector, the spherical line element is instead
+### 16.5 Rapidly changing obstacles
 
-```text
-ds_sphere^2 = cos(e)^2 da^2 + de^2
-```
+Raise `MaximumSafeIntervalSamples`, reduce collision-check spacing, and
+increase temporal padding when brief windows are operationally important.
 
-when angles are expressed in radians. Near high elevation, a degree of
-azimuth represents less physical rotation than it does near zero elevation.
-Applications that truly minimize actuator rotation or unit-vector angle
-should use the spherical metric or the actual gimbal kinematics.
+## 17. Limitations
 
-### 9.3 Sampled collision checking
+1. The objective is planar azimuth/elevation coordinate length, not
+   great-circle boresight angle, energy, torque, or wear.
+2. The actuator model is acceleration-limited but not jerk-limited.
+3. Obstacle motion between input slices is not reconstructed as a continuous
+   swept volume.
+4. Static acceleration currently requires raw `azElData`, not only a prebuilt
+   workspace.
+5. Static and safe-interval guide modes currently require zero boundary rate
+   and acceleration.
+6. The moving-target wrapper samples interception times.
+7. Search budgets can return failure even when a resolution-feasible route
+   exists.
+8. Static equality is exact; small numerical geometry changes select dynamic
+   mode.
+9. A safety margin is deterministic and does not replace a probabilistic
+   uncertainty model.
+10. No nondirect mode proves a continuous global optimum.
+11. The unified fixed-terminal-time API does not expose the full
+    arrival-window semantics of the low-level minimum-time lattice planner.
 
-The final continuous profile is tested at `SampleTime_s`, with adjacent
-obstacle slices included. A narrow obstacle or fast crossing between command
-samples can be missed. Decreasing the sample interval and increasing safety
-and temporal margins reduce this risk but do not create a mathematical
-continuous-collision certificate.
+## 18. Recommended Operational Workflow
 
-### 9.4 Sampled obstacle motion
+1. Generate obstacle slices at a rate justified by obstacle motion.
+2. Inflate them with a margin justified by physical and estimation errors.
+3. Run the unified planner.
+4. Inspect `method`, `optimalGlobally`, lattice bounds, lower bounds, and
+   search termination fields.
+5. Independently validate the returned command on a denser time grid.
+6. Transform azimuth/elevation through the actual mount convention and check
+   singularities, cable wraps, and structural limits.
+7. Replan when the predicted obstacles, target, or boundary state changes.
+8. Retain the scenario seed and complete planner options for reproducibility.
 
-Obstacle polygons are selected by nearest time slice rather than continuously
-interpolated. `TimePaddingSamples = 1` is conservative for many slowly
-changing cases, but it is not equivalent to a swept polygon between slices.
+## 19. Future Work
 
-### 9.5 One waypoint and rest at the waypoint
+- continuous swept-polygon collision bounds between obstacle samples;
+- adaptive collision subdivision based on relative angular velocity;
+- jerk-limited synchronized S-curve primitives;
+- static detection directly from a prebuilt workspace;
+- incremental replanning when only late obstacle slices change;
+- tighter obstacle-aware lower bounds;
+- continuous interception-time optimization;
+- robust or chance-constrained planning under uncertainty;
+- explicit mount kinematics, singularities, and cable-wrap state;
+- native-code acceleration of packed polygon queries;
+- formal benchmark distributions over randomized scenarios;
+- trajectory optimization initialized by the funnel result;
+- asymptotically optimal sampling-based refinement where appropriate [14].
 
-The continuous detour contains at most one waypoint and reaches zero velocity
-there. A continuously curving trajectory could be shorter or faster. The
-rest condition is valuable for maintainability and analytic feasibility, but
-it restricts the candidate family.
-
-### 9.6 Acceleration discontinuity and no jerk bound
-
-Triangular and trapezoidal profiles switch acceleration instantaneously.
-They satisfy acceleration magnitude limits but do not constrain jerk.
-Commanding real hardware may require an S-curve or another jerk-limited
-retiming stage followed by collision revalidation.
-
-### 9.7 Geometry reduction
-
-The default 64-vertex cap reduces storage and query cost but can modify a
-high-detail boundary. Safety-critical use should retain sufficient geometry
-or quantify the simplification error.
-
-### 9.8 Search parameter coupling
-
-The public `GridStep_deg` controls lattice construction. The continuous
-waypoint stage currently uses its own fixed coarse and refinement spacings.
-Exposing those values as explicit options would improve tuning and
-reproducibility.
-
-### 9.9 Deterministic known obstacles
-
-The planner assumes obstacle geometry and timing are known. It does not model
-ephemeris uncertainty, attitude error, latency, actuator tracking error, or
-uncertain target motion except through user-selected margins.
-
-## 10. Recommended Operational Use
-
-For each planned command:
-
-1. Choose `SampleTime_s` from obstacle motion, sensor control bandwidth, and
-   acceptable miss distance, not only animation smoothness.
-2. Set `SafetyMargin_deg` to cover polygon approximation, pointing error,
-   timing uncertainty, and command tracking error.
-3. Retain full obstacle geometry when boundary simplification is not
-   justified.
-4. Inspect `optimalGlobally`, `angularLowerBound_deg`, and
-   `suboptimalityBound`; do not infer exact global optimality from a visually
-   smooth path.
-5. Independently recheck the final command on a denser time grid.
-6. Convert az/el commands through the actual sensor mount model before
-   commanding hardware.
-7. Replan when the obstacle prediction or boundary conditions change.
-
-## 11. Future Work
-
-The following extensions would strengthen quality or guarantees:
-
-- Adaptive collision subdivision based on relative path and obstacle motion
-- Conservative swept-polygon construction between obstacle slices
-- Multiple-waypoint branch-and-bound using the endpoint lower bound
-- Ellipsoidal or obstacle-aware lower bounds tighter than endpoint distance
-- Spherical boresight or actuator-space path-length objectives
-- Jerk-limited S-curve motion profiles
-- Anytime refinement that preserves the best feasible path at every stage
-- ARA*-style reuse between decreasing heuristic weights [5]
-- Asymptotically optimal sampling-based planning such as RRT* [7]
-- Direct trajectory optimization initialized by the current waypoint route
-- Formal interval collision checks and validated numerical quadrature
-- MEX or native-code acceleration for very large candidate sets
-
-RRT* and related methods converge toward the optimum under their stated
-assumptions [7], but asymptotic optimality is not finite-time proof of having
-reached the exact optimum. For this application, the present analytic lower
-bound remains useful even if the candidate generator is later replaced.
-
-## 12. Implementation Map
-
-The repository implementation is divided as follows:
+## 20. Implementation Map
 
 | Responsibility | Source |
 |---|---|
-| Public planner and hybrid dispatch | [`src/analysis/planAzElAvoidance.m`](../src/analysis/planAzElAvoidance.m) |
-| Continuous straight/waypoint search | [`src/analysis/planAzElMinimumDistance.m`](../src/analysis/planAzElMinimumDistance.m) |
-| Kinodynamic A* lattice | [`src/analysis/planAzElKinodynamicAStar.m`](../src/analysis/planAzElKinodynamicAStar.m) |
-| Packed obstacle workspace | [`src/analysis/buildAzElTimeObstacleWorkspace.m`](../src/analysis/buildAzElTimeObstacleWorkspace.m) |
-| Collision query | [`src/analysis/queryAzElTimeObstacle.m`](../src/analysis/queryAzElTimeObstacle.m) |
-| Public planner tests | [`src/tests/testPlanAzElAvoidance.m`](../src/tests/testPlanAzElAvoidance.m) |
-| Lattice tests | [`src/tests/testAzElKinodynamicAStar.m`](../src/tests/testAzElKinodynamicAStar.m) |
-| Orekit-independent package | [`standalone/azElAvoidance`](../standalone/azElAvoidance) |
+| Unified public planner | [`standalone/azElAvoidance/planAzElSpaceTimeFunnel.m`](../standalone/azElAvoidance/planAzElSpaceTimeFunnel.m) |
+| Moving-target wrapper | [`standalone/azElAvoidance/planAzElMovingTargetIntercept.m`](../standalone/azElAvoidance/planAzElMovingTargetIntercept.m) |
+| Packed workspace | [`standalone/azElAvoidance/buildAzElTimeObstacleWorkspace.m`](../standalone/azElAvoidance/buildAzElTimeObstacleWorkspace.m) |
+| Collision query | [`standalone/azElAvoidance/queryAzElTimeObstacle.m`](../standalone/azElAvoidance/queryAzElTimeObstacle.m) |
+| Static topology component | [`standalone/azElAvoidance/planAzElAutonomousCorridor.m`](../standalone/azElAvoidance/planAzElAutonomousCorridor.m) |
+| Static-volume detector | [`standalone/azElAvoidance/private/isAzElTimeObstacleWorkspaceStatic.m`](../standalone/azElAvoidance/private/isAzElTimeObstacleWorkspaceStatic.m) |
+| Any-angle search | [`standalone/azElAvoidance/private/searchAzElAnyAngleAStar.m`](../standalone/azElAvoidance/private/searchAzElAnyAngleAStar.m) |
+| Static refinement | [`standalone/azElAvoidance/private/refineAzElTopologyCorridor.m`](../standalone/azElAvoidance/private/refineAzElTopologyCorridor.m) |
+| Visibility simplification | [`standalone/azElAvoidance/private/simplifyAzElRouteVisibility.m`](../standalone/azElAvoidance/private/simplifyAzElRouteVisibility.m) |
+| Analytic route retiming | [`standalone/azElAvoidance/private/planAzElGuidedRoute.m`](../standalone/azElAvoidance/private/planAzElGuidedRoute.m) |
+| Dynamic safe-interval guide | [`standalone/azElAvoidance/private/searchAzElSafeIntervalGuide.m`](../standalone/azElAvoidance/private/searchAzElSafeIntervalGuide.m) |
+| Kinodynamic ARA* | [`standalone/azElAvoidance/planAzElKinodynamicARAStar.m`](../standalone/azElAvoidance/planAzElKinodynamicARAStar.m) |
+| Kinodynamic A* baseline | [`standalone/azElAvoidance/planAzElKinodynamicAStar.m`](../standalone/azElAvoidance/planAzElKinodynamicAStar.m) |
+| Combined animation | [`standalone/azElAvoidance/animateAzElAvoidancePlan.m`](../standalone/azElAvoidance/animateAzElAvoidancePlan.m) |
+| Numbered examples | [`standalone/azElAvoidance/examples`](../standalone/azElAvoidance/examples) |
+| Focused tests | [`standalone/azElAvoidance/tests`](../standalone/azElAvoidance/tests) |
+| Short design note | [`standalone/azElAvoidance/docs/SPACE_TIME_FUNNEL.md`](../standalone/azElAvoidance/docs/SPACE_TIME_FUNNEL.md) |
 
 ## References
 
 [1] P. E. Hart, N. J. Nilsson, and B. Raphael, "A Formal Basis for the
-Heuristic Determination of Minimum Cost Paths," *IEEE Transactions on Systems
-Science and Cybernetics*, vol. 4, no. 2, pp. 100-107, 1968.
+Heuristic Determination of Minimum Cost Paths," *IEEE Transactions on
+Systems Science and Cybernetics*, vol. 4, no. 2, pp. 100-107, 1968.
 [doi:10.1109/TSSC.1968.300136](https://doi.org/10.1109/TSSC.1968.300136)
 
-[2] B. Donald, P. Xavier, J. Canny, and J. Reif, "Kinodynamic Motion
+[2] A. Nash, K. Daniel, S. Koenig, and A. Felner, "Theta*: Any-Angle Path
+Planning on Grids," *Proceedings of the Twenty-Second AAAI Conference on
+Artificial Intelligence*, pp. 1177-1183, 2007.
+[AAAI publication page](https://ocs.aaai.org/Library/AAAI/2007/aaai07-187.php)
+
+[3] K. Daniel, A. Nash, S. Koenig, and A. Felner, "Theta*: Any-Angle Path
+Planning on Grids," *Journal of Artificial Intelligence Research*, vol. 39,
+pp. 533-579, 2010.
+[JAIR volume record](https://auld.aaai.org/Press/Journals/jairvol39.php)
+
+[4] M. Phillips and M. Likhachev, "SIPP: Safe Interval Path Planning for
+Dynamic Environments," *Proceedings of the IEEE International Conference on
+Robotics and Automation*, pp. 5628-5635, 2011.
+[doi:10.1109/ICRA.2011.5980306](https://doi.org/10.1109/ICRA.2011.5980306)
+
+[5] M. Likhachev, G. Gordon, and S. Thrun, "ARA*: Anytime A* with
+Provable Bounds on Sub-Optimality," *Advances in Neural Information
+Processing Systems 16*, 2003.
+[NeurIPS publication page](https://proceedings.neurips.cc/paper/2003/hash/ee8fe9093fbbb687bef15a38facc44d2-Abstract.html)
+
+[6] M. Pivtoraiko and A. Kelly, "Efficient Constrained Path Planning via
+Search in State Lattices," *Proceedings of the 8th International Symposium
+on Artificial Intelligence, Robotics and Automation in Space*, 2005.
+[Carnegie Mellon Robotics Institute publication](https://publications.ri.cmu.edu/efficient-constrained-path-planning-via-search-in-state-lattices)
+
+[7] B. Donald, P. Xavier, J. Canny, and J. Reif, "Kinodynamic Motion
 Planning," *Journal of the ACM*, vol. 40, no. 5, pp. 1048-1066, 1993.
 [doi:10.1145/174147.174150](https://doi.org/10.1145/174147.174150)
 
-[3] M. Pivtoraiko and A. Kelly, "Efficient Constrained Path Planning via
-Search in State Lattices," *Proceedings of the 8th International Symposium on
-Artificial Intelligence, Robotics and Automation in Space*, 2005.
-[Carnegie Mellon Robotics Institute publication](https://publications.ri.cmu.edu/efficient-constrained-path-planning-via-search-in-state-lattices)
-
-[4] S. M. LaValle, *Planning Algorithms*. Cambridge University Press, 2006,
-especially Chapters 2, 7, 13, and 14.
+[8] S. M. LaValle, *Planning Algorithms*. Cambridge University Press, 2006.
 [Author-hosted electronic edition](https://lavalle.pl/planning/)
 
-[5] M. Likhachev, G. Gordon, and S. Thrun, "ARA*: Anytime A* Search with
-Provable Bounds on Sub-Optimality," *Advances in Neural Information Processing
-Systems 16*, 2003.
-[Author publication page](https://robots.stanford.edu/papers/Likhachev03b.html)
+[9] T. Lozano-Perez, "Spatial Planning: A Configuration Space Approach,"
+*IEEE Transactions on Computers*, vol. C-32, no. 2, pp. 108-120, 1983.
+[doi:10.1109/TC.1983.1676196](https://doi.org/10.1109/TC.1983.1676196)
 
-[6] J. Reif and M. Sharir, "Motion Planning in the Presence of Moving
+[10] J. E. Bobrow, S. Dubowsky, and J. S. Gibson, "Time-Optimal Control of
+Robotic Manipulators Along Specified Paths," *The International Journal of
+Robotics Research*, vol. 4, no. 3, pp. 3-17, 1985.
+[doi:10.1177/027836498500400301](https://doi.org/10.1177/027836498500400301)
+
+[11] T. Kunz and M. Stilman, "Time-Optimal Trajectory Generation for Path
+Following with Bounded Acceleration and Velocity," *Proceedings of Robotics:
+Science and Systems VIII*, 2012.
+[doi:10.15607/RSS.2012.VIII.027](https://doi.org/10.15607/RSS.2012.VIII.027)
+
+[12] J. Reif and M. Sharir, "Motion Planning in the Presence of Moving
 Obstacles," *Journal of the ACM*, vol. 41, no. 4, pp. 764-790, 1994.
 [doi:10.1145/179812.179911](https://doi.org/10.1145/179812.179911)
 
-[7] S. Karaman and E. Frazzoli, "Sampling-based Algorithms for Optimal
+[13] P. Fiorini and Z. Shiller, "Motion Planning in Dynamic Environments
+Using Velocity Obstacles," *The International Journal of Robotics Research*,
+vol. 17, no. 7, pp. 760-772, 1998.
+[doi:10.1177/027836499801700706](https://doi.org/10.1177/027836499801700706)
+
+[14] S. Karaman and E. Frazzoli, "Sampling-based Algorithms for Optimal
 Motion Planning," *The International Journal of Robotics Research*, vol. 30,
 no. 7, pp. 846-894, 2011.
 [doi:10.1177/0278364911406761](https://doi.org/10.1177/0278364911406761)
+
+[15] D. Runfola et al., "geoBoundaries: A Global Database of Political
+Administrative Boundaries," *PLOS ONE*, vol. 15, no. 4, e0231866, 2020.
+[doi:10.1371/journal.pone.0231866](https://doi.org/10.1371/journal.pone.0231866)

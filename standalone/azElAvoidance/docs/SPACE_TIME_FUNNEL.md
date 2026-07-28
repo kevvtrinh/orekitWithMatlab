@@ -9,7 +9,7 @@ acceleration. The implementation is standalone and depends only on canonical
 `azElData`, boundary states, actuator limits, and planner options.
 
 The design targets long scenarios where a full
-azimuth/elevation/rate/time lattice would be too large. It combines three
+azimuth/elevation/rate/time lattice would be too large. It combines four
 methods behind one planner entry point:
 
 1. A direct wait-and-slew optimality certificate.
@@ -18,6 +18,10 @@ methods behind one planner entry point:
    waiting decisions.
 4. A widening spatial funnel followed by kinodynamic Anytime Repairing A*
    (ARA*) for smooth lattice refinement.
+
+For the full mathematical formulation, consolidated pseudocode, guarantee
+boundaries, implementation map, and bibliography, see the
+[`Version 2 technical white paper`](../../../docs/az_el_obstacle_avoidance_white_paper.md).
 
 ## Problem
 
@@ -32,8 +36,10 @@ position limits, optionally wrap azimuth, and satisfy per-axis rate and
 acceleration bounds. Start and stop position, velocity, acceleration, and
 time are fixed.
 
-The default objective is angular path length. A minimum-time mode is also
-available, although a fixed stop time still defines the planning horizon.
+The default objective is angular path length. The low-level lattice planner
+also supports a minimum-time goal window. The unified API fixes
+`stopState.time_s`, so its lattice stage does not expose the full
+arrival-window form of that objective.
 
 ## Algorithm
 
@@ -86,9 +92,11 @@ not certify a global optimum.
 ### 4. Widening kinodynamic funnel
 
 The feasible guide trajectory defines a time-indexed spatial tube. The
-existing five-dimensional kinodynamic ARA* then searches position, angular
-rate, and time states inside that tube. Constant-acceleration controls are
-used as motion primitives.
+kinodynamic ARA* then searches position, angular rate, time, and the incoming
+acceleration label inside that tube. The acceleration label permits an exact
+terminal-acceleration condition on the configured control set; it does not
+impose a jerk limit. Constant-acceleration controls are used as motion
+primitives.
 
 The tube radius follows `CorridorRadiusSchedule_deg`. A narrow first pass is
 fast; later passes recover alternatives that the first tube excludes. An

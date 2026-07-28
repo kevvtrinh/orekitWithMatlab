@@ -22,6 +22,10 @@ tests are in `tests`, and performance runners are in `benchmarks`.
 See [`examples/README.md`](examples/README.md) for the numbered example list
 and an algorithm-by-algorithm breakdown.
 
+The complete mathematical design, pseudocode, guarantees, complexity
+analysis, validation strategy, and references are in the
+[`Unified Azimuth-Elevation Space-Time Funnel Planning` white paper](../../docs/az_el_obstacle_avoidance_white_paper.md).
+
 ## Input data
 
 Each obstacle is a scalar struct with exactly these fields:
@@ -267,8 +271,11 @@ Run the default 86,401-slice long-horizon benchmark:
 benchmark = benchmarkSpaceTimeFunnelLongHorizon();
 ```
 
-The method, guarantees, complexity, tuning guidance, and references are in
-[`SPACE_TIME_FUNNEL.md`](docs/SPACE_TIME_FUNNEL.md).
+The concise design summary is in
+[`SPACE_TIME_FUNNEL.md`](docs/SPACE_TIME_FUNNEL.md). The full derivation,
+pseudocode, guarantees, complexity analysis, and scholarly references are in
+the
+[`Version 2 technical white paper`](../../docs/az_el_obstacle_avoidance_white_paper.md).
 
 ## Static topology component
 

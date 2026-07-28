@@ -102,29 +102,28 @@ result. The builder and query functions also accept this compact format
 directly.
 
 To plan directly from that data, use
-`planAzElAvoidance(azElData, startState, stopState, limits, options)`. It
-returns the requested `time_s`, wrapped and continuous az/el positions,
-velocity, acceleration, and waiting samples. It accepts one compact obstacle,
-a struct array, or a cell array. The default `minimumAngularDistance`
-objective tests straight-path timing and then performs coarse-to-fine
-continuous waypoint refinement; the result reports its angular lower bound
-and certified suboptimality bound. Set `Objective` to `minimumTime` for the
-lower-level kinodynamic A* behavior.
+`planAzElSpaceTimeFunnel(azElData, startState, stopState, limits, options)`.
+It returns time-tagged wrapped and continuous az/el position, velocity,
+acceleration, and waiting samples. It accepts one compact obstacle, a struct
+array, a cell array, or a reusable packed workspace. The unified planner
+first tests a globally shortest direct wait-and-slew certificate. It then
+selects static any-angle topology search or dynamic event-compressed safe
+intervals, with optional widening kinodynamic ARA* refinement.
 
 The Orekit-independent runtime is packaged in
 `standalone/azElAvoidance`. That folder contains the compact-data validator,
-workspace builder, collision query, planner, plotting helper, and a runnable
-example. `animateAzElAvoidancePlan` plays the completed route in synchronized
-2-D and 3-D az/el/time views. Example 23 avoids the moving Vietnam polygon;
-Example 24 demonstrates a path that must stop and wait for an obstacle to
-clear.
+workspace builder, collision query, unified planner, visualizer, tests,
+benchmarks, and numbered examples. `animateAzElAvoidancePlan` plays the
+completed route in synchronized 2-D and 3-D az/el/time views. The suite
+includes country boundaries, static topology, moving gates, a five-turn
+spiral, stop-go timing, azimuth wrapping, rotating slots, pursued-boresight,
+windmill, and randomized moving-target cases.
 
 The algorithm, mathematical objective, optimality certificate, benchmark,
 and limitations are documented in
 [`docs/az_el_obstacle_avoidance_white_paper.md`](docs/az_el_obstacle_avoidance_white_paper.md).
-The separate autonomous static-topology method, including its any-angle
-search, corridor refinement, retiming, guarantees, and gauntlet results, is
-documented in
+The predecessor static-topology component, still used internally by the
+unified planner, is documented separately in
 [`docs/autonomous_az_el_corridor_planner_white_paper.md`](docs/autonomous_az_el_corridor_planner_white_paper.md).
 
 ## Propagators and force models
