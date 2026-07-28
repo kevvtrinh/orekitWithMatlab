@@ -157,6 +157,57 @@ Run the visual convergence example with:
 [result, handles] = exampleKinodynamicARAStar();
 ```
 
+## Dynamic space-time funnel planner
+
+`planAzElSpaceTimeFunnel` is the high-level planner for moving 3-D
+azimuth/elevation/time obstacle volumes:
+
+```matlab
+options = struct( ...
+    "SampleTime_s", 0.25, ...
+    "GuideGridStep_deg", 1, ...
+    "SafetyMargin_deg", 0.1, ...
+    "CorridorRadiusSchedule_deg", [2 4 8], ...
+    "EpsilonSchedule", [2.5 1.5 1]);
+
+plan = planAzElSpaceTimeFunnel( ...
+    azElData, startState, stopState, limits, options);
+```
+
+It first tests a direct wait-and-slew trajectory. When that succeeds,
+`plan.optimalGlobally` is true because the route reaches the wrapped angular
+endpoint lower bound. Otherwise, an event-compressed safe-interval search
+discovers when to wait and how to pass the moving volumes without creating
+one search node per time sample. Widening spatial funnels then focus
+kinodynamic ARA* around that guide while retaining an optional unrestricted
+fallback.
+
+Run the moving two-obstacle example:
+
+```matlab
+result = exampleSpaceTimeFunnel();
+```
+
+Run the animated four-ring timing gauntlet:
+
+```matlab
+result = exampleRotatingSlotGauntlet();
+```
+
+The boresight waits outside or in the safe annular chambers until each
+independently rotating slot admits the next inward crossing. The combined
+view animates current 2-D geometry beside the accumulated 3-D
+azimuth/elevation/time volume.
+
+Run the default 86,401-slice long-horizon benchmark:
+
+```matlab
+benchmark = benchmarkSpaceTimeFunnelLongHorizon();
+```
+
+The method, guarantees, complexity, tuning guidance, and references are in
+[`SPACE_TIME_FUNNEL.md`](SPACE_TIME_FUNNEL.md).
+
 ## Autonomous corridor planner
 
 The technical design, mathematical scope, guarantees, complexity analysis,

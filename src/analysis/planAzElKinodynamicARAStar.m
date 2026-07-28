@@ -37,9 +37,13 @@ function result = planAzElKinodynamicARAStar( ...
 %   MaxWallTimeSeconds
 %   Objective: "minimumTime" or "minimumAngularDistance"
 %   EpsilonSchedule: nonincreasing values >= 1
+%   StateCorridor: optional time-indexed spatial tube with fields
+%     ElapsedSeconds, AzimuthDeg, ElevationDeg, and RadiusDeg
 %
 % SolutionHistory reports every completed or interrupted improvement pass.
 % The final path is lattice-optimal only when the certified bound reaches 1.
+% When StateCorridor is supplied, that bound applies to the restricted
+% corridor lattice.
 % The visual swept-envelope mesh is not used for collision tests.
 
 if nargin < 4 || isempty(limits)
@@ -265,7 +269,8 @@ while true
         [next, valid] = propagatePrimitive( ...
             current, acceleration, limits, options);
         if valid && next(5) <= goal.LatestStep && ...
-                canStillReach(next, goal, limits, options)
+                canStillReach(next, goal, limits, options) && ...
+                stateInsideCorridor(next, limits, options)
             nextStates(controlIndex, :) = next;
             validControl(controlIndex) = true;
         end
@@ -467,6 +472,7 @@ defaults = struct( ...
     "TimePaddingSamples", 1, ...
     "BoundsMarginDeg", [0 0], ...
     "SafetyMarginDeg", 0, ...
+    "StateCorridor", [], ...
     "MaxExpansions", 200000, ...
     "MaxWallTimeSeconds", Inf, ...
     "InitialNodeCapacity", 4096);
@@ -526,6 +532,8 @@ if options.AzimuthWrap && ...
     error("planAzElKinodynamicARAStar:InvalidWrapLimits", ...
         "AzimuthWrap requires azimuth limits spanning exactly 360 degrees.");
 end
+options.StateCorridor = normalizeStateCorridor( ...
+    options.StateCorridor, options);
 end
 
 function objective = normalizeObjective(value)
@@ -837,6 +845,81 @@ function yes = canStillReach(state, goal, limits, options)
 remainingTime = max(0, goal.LatestStep - state(5)) * ...
     options.TimeStepSeconds;
 yes = minimumTime <= remainingTime + 1e-9;
+end
+
+function corridor = normalizeStateCorridor(corridor, options)
+if isempty(corridor)
+    corridor = [];
+    return;
+end
+if ~isstruct(corridor) || ~isscalar(corridor)
+    error("planAzElKinodynamicARAStar:InvalidStateCorridor", ...
+        "StateCorridor must be an empty value or a scalar struct.");
+end
+required = ["ElapsedSeconds", "AzimuthDeg", ...
+    "ElevationDeg", "RadiusDeg"];
+if ~all(isfield(corridor, cellstr(required)))
+    error("planAzElKinodynamicARAStar:InvalidStateCorridor", ...
+        "StateCorridor is missing a required field.");
+end
+elapsed = double(corridor.ElapsedSeconds(:));
+azimuth = double(corridor.AzimuthDeg(:));
+elevation = double(corridor.ElevationDeg(:));
+validateattributes(elapsed, {'numeric'}, ...
+    {'vector', 'nonempty', 'real', 'finite', 'nonnegative'});
+if numel(elapsed) < 2 || any(diff(elapsed) <= 0)
+    error("planAzElKinodynamicARAStar:InvalidStateCorridor", ...
+        "StateCorridor.ElapsedSeconds must be strictly increasing.");
+end
+validateattributes(azimuth, {'numeric'}, ...
+    {'vector', 'numel', numel(elapsed), 'real', 'finite'});
+validateattributes(elevation, {'numeric'}, ...
+    {'vector', 'numel', numel(elapsed), 'real', 'finite'});
+radius = double(corridor.RadiusDeg(:));
+validateattributes(radius, {'numeric'}, ...
+    {'vector', 'real', 'finite', 'positive'});
+if ~isscalar(radius) && numel(radius) ~= numel(elapsed)
+    error("planAzElKinodynamicARAStar:InvalidStateCorridor", ...
+        "StateCorridor.RadiusDeg must be scalar or match its time vector.");
+end
+if elapsed(1) > 1e-9 || ...
+        elapsed(end) < options.MaxPlanningTimeSeconds - 1e-9
+    error("planAzElKinodynamicARAStar:InvalidStateCorridor", ...
+        "StateCorridor must cover the complete planning horizon.");
+end
+corridor = struct( ...
+    "ElapsedSeconds", elapsed, ...
+    "AzimuthDeg", azimuth, ...
+    "ElevationDeg", elevation, ...
+    "RadiusDeg", radius);
+end
+
+function yes = stateInsideCorridor(state, limits, options)
+if isempty(options.StateCorridor)
+    yes = true;
+    return;
+end
+corridor = options.StateCorridor;
+elapsed = state(5) * options.TimeStepSeconds;
+guideAzimuth = interp1(corridor.ElapsedSeconds, ...
+    corridor.AzimuthDeg, elapsed, "linear");
+guideElevation = interp1(corridor.ElapsedSeconds, ...
+    corridor.ElevationDeg, elapsed, "linear");
+if isscalar(corridor.RadiusDeg)
+    radius = corridor.RadiusDeg;
+else
+    radius = interp1(corridor.ElapsedSeconds, ...
+        corridor.RadiusDeg, elapsed, "linear");
+end
+azimuthDelta = state(1) - guideAzimuth;
+if options.AzimuthWrap
+    span = diff(limits.AzimuthLimitsDeg);
+    azimuthDelta = mod(azimuthDelta + span / 2, span) - span / 2;
+end
+snapPadding = 0.5 * hypot( ...
+    options.AzimuthResolutionDeg, options.ElevationResolutionDeg);
+yes = hypot(azimuthDelta, state(2) - guideElevation) <= ...
+    radius + snapPadding + 1e-9;
 end
 
 function value = heuristic(state, goal, limits, options)
