@@ -119,6 +119,14 @@ example. `animateAzElAvoidancePlan` plays the completed route in synchronized
 Example 24 demonstrates a path that must stop and wait for an obstacle to
 clear.
 
+The algorithm, mathematical objective, optimality certificate, benchmark,
+and limitations are documented in
+[`docs/az_el_obstacle_avoidance_white_paper.md`](docs/az_el_obstacle_avoidance_white_paper.md).
+The separate autonomous static-topology method, including its any-angle
+search, corridor refinement, retiming, guarantees, and gauntlet results, is
+documented in
+[`docs/autonomous_az_el_corridor_planner_white_paper.md`](docs/autonomous_az_el_corridor_planner_white_paper.md).
+
 ## Propagators and force models
 
 Each satellite selects its propagator through `PropagatorType`:

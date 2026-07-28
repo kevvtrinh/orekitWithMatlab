@@ -86,15 +86,9 @@ handles = struct( ...
 end
 
 function dataList = normalizeDataList(input)
-if iscell(input)
-    dataList = input(:);
-elseif isstruct(input)
-    dataList = arrayfun(@(item) item, input(:), ...
-        "UniformOutput", false);
-else
-    error("plotAzElAvoidancePlan:InvalidInput", ...
-        "azElData must be a struct, struct array, or cell array.");
-end
+combined = combineAzElObstacles(input);
+dataList = arrayfun(@(item) item, combined(:), ...
+    "UniformOutput", false);
 end
 
 function indices = displayIndices(sampleCount, maximumCount)

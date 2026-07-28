@@ -4,8 +4,9 @@ function plan = planAzElAvoidance( ...
 %
 % plan = planAzElAvoidance(azElData, startState, stopState, limits, options)
 %
-% azElData is one five-field calculateAreaTargetAzEl result, a struct
-% array of results, or a cell array of results.
+% azElData is one five-field calculateAreaTargetAzEl result, a struct array,
+% or a cell collection. Each scalar struct is an independent obstacle. Use
+% combineAzElObstacles to flatten multiple or nested inputs explicitly.
 %
 % startState and stopState:
 %   time_s, position_deg [az el], velocity_deg_s [az el],
@@ -20,6 +21,8 @@ function plan = planAzElAvoidance( ...
 %   Objective (default "minimumAngularDistance")
 %   HeuristicWeight (default 1; values >1 use bounded weighted A*)
 %   MaxSearchTime_s (default 30)
+%   MaximumVerticesPerRegion (default 64; use Inf to retain all)
+%   GuidePath_deg (default empty; N-by-2 guided az/el waypoints)
 %
 % The output time_s and position_deg arrays are the requested 2-D steering
 % command over time. positionUnwrapped_deg keeps azimuth continuous through
@@ -49,7 +52,22 @@ if options.AllowAzimuthWrap && ...
         "AllowAzimuthWrap requires azimuth_deg to span 360 degrees.");
 end
 
-workspace = buildAzElTimeObstacleWorkspace(azElData);
+workspace = buildAzElTimeObstacleWorkspace(azElData, struct( ...
+    "MaximumVerticesPerRegion", ...
+    options.MaximumVerticesPerRegion));
+if ~isempty(options.GuidePath_deg)
+    if options.Objective ~= "minimumAngularDistance"
+        error("planAzElAvoidance:GuidedObjective", ...
+            "GuidePath_deg requires Objective minimumAngularDistance.");
+    end
+    guided = planAzElGuidedRoute( ...
+        workspace, startState, stopState, limits, options);
+    if guided.Success
+        plan = continuousPublicResult(guided, workspace, ...
+            startState, stopState, limits, options);
+        return;
+    end
+end
 if options.Objective == "minimumAngularDistance"
     continuous = planAzElMinimumDistance( ...
         workspace, startState, stopState, limits, options);
@@ -265,7 +283,9 @@ defaults = struct( ...
     "Objective", "minimumAngularDistance", ...
     "HeuristicWeight", 1, ...
     "MaxExpansions", 500000, ...
-    "MaxSearchTime_s", 30);
+    "MaxSearchTime_s", 30, ...
+    "MaximumVerticesPerRegion", 64, ...
+    "GuidePath_deg", zeros(0, 2));
 options = applyDefaults(input, defaults);
 options.Objective = normalizeObjective(options.Objective);
 validateattributes(options.SampleTime_s, {'numeric'}, ...
@@ -296,6 +316,15 @@ validateattributes(options.HeuristicWeight, {'numeric'}, ...
     {'scalar', 'real', 'finite', '>=', 1});
 validateattributes(options.MaxSearchTime_s, {'numeric'}, ...
     {'scalar', 'real', 'finite', 'positive'});
+validateattributes(options.MaximumVerticesPerRegion, {'numeric'}, ...
+    {'scalar', 'real', 'positive'});
+if isfinite(options.MaximumVerticesPerRegion)
+    validateattributes(options.MaximumVerticesPerRegion, {'numeric'}, ...
+        {'integer', '>=', 4});
+end
+validateattributes(options.GuidePath_deg, {'numeric'}, ...
+    {'2d', 'ncols', 2, 'real', 'finite'});
+options.GuidePath_deg = double(options.GuidePath_deg);
 end
 
 function objective = normalizeObjective(value)

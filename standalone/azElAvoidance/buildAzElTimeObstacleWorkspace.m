@@ -2,9 +2,11 @@ function workspace = buildAzElTimeObstacleWorkspace(azElData, options)
 %BUILDAZELTIMEOBSTACLEWORKSPACE Pack moving az/el polygons for path planning.
 %
 % workspace = buildAzElTimeObstacleWorkspace(azElData)
+% workspace = buildAzElTimeObstacleWorkspace([data1, data2, ...], options)
 % workspace = buildAzElTimeObstacleWorkspace({data1, data2, ...}, options)
 %
-% Each input is a calculateAreaTargetAzEl result. The output is an implicit
+% Each scalar azElData struct becomes an independent obstacle. Struct arrays,
+% cell arrays, and nested mixtures are accepted. The output is an implicit
 % 3-D obstacle workspace whose coordinates are sensor azimuth, sensor
 % elevation, and time_s. Boundaries are packed into contiguous
 % single-precision arrays and each slice has a precomputed bounding box.
@@ -30,14 +32,11 @@ if isfinite(options.MaximumVerticesPerRegion)
     validateattributes(options.MaximumVerticesPerRegion, {'numeric'}, ...
         {'integer', '>=', 4});
 end
-dataList = normalizeInputs(azElData);
-for k = 1:numel(dataList)
-    dataList{k} = normalizeAzElTimeObstacleData(dataList{k});
-end
+dataList = combineAzElObstacles(azElData);
 referenceTime = normalizeReferenceTime(options.ReferenceTime);
 obstacles = repmat(emptyObstacle(), numel(dataList), 1);
 for k = 1:numel(dataList)
-    obstacles(k) = packObstacle(dataList{k}, options);
+    obstacles(k) = packObstacle(dataList(k), options);
 end
 
 workspace = struct();
@@ -48,30 +47,6 @@ workspace.Obstacles = obstacles;
 workspace.ObstacleCount = numel(obstacles);
 workspace.Options = options;
 workspace.EstimatedStorageBytes = sum([obstacles.EstimatedStorageBytes]);
-end
-
-function dataList = normalizeInputs(input)
-if iscell(input)
-    dataList = input(:);
-elseif isstruct(input)
-    dataList = cell(numel(input), 1);
-    for k = 1:numel(input)
-        dataList{k} = input(k);
-    end
-else
-    error("buildAzElTimeObstacleWorkspace:InvalidInput", ...
-        "Input must be an az/el result struct, struct array, or cell array.");
-end
-if isempty(dataList)
-    error("buildAzElTimeObstacleWorkspace:EmptyInput", ...
-        "At least one az/el obstacle is required.");
-end
-for k = 1:numel(dataList)
-    if ~isstruct(dataList{k}) || ~isscalar(dataList{k})
-        error("buildAzElTimeObstacleWorkspace:InvalidInput", ...
-            "Obstacle %d must be a scalar az/el data struct.", k);
-    end
-end
 end
 
 function referenceTime = normalizeReferenceTime(requested)

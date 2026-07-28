@@ -26,7 +26,42 @@ azElData = struct( ...
 - `az_deg` and `el_deg` are cell arrays with one polygon boundary per time.
 - An empty polygon is `zeros(0,1)` in both cells.
 - `status` contains one string per time sample.
-- Pass a struct array or cell array to plan around multiple obstacles.
+- Each scalar struct is one independent obstacle.
+
+## Multiple obstacles
+
+Pass a struct array, cell array, or the output of
+`combineAzElObstacles`. Vietnam and China may use different time grids; each
+obstacle is active over its own `time_s` range.
+
+```matlab
+azElData = combineAzElObstacles( ...
+    vietnamAzElData, chinaAzElData);
+
+% These equivalent forms are also accepted:
+azElData = [vietnamAzElData, chinaAzElData];
+azElData = {vietnamAzElData, chinaAzElData};
+
+workspace = buildAzElTimeObstacleWorkspace(azElData);
+assert(workspace.ObstacleCount == 2);
+```
+
+The planner, collision query, static plot, and animation treat every element
+as a separate obstacle and combine their occupied regions as a union.
+
+Run the included two-obstacle example with your real projected data:
+
+```matlab
+plan = exampleVietnamChinaAzElAvoidance( ...
+    vietnamAzElData, chinaAzElData);
+```
+
+Calling `exampleVietnamChinaAzElAvoidance` with no inputs loads the bundled
+geoBoundaries ADM0 latitude/longitude outlines, capped at 500 vertices per
+country. It applies the translation-only display mapping
+`azimuth = longitude - 110`, `elevation = latitude`, allowing the example to
+run without Orekit. This preserves the recognizable country outlines but is
+not a physical sensor-frame projection.
 
 ## Direct planner
 
@@ -76,6 +111,96 @@ Set `Objective` to `minimumTime` to use kinodynamic A* on the finite motion
 lattice. Long fixed-time lattice requests start with coarse control decisions
 while retaining `SampleTime_s` for collision checks and returned commands.
 
+## Anytime kinodynamic ARA*
+
+`planAzElKinodynamicARAStar` is a separate low-level planner that reuses its
+search while progressively reducing heuristic inflation:
+
+```matlab
+workspace = buildAzElTimeObstacleWorkspace(azElData);
+
+start = struct( ...
+    "AzimuthDeg", -6, ...
+    "ElevationDeg", 45, ...
+    "Time", workspace.ReferenceTime);
+goal = struct( ...
+    "AzimuthDeg", 6, ...
+    "ElevationDeg", 45);
+limits = struct( ...
+    "AzimuthLimitsDeg", [-180 180], ...
+    "ElevationLimitsDeg", [40 50], ...
+    "AzimuthRateLimitDegPerSec", 2, ...
+    "ElevationRateLimitDegPerSec", 2, ...
+    "AzimuthAccelerationLimitDegPerSec2", 1, ...
+    "ElevationAccelerationLimitDegPerSec2", 1);
+options = struct( ...
+    "Objective", "minimumTime", ...
+    "EpsilonSchedule", [2.5 2 1.5 1], ...
+    "TimeStepSeconds", 1, ...
+    "CollisionCheckStepSeconds", 0.2);
+
+result = planAzElKinodynamicARAStar( ...
+    workspace, start, goal, limits, options);
+```
+
+Each edge is a constant-acceleration motion primitive. Position, rate,
+acceleration, time-window, collision, safety-margin, and azimuth-wrap
+constraints use the same definitions as `planAzElKinodynamicAStar`.
+`result.SolutionHistory` records the incumbent cost and certified bound after
+each epsilon pass. If a resource limit interrupts refinement, the best path
+is retained with the last completed certificate. A bound of one means exact
+optimality on the configured finite lattice, not in continuous space.
+
+Run the visual convergence example with:
+
+```matlab
+[result, handles] = exampleKinodynamicARAStar();
+```
+
+## Autonomous corridor planner
+
+The technical design, mathematical scope, guarantees, complexity analysis,
+and benchmark results are documented in
+[`docs/autonomous_az_el_corridor_planner_white_paper.md`](../../docs/autonomous_az_el_corridor_planner_white_paper.md).
+
+`planAzElAutonomousCorridor` handles difficult static topology without a
+supplied guide path:
+
+```matlab
+options = struct( ...
+    "SampleTime_s", 0.5, ...
+    "TopologyGridStep_deg", 0.5, ...
+    "SafetyMargin_deg", 0.5, ...
+    "AllowAzimuthWrap", false, ...
+    "Objective", "minimumAngularDistance", ...
+    "FallbackToExistingPlanner", false);
+
+plan = planAzElAutonomousCorridor( ...
+    azElData, startState, stopState, limits, options);
+```
+
+The planner verifies that packed obstacle slices are static, constructs one
+inflated occupancy raster, discovers a route with any-angle A*, removes grid
+staircasing through line-of-sight parent relaxation, and automatically
+retimes the resulting corridor under the rate and acceleration limits.
+Collision validation uses a finer internal timestep than the requested output
+when necessary, reducing the risk that fast slews cross thin obstacles
+between samples. Visibility shortcutting then removes waypoint stops only
+when dense samples along the replacement chord clear the original polygons.
+
+Set `EnableTopologyRefinement` to true to run a second any-angle search on a
+finer grid restricted to a narrow tube around the coarse route. Configure it
+with `RefinementGridStep_deg` and
+`RefinementCorridorHalfWidth_deg`. This spends more computation to reduce
+angular path length while concentrating search near the discovered route.
+The default coarse mode generally gives the best computation-time and
+maneuver-time balance.
+
+Time-dependent geometry, minimum-time objectives, and nonzero boundary rates
+or accelerations fall back to `planAzElAvoidance` by default. Set
+`FallbackToExistingPlanner` to false when a test must prove autonomous static
+topology discovery was used.
+
 ## Animate the completed plan
 
 ```matlab
@@ -109,3 +234,40 @@ decimation never affects collision queries.
 The continuous waypoint result reports a certified bound derived from the
 straight angular lower bound. A `minimumTime` A* result reports whether it is
 optimal on its configured finite lattice.
+
+## Generated-data gauntlet
+
+Five examples create only `azElData`, boundary states, limits, and options.
+No Orekit or scenario object is used:
+
+1. `exampleGauntlet01FiveTurnSpiral`
+2. `exampleGauntlet02StopGoStopGo`
+3. `exampleGauntlet03WrappedSeamDetour`
+4. `exampleGauntlet04AlternatingSlalom`
+5. `exampleGauntlet05UTrapEscape`
+
+The five-turn spiral is intentionally beyond the practical topology-search
+range of the raw kinodynamic lattice. It runs
+`planAzElAutonomousCorridor` with fallback disabled, supplies no
+`GuidePath_deg`, and asserts that the route autonomously winds through the
+spiral before reaching its center. The discovered polyline is dynamically
+retimed and densely collision-checked against the original polygons.
+Because the shortest legal path enters at the wall's outer opening and rounds
+its inner tip, its net polar winding is slightly above four turns even though
+the obstacle centerline itself contains five complete turns.
+
+Run all five:
+
+```matlab
+results = runAzElAvoidanceGauntlet();
+```
+
+Every example returns its generated inputs and completed plan, checks every
+returned command sample for collision, and asserts the behavior named by the
+example. Animate any result with:
+
+```matlab
+animateAzElAvoidancePlan( ...
+    results(1).azElData, results(1).plan, ...
+    struct("ViewMode", "combined"));
+```

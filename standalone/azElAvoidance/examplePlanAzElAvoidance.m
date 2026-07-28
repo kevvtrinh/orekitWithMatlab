@@ -1,5 +1,7 @@
 function plan = examplePlanAzElAvoidance(azElData)
-%EXAMPLEPLANAZELAVOIDANCE Run the standalone planner from azElData.
+%EXAMPLEPLANAZELAVOIDANCE Run the standalone planner from one or more obstacles.
+%
+% azElData may be a scalar struct, struct array, or cell collection.
 
 startState = struct( ...
     "time_s", 2700, ...

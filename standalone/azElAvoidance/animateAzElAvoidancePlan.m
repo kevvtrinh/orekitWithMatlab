@@ -390,19 +390,9 @@ end
 end
 
 function dataList = normalizeDataList(input)
-if iscell(input)
-    dataList = input(:);
-elseif isstruct(input)
-    dataList = arrayfun(@(item) item, input(:), ...
-        "UniformOutput", false);
-else
-    error("animateAzElAvoidancePlan:InvalidInput", ...
-        "azElData must be a struct, struct array, or cell array.");
-end
-if isempty(dataList)
-    error("animateAzElAvoidancePlan:EmptyInput", ...
-        "At least one azElData obstacle is required.");
-end
+combined = combineAzElObstacles(input);
+dataList = arrayfun(@(item) item, combined(:), ...
+    "UniformOutput", false);
 end
 
 function view = emptyTwoDimensionalView()

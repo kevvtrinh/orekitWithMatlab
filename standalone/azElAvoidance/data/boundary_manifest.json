@@ -1,0 +1,28 @@
+[
+  {
+    "country": "Vietnam",
+    "iso3": "VNM",
+    "boundaryID": "VNM-ADM0-46766057",
+    "boundaryYearRepresented": "2016",
+    "license": "CC BY 4.0",
+    "sourceUrl": "https://github.com/wmgeolab/geoBoundaries/raw/9469f09/releaseData/gbOpen/VNM/ADM0/geoBoundaries-VNM-ADM0.geojson",
+    "polygonParts": 90,
+    "originalVertexCount": 4449,
+    "retainedVertexCount": 500,
+    "maximumVertices": 500,
+    "outputFile": "vietnam_adm0_latlon.csv"
+  },
+  {
+    "country": "China",
+    "iso3": "CHN",
+    "boundaryID": "CHN-ADM0-351020",
+    "boundaryYearRepresented": "2019",
+    "license": "Public Domain",
+    "sourceUrl": "https://github.com/wmgeolab/geoBoundaries/raw/9469f09/releaseData/gbOpen/CHN/ADM0/geoBoundaries-CHN-ADM0.geojson",
+    "polygonParts": 3,
+    "originalVertexCount": 2182,
+    "retainedVertexCount": 500,
+    "maximumVertices": 500,
+    "outputFile": "china_adm0_latlon.csv"
+  }
+]

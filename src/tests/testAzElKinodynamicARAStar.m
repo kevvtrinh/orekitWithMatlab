@@ -1,0 +1,212 @@
+function tests = testAzElKinodynamicARAStar
+tests = functiontests(localfunctions);
+end
+
+function setupOnce(~)
+suiteRoot = fileparts(fileparts(fileparts(mfilename("fullpath"))));
+addpath(genpath(fullfile(suiteRoot, "src")));
+end
+
+function testAnytimeImprovesToExactAStar(testCase)
+[workspace, epoch, limits, startState, goalState] = detourProblem();
+common = struct( ...
+    "CollisionCheckStepSeconds", 0.2, ...
+    "MaxPlanningTimeSeconds", 30, ...
+    "MaxWallTimeSeconds", 60);
+araOptions = common;
+araOptions.EpsilonSchedule = [2.5 2 1.5 1];
+
+result = planAzElKinodynamicARAStar( ...
+    workspace, startState, goalState, limits, araOptions);
+astarOptions = common;
+astarOptions.HeuristicWeight = 1;
+reference = planAzElKinodynamicAStar( ...
+    workspace, startState, goalState, limits, astarOptions);
+
+verifyTrue(testCase, result.Success);
+verifyEqual(testCase, result.Algorithm, "ARA*");
+verifyTrue(testCase, result.OptimalOnLattice);
+verifyEqual(testCase, result.SuboptimalityBound, 1, "AbsTol", 1e-12);
+verifyEqual(testCase, result.ObjectiveCost, reference.ObjectiveCost, ...
+    "AbsTol", 1e-12);
+verifyEqual(testCase, ...
+    result.SolutionHistory.RequestedEpsilon, [2.5; 2; 1.5; 1]);
+verifyTrue(testCase, all(result.SolutionHistory.Completed));
+verifyLessThanOrEqual(testCase, ...
+    diff(result.SolutionHistory.ObjectiveCost), zeros(3, 1));
+verifyGreaterThan(testCase, ...
+    result.SolutionHistory.ObjectiveCost(1), result.ObjectiveCost);
+
+[azimuth, elevation, time] = samplePrimitives(result);
+blocked = queryAzElTimeObstacle( ...
+    workspace, azimuth, elevation, time);
+verifyFalse(testCase, any(blocked));
+verifyLessThanOrEqual(testCase, ...
+    max(abs(result.Path.AzimuthRateDegPerSec)), ...
+    limits.AzimuthRateLimitDegPerSec + 1e-12);
+verifyLessThanOrEqual(testCase, ...
+    max(abs(result.Path.ElevationRateDegPerSec)), ...
+    limits.ElevationRateLimitDegPerSec + 1e-12);
+verifyEqual(testCase, result.Path.Time(1), epoch);
+end
+
+function testExpansionLimitPreservesCertificate(testCase)
+[workspace, ~, limits, startState, goalState] = detourProblem();
+options = struct( ...
+    "CollisionCheckStepSeconds", 0.2, ...
+    "MaxPlanningTimeSeconds", 30, ...
+    "MaxExpansions", 30, ...
+    "EpsilonSchedule", [2.5 1]);
+
+result = planAzElKinodynamicARAStar( ...
+    workspace, startState, goalState, limits, options);
+
+verifyTrue(testCase, result.Success);
+verifyFalse(testCase, result.OptimalOnLattice);
+verifyEqual(testCase, result.TerminationReason, "expansionLimit");
+verifyEqual(testCase, result.ExpandedNodeCount, 30);
+verifyEqual(testCase, height(result.SolutionHistory), 2);
+verifyTrue(testCase, result.SolutionHistory.Completed(1));
+verifyFalse(testCase, result.SolutionHistory.Completed(2));
+verifyEqual(testCase, result.SuboptimalityBound, ...
+    result.SolutionHistory.CertifiedSuboptimalityBound(1), ...
+    "AbsTol", 1e-12);
+verifyLessThanOrEqual(testCase, result.SuboptimalityBound, 2.5);
+end
+
+function testWrappedAzimuthCommandIsContinuous(testCase)
+[workspace, epoch] = emptyWorkspace(20);
+limits = plannerLimits([0 90]);
+options = struct("EpsilonSchedule", [2 1]);
+
+result = planAzElKinodynamicARAStar(workspace, ...
+    struct("AzimuthDeg", 179, "ElevationDeg", 45, "Time", epoch), ...
+    struct("AzimuthDeg", -179, "ElevationDeg", 45), limits, options);
+
+verifyTrue(testCase, result.Success);
+verifyTrue(testCase, result.OptimalOnLattice);
+verifyEqual(testCase, result.Path.AzimuthDeg(end), -179);
+verifyEqual(testCase, result.Path.AzimuthUnwrappedDeg(end), 181);
+verifyLessThanOrEqual(testCase, ...
+    max(abs(diff(result.Path.AzimuthUnwrappedDeg))), ...
+    limits.AzimuthRateLimitDegPerSec);
+end
+
+function testMinimumAngularDistanceWithFixedArrival(testCase)
+[workspace, epoch] = emptyWorkspace(10);
+limits = plannerLimits([0 90]);
+arrival = epoch + seconds(10);
+options = struct( ...
+    "Objective", "minimumAngularDistance", ...
+    "MaxPlanningTimeSeconds", 10, ...
+    "EpsilonSchedule", [2 1]);
+
+result = planAzElKinodynamicARAStar(workspace, ...
+    struct("AzimuthDeg", 0, "ElevationDeg", 45, "Time", epoch), ...
+    struct( ...
+    "AzimuthDeg", 4, ...
+    "ElevationDeg", 45, ...
+    "EarliestTime", arrival, ...
+    "LatestTime", arrival), ...
+    limits, options);
+
+verifyTrue(testCase, result.Success);
+verifyTrue(testCase, result.OptimalOnLattice);
+verifyEqual(testCase, result.Objective, "minimumAngularDistance");
+verifyEqual(testCase, result.ObjectiveCostUnits, "degrees");
+verifyEqual(testCase, result.ObjectiveCost, 4, "AbsTol", 1e-9);
+verifyEqual(testCase, result.CostSeconds, 10, "AbsTol", 1e-9);
+verifyGreaterThanOrEqual(testCase, nnz(result.Path.IsWaiting), 1);
+end
+
+function testRejectsIncreasingEpsilonSchedule(testCase)
+[workspace, epoch] = emptyWorkspace(10);
+limits = plannerLimits([0 90]);
+options = struct("EpsilonSchedule", [1 2]);
+
+verifyError(testCase, @() planAzElKinodynamicARAStar(workspace, ...
+    struct("AzimuthDeg", 0, "ElevationDeg", 45, "Time", epoch), ...
+    struct("AzimuthDeg", 2, "ElevationDeg", 45), limits, options), ...
+    "planAzElKinodynamicARAStar:InvalidEpsilonSchedule");
+end
+
+function [workspace, epoch, limits, startState, goalState] = ...
+        detourProblem()
+epoch = localEpoch();
+time_s = (0:40).';
+sampleCount = numel(time_s);
+azimuth = repmat({[-1; 1; 1; -1; -1]}, sampleCount, 1);
+elevation = repmat({[43; 43; 47; 47; 43]}, sampleCount, 1);
+data = obstacleData( ...
+    "Rectangle", time_s, azimuth, elevation);
+workspace = buildAzElTimeObstacleWorkspace(data, struct( ...
+    "ReferenceTime", epoch));
+limits = plannerLimits([40 50]);
+startState = struct( ...
+    "AzimuthDeg", -6, ...
+    "ElevationDeg", 45, ...
+    "Time", epoch);
+goalState = struct( ...
+    "AzimuthDeg", 6, ...
+    "ElevationDeg", 45);
+end
+
+function [azimuth, elevation, time] = samplePrimitives(result)
+samplesPerEdge = 11;
+edgeCount = height(result.Path) - 1;
+azimuth = zeros(edgeCount * samplesPerEdge, 1);
+elevation = zeros(edgeCount * samplesPerEdge, 1);
+time = NaT(edgeCount * samplesPerEdge, 1, "TimeZone", "UTC");
+dt = result.Options.TimeStepSeconds;
+write = 0;
+for k = 1:edgeCount
+    tau = linspace(0, dt, samplesPerEdge).';
+    row = result.Path(k, :);
+    next = result.Path(k + 1, :);
+    index = write + (1:samplesPerEdge);
+    azimuth(index) = row.AzimuthUnwrappedDeg + ...
+        row.AzimuthRateDegPerSec .* tau + ...
+        0.5 .* next.AzimuthAccelerationDegPerSec2 .* tau.^2;
+    if result.Options.AzimuthWrap
+        azimuth(index) = mod(azimuth(index) + 180, 360) - 180;
+    end
+    elevation(index) = row.ElevationDeg + ...
+        row.ElevationRateDegPerSec .* tau + ...
+        0.5 .* next.ElevationAccelerationDegPerSec2 .* tau.^2;
+    time(index) = row.Time + seconds(tau);
+    write = write + samplesPerEdge;
+end
+end
+
+function limits = plannerLimits(elevationLimits)
+limits = struct( ...
+    "AzimuthLimitsDeg", [-180 180], ...
+    "ElevationLimitsDeg", elevationLimits, ...
+    "AzimuthRateLimitDegPerSec", 2, ...
+    "ElevationRateLimitDegPerSec", 2, ...
+    "AzimuthAccelerationLimitDegPerSec2", 1, ...
+    "ElevationAccelerationLimitDegPerSec2", 1);
+end
+
+function [workspace, epoch] = emptyWorkspace(durationSeconds)
+epoch = localEpoch();
+sampleCount = durationSeconds + 1;
+empty = repmat({zeros(0, 1)}, sampleCount, 1);
+data = obstacleData( ...
+    "Empty", (0:sampleCount - 1).', empty, empty);
+workspace = buildAzElTimeObstacleWorkspace(data, struct( ...
+    "ReferenceTime", epoch));
+end
+
+function data = obstacleData(name, time_s, azimuth, elevation)
+data = struct( ...
+    "targetName", string(name), ...
+    "time_s", double(time_s(:)), ...
+    "az_deg", {azimuth}, ...
+    "el_deg", {elevation}, ...
+    "status", repmat("visible", numel(time_s), 1));
+end
+
+function epoch = localEpoch()
+epoch = datetime(2026, 1, 1, 0, 0, 0, "TimeZone", "UTC");
+end
