@@ -13,7 +13,8 @@ function plan = planAzElSpaceTimeFunnel( ...
 %
 % Every returned trajectory is densely checked against the original packed
 % moving polygons. The safe-interval result remains available if refinement
-% reaches a resource limit.
+% reaches a resource limit. azElData may also be a prebuilt
+% AzElTimeObstacleWorkspace when several plans share one obstacle field.
 
 timer = tic;
 if nargin < 5
@@ -21,8 +22,14 @@ if nargin < 5
 end
 [startState, stopState, limits, options] = ...
     normalizeInputs(startState, stopState, limits, options);
-workspace = buildAzElTimeObstacleWorkspace(azElData, struct( ...
-    "MaximumVerticesPerRegion", options.MaximumVerticesPerRegion));
+if isstruct(azElData) && isscalar(azElData) && ...
+        isfield(azElData, "Format") && ...
+        azElData.Format == "AzElTimeObstacleWorkspace"
+    workspace = azElData;
+else
+    workspace = buildAzElTimeObstacleWorkspace(azElData, struct( ...
+        "MaximumVerticesPerRegion", options.MaximumVerticesPerRegion));
+end
 endpointDelta = wrappedDelta( ...
     startState.position_deg, stopState.position_deg, limits, options);
 endpointLowerBound = hypot(endpointDelta(1), endpointDelta(2));

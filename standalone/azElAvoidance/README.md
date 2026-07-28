@@ -228,6 +228,34 @@ to the next one. The benchmark supplies no guide path, corridor, preferred
 direction, or one-way edge; the safe-interval planner uses its default full
 eight-direction symmetric action set.
 
+Run a fresh randomized blinking-board interception:
+
+```matlab
+result = exampleRandomBlinkingChessboardIntercept();
+```
+
+The checkerboard changes on independently jittered transitions and includes
+random temporary cell outages. A moving endpoint follows a separately
+generated trajectory and may cross closed cells; the boresight must remain
+collision-free and catch it at a sampled feasible time. The example prints
+its seed. Replay that exact case with:
+
+```matlab
+result = exampleRandomBlinkingChessboardIntercept(printedSeed);
+```
+
+Run an unfiltered randomized batch with:
+
+```matlab
+report = runRandomBlinkingChessboardStressTest(20);
+```
+
+Every generated seed is retained whether it passes or fails. The runner
+never searches for a favorable seed, and its reported root seed reproduces
+the complete batch. The MATLAB unit test draws five new cases on every run
+and requires at least an 80 percent success rate, zero boresight collisions,
+real multi-cell traversal, and endpoint motion through closed cells.
+
 Run the default 86,401-slice long-horizon benchmark:
 
 ```matlab
