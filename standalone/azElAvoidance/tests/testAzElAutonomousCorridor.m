@@ -3,8 +3,8 @@ tests = functiontests(localfunctions);
 end
 
 function setupOnce(~)
-folder = fileparts(mfilename("fullpath"));
-addpath(folder);
+root = fileparts(fileparts(mfilename("fullpath")));
+addpath(genpath(root));
 end
 
 function teardown(~)
@@ -13,7 +13,7 @@ end
 
 function testFiveTurnSpiralNeedsNoGuide(testCase)
 set(0, "DefaultFigureVisible", "off");
-result = exampleGauntlet01FiveTurnSpiral();
+result = example05FiveTurnSpiral();
 
 verifyTrue(testCase, result.plan.success);
 verifyTrue(testCase, startsWith(result.plan.method, "autonomous"));

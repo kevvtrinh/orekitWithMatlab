@@ -1,5 +1,5 @@
-function result = exampleGauntlet04AlternatingSlalom()
-%EXAMPLEGAUNTLET04ALTERNATINGSLALOM Weave through alternating barriers.
+function result = example08AlternatingSlalom()
+%EXAMPLE08ALTERNATINGSLALOM Weave through alternating barriers.
 
 time_s = (0:0.5:60).';
 centers = [-9, -3, 3, 9];
@@ -45,7 +45,7 @@ result.diagnostics.crossingElevation_deg = crossingElevation;
 expectedSign = [1, -1, 1, -1];
 if any(sign(crossingElevation) ~= expectedSign) || ...
         any(abs(crossingElevation) < 1.25)
-    error("exampleGauntlet04AlternatingSlalom:WrongPassSide", ...
+    error("example08AlternatingSlalom:WrongPassSide", ...
         "The route did not alternate through all four slalom openings.");
 end
 fprintf("  Crossing elevations: %s deg\n", ...

@@ -3,7 +3,8 @@ tests = functiontests(localfunctions);
 end
 
 function setupOnce(~)
-addpath(fileparts(mfilename("fullpath")));
+root = fileparts(fileparts(mfilename("fullpath")));
+addpath(genpath(root));
 end
 
 function testDirectWaitAndSlewIsGloballyShortest(testCase)

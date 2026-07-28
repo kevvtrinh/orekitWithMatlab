@@ -22,7 +22,7 @@ part is retained and closed. Each output contains exactly 500 finite
 latitude/longitude vertices, with `NaN` rows separating polygon parts.
 
 The files store latitude and longitude, not sensor azimuth and elevation.
-`exampleVietnamChinaAzElAvoidance` applies a translation-only visualization
+`example02VietnamChinaAvoidance` applies a translation-only visualization
 map:
 
 ```text

@@ -3,15 +3,36 @@ tests = functiontests(localfunctions);
 end
 
 function setupOnce(~)
-addpath(fileparts(mfilename("fullpath")));
+root = fileparts(fileparts(mfilename("fullpath")));
+addpath(genpath(root));
 end
 
 function teardown(~)
 close all force;
 end
 
+function testExampleNumbersAreConsecutiveAndCallable(testCase)
+root = fileparts(fileparts(mfilename("fullpath")));
+folder = fullfile(root, "examples");
+examples = dir(fullfile(folder, "example*.m"));
+names = sort(string({examples.name}));
+numbers = zeros(numel(names), 1);
+for k = 1:numel(names)
+    token = regexp(names(k), "^example(\d\d).+\.m$", ...
+        "tokens", "once");
+    verifyNotEmpty(testCase, token, ...
+        sprintf('%s does not use the exampleNNName convention.', names(k)));
+    numbers(k) = str2double(token{1});
+    functionName = erase(names(k), ".m");
+    verifyNotEmpty(testCase, which(functionName), ...
+        sprintf('%s is not callable.', functionName));
+end
+verifyEqual(testCase, numbers, (1:numel(names)).');
+end
+
 function testEveryExampleUsesCommonAnimationPath(testCase)
-folder = fileparts(mfilename("fullpath"));
+root = fileparts(fileparts(mfilename("fullpath")));
+folder = fullfile(root, "examples");
 examples = dir(fullfile(folder, "example*.m"));
 verifyGreaterThan(testCase, numel(examples), 0);
 for k = 1:numel(examples)
@@ -55,15 +76,16 @@ verifyEqual(testCase, handles.Options.ViewMode, "combined");
 end
 
 function testGauntletsDoNotInjectRoutes(testCase)
-folder = fileparts(mfilename("fullpath"));
+root = fileparts(fileparts(mfilename("fullpath")));
+folder = fullfile(root, "examples");
+supportFolder = fullfile(folder, "support");
 files = [ ...
-    dir(fullfile(folder, "exampleGauntlet*.m")); ...
-    dir(fullfile(folder, "example*Gauntlet.m")); ...
-    dir(fullfile(folder, "make*Gauntlet.m"))];
+    dir(fullfile(folder, "example*.m")); ...
+    dir(fullfile(supportFolder, "make*Gauntlet.m"))];
 [~, uniqueIndex] = unique({files.name}, "stable");
 files = files(uniqueIndex);
 for k = 1:numel(files)
-    source = string(fileread(fullfile(folder, files(k).name)));
+    source = string(fileread(fullfile(files(k).folder, files(k).name)));
     verifyEmpty(testCase, regexp(source, ...
         """GuidePath_deg""\s*,|""StateCorridor""\s*,|" + ...
         """ReferencePath[^""]*""\s*,|@planAzElGuidedRoute", ...
@@ -83,7 +105,7 @@ end
 
 function testStopGoMovesImmediatelyAfterFinalGate(testCase)
 set(0, "DefaultFigureVisible", "off");
-result = exampleGauntlet02StopGoStopGo();
+result = example06StopGoGates();
 
 verifyEqual(testCase, result.blockedSampleCount, 0);
 verifyEqual(testCase, result.plan.angularPathLength_deg, 24, ...

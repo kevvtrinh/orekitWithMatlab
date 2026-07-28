@@ -3,15 +3,24 @@
 This folder is self-contained. It starts with `azElData` and does not use
 Orekit, a satellite scenario, or any repository startup function.
 
-Every `example*.m` entry point opens the synchronized combined animation:
+Every numbered entry point in `examples` opens the synchronized combined animation:
 the current 2-D azimuth/elevation geometry is shown beside the accumulating
 3-D azimuth/elevation/time obstacle volume and steering path.
 
 Add this folder to the MATLAB path:
 
 ```matlab
-addpath("C:\path\to\azElAvoidance")
+root = "C:\path\to\azElAvoidance";
+addpath(genpath(root))
 ```
+
+The package root contains the supported planners, workspace functions, and
+visualizer. Planner implementation details are in `private`, runnable
+examples are in `examples`, scenario-only helpers are in `examples/support`,
+tests are in `tests`, and performance runners are in `benchmarks`.
+
+See [`examples/README.md`](examples/README.md) for the numbered example list
+and an algorithm-by-algorithm breakdown.
 
 ## Input data
 
@@ -56,11 +65,11 @@ as a separate obstacle and combine their occupied regions as a union.
 Run the included two-obstacle example with your real projected data:
 
 ```matlab
-plan = exampleVietnamChinaAzElAvoidance( ...
+plan = example02VietnamChinaAvoidance( ...
     vietnamAzElData, chinaAzElData);
 ```
 
-Calling `exampleVietnamChinaAzElAvoidance` with no inputs loads the bundled
+Calling `example02VietnamChinaAvoidance` with no inputs loads the bundled
 geoBoundaries ADM0 latitude/longitude outlines, capped at 500 vertices per
 country. It applies the translation-only display mapping
 `azimuth = longitude - 110`, `elevation = latitude`, allowing the example to
@@ -158,7 +167,7 @@ optimality on the configured finite lattice, not in continuous space.
 Run the visual convergence example with:
 
 ```matlab
-[result, handles] = exampleKinodynamicARAStar();
+[result, handles] = example03KinodynamicARAStar();
 ```
 
 ## Dynamic space-time funnel planner
@@ -189,13 +198,13 @@ fallback.
 Run the moving two-obstacle example:
 
 ```matlab
-result = exampleSpaceTimeFunnel();
+result = example04SpaceTimeFunnel();
 ```
 
 Run the animated four-ring timing gauntlet:
 
 ```matlab
-result = exampleRotatingSlotGauntlet();
+result = example10RotatingSlots();
 ```
 
 The boresight waits outside or in the safe annular chambers until each
@@ -206,7 +215,7 @@ azimuth/elevation/time volume.
 Run the animated pursued-boresight gauntlet:
 
 ```matlab
-result = exampleChasedBoresightGauntlet();
+result = example11ChasedBoresight();
 ```
 
 A slightly slower moving barrier spans a bidirectional square corridor
@@ -218,7 +227,7 @@ motion constraint is used.
 Run the level-6-inspired synchronized-windmill gauntlet:
 
 ```matlab
-result = exampleWorldsHardestWindmillGauntlet();
+result = example12SynchronizedWindmills();
 ```
 
 Eight four-blade windmills rotate at one common rate through an S-shaped
@@ -231,7 +240,7 @@ eight-direction symmetric action set.
 Run a fresh randomized blinking-board interception:
 
 ```matlab
-result = exampleRandomBlinkingChessboardIntercept();
+result = example13RandomBlinkingIntercept();
 ```
 
 The checkerboard changes on independently jittered transitions and includes
@@ -241,7 +250,7 @@ collision-free and catch it at a sampled feasible time. The example prints
 its seed. Replay that exact case with:
 
 ```matlab
-result = exampleRandomBlinkingChessboardIntercept(printedSeed);
+result = example13RandomBlinkingIntercept(printedSeed);
 ```
 
 Run an unfiltered randomized batch with:
@@ -263,7 +272,7 @@ benchmark = benchmarkSpaceTimeFunnelLongHorizon();
 ```
 
 The method, guarantees, complexity, tuning guidance, and references are in
-[`SPACE_TIME_FUNNEL.md`](SPACE_TIME_FUNNEL.md).
+[`SPACE_TIME_FUNNEL.md`](docs/SPACE_TIME_FUNNEL.md).
 
 ## Autonomous corridor planner
 
@@ -348,11 +357,11 @@ optimal on its configured finite lattice.
 Five examples create only `azElData`, boundary states, limits, and options.
 No Orekit or scenario object is used:
 
-1. `exampleGauntlet01FiveTurnSpiral`
-2. `exampleGauntlet02StopGoStopGo`
-3. `exampleGauntlet03WrappedSeamDetour`
-4. `exampleGauntlet04AlternatingSlalom`
-5. `exampleGauntlet05UTrapEscape`
+1. `example05FiveTurnSpiral`
+2. `example06StopGoGates`
+3. `example07WrappedAzimuthSeam`
+4. `example08AlternatingSlalom`
+5. `example09UTrapEscape`
 
 The five-turn spiral is intentionally beyond the practical topology-search
 range of the raw kinodynamic lattice. It runs
@@ -367,7 +376,7 @@ the obstacle centerline itself contains five complete turns.
 Run all five:
 
 ```matlab
-results = runAzElAvoidanceGauntlet();
+results = runStaticGauntletExamples();
 ```
 
 Every example returns its generated inputs and completed plan, checks every

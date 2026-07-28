@@ -1,5 +1,5 @@
-function result = exampleGauntlet03WrappedSeamDetour()
-%EXAMPLEGAUNTLET03WRAPPEDSEAMDETOUR Detour across the azimuth wrap seam.
+function result = example07WrappedAzimuthSeam()
+%EXAMPLE07WRAPPEDAZIMUTHSEAM Detour across the azimuth wrap seam.
 
 time_s = (0:0.5:30).';
 [azimuth, elevation] = seamObstacle();
@@ -31,7 +31,7 @@ result.diagnostics.maximumElevationDetour_deg = ...
     max(abs(result.plan.position_deg(:, 2)));
 if result.diagnostics.maximumUnwrappedStep_deg > 2 || ...
         result.diagnostics.maximumElevationDetour_deg < 5
-    error("exampleGauntlet03WrappedSeamDetour:InvalidDetour", ...
+    error("example07WrappedAzimuthSeam:InvalidDetour", ...
         "The seam path is discontinuous or did not clear the blocker.");
 end
 fprintf("  Maximum unwrapped step %.2f deg; elevation detour %.2f deg.\n", ...

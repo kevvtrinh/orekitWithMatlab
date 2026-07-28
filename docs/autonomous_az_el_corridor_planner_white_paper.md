@@ -693,15 +693,15 @@ without changing route discovery.
 | Responsibility | Source |
 |---|---|
 | Public autonomous planner and dispatch | [`standalone/azElAvoidance/planAzElAutonomousCorridor.m`](../standalone/azElAvoidance/planAzElAutonomousCorridor.m) |
-| Any-angle grid search | [`standalone/azElAvoidance/searchAzElAnyAngleAStar.m`](../standalone/azElAvoidance/searchAzElAnyAngleAStar.m) |
-| Corridor refinement | [`standalone/azElAvoidance/refineAzElTopologyCorridor.m`](../standalone/azElAvoidance/refineAzElTopologyCorridor.m) |
-| Visibility reduction | [`standalone/azElAvoidance/simplifyAzElRouteVisibility.m`](../standalone/azElAvoidance/simplifyAzElRouteVisibility.m) |
-| Rate/acceleration retiming | [`standalone/azElAvoidance/planAzElGuidedRoute.m`](../standalone/azElAvoidance/planAzElGuidedRoute.m) |
+| Any-angle grid search | [`standalone/azElAvoidance/private/searchAzElAnyAngleAStar.m`](../standalone/azElAvoidance/private/searchAzElAnyAngleAStar.m) |
+| Corridor refinement | [`standalone/azElAvoidance/private/refineAzElTopologyCorridor.m`](../standalone/azElAvoidance/private/refineAzElTopologyCorridor.m) |
+| Visibility reduction | [`standalone/azElAvoidance/private/simplifyAzElRouteVisibility.m`](../standalone/azElAvoidance/private/simplifyAzElRouteVisibility.m) |
+| Rate/acceleration retiming | [`standalone/azElAvoidance/private/planAzElGuidedRoute.m`](../standalone/azElAvoidance/private/planAzElGuidedRoute.m) |
 | Packed obstacle workspace | [`standalone/azElAvoidance/buildAzElTimeObstacleWorkspace.m`](../standalone/azElAvoidance/buildAzElTimeObstacleWorkspace.m) |
 | Collision query | [`standalone/azElAvoidance/queryAzElTimeObstacle.m`](../standalone/azElAvoidance/queryAzElTimeObstacle.m) |
-| Focused tests | [`standalone/azElAvoidance/testAzElAutonomousCorridor.m`](../standalone/azElAvoidance/testAzElAutonomousCorridor.m) |
-| Generated gauntlets | [`standalone/azElAvoidance/runAzElAvoidanceGauntlet.m`](../standalone/azElAvoidance/runAzElAvoidanceGauntlet.m) |
-| Short implementation guide | [`standalone/azElAvoidance/AUTONOMOUS_PLANNER.md`](../standalone/azElAvoidance/AUTONOMOUS_PLANNER.md) |
+| Focused tests | [`standalone/azElAvoidance/tests/testAzElAutonomousCorridor.m`](../standalone/azElAvoidance/tests/testAzElAutonomousCorridor.m) |
+| Generated gauntlets | [`standalone/azElAvoidance/examples/runStaticGauntletExamples.m`](../standalone/azElAvoidance/examples/runStaticGauntletExamples.m) |
+| Short implementation guide | [`standalone/azElAvoidance/docs/AUTONOMOUS_PLANNER.md`](../standalone/azElAvoidance/docs/AUTONOMOUS_PLANNER.md) |
 
 ## References
 

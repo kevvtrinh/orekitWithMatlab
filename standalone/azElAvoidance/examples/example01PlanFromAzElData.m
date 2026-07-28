@@ -1,5 +1,5 @@
-function plan = examplePlanAzElAvoidance(azElData, viewOptions)
-%EXAMPLEPLANAZELAVOIDANCE Run the standalone planner from one or more obstacles.
+function plan = example01PlanFromAzElData(azElData, viewOptions)
+%EXAMPLE01PLANFROMAZELDATA Run the dispatcher from one or more obstacles.
 %
 % azElData may be a scalar struct, struct array, or cell collection.
 
@@ -35,7 +35,7 @@ options = struct( ...
 plan = planAzElAvoidance( ...
     azElData, startState, stopState, limits, options);
 if ~plan.success
-    error("examplePlanAzElAvoidance:NoPath", "%s", plan.message);
+    error("example01PlanFromAzElData:NoPath", "%s", plan.message);
 end
 plan.animationHandles = animateAzElAvoidancePlan( ...
     azElData, plan, defaultAzElAnimationOptions( ...

@@ -1,5 +1,5 @@
-function [result, handles] = exampleKinodynamicARAStar(viewOptions)
-%EXAMPLEKINODYNAMICARASTAR Run and visualize a bounded anytime detour.
+function [result, handles] = example03KinodynamicARAStar(viewOptions)
+%EXAMPLE03KINODYNAMICARASTAR Run and visualize a bounded anytime detour.
 %
 % This example creates azElData directly and does not use Orekit. ARA*
 % first returns a bounded path quickly, then repairs the same search until
@@ -42,7 +42,7 @@ options = struct( ...
 result = planAzElKinodynamicARAStar( ...
     workspace, startState, goalState, limits, options);
 if ~result.Success
-    error("exampleKinodynamicARAStar:NoPath", ...
+    error("example03KinodynamicARAStar:NoPath", ...
         "ARA* failed: %s", result.Message);
 end
 
