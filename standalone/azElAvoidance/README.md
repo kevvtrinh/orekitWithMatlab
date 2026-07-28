@@ -3,6 +3,10 @@
 This folder is self-contained. It starts with `azElData` and does not use
 Orekit, a satellite scenario, or any repository startup function.
 
+Every `example*.m` entry point opens the synchronized combined animation:
+the current 2-D azimuth/elevation geometry is shown beside the accumulating
+3-D azimuth/elevation/time obstacle volume and steering path.
+
 Add this folder to the MATLAB path:
 
 ```matlab
@@ -198,6 +202,31 @@ The boresight waits outside or in the safe annular chambers until each
 independently rotating slot admits the next inward crossing. The combined
 view animates current 2-D geometry beside the accumulated 3-D
 azimuth/elevation/time volume.
+
+Run the animated pursued-boresight gauntlet:
+
+```matlab
+result = exampleChasedBoresightGauntlet();
+```
+
+A slightly slower moving barrier spans a bidirectional square corridor
+behind the boresight. The goal alcove remains blocked until late in the
+scenario, so the planner must keep circulating, choose its own steering
+direction, and enter only after the gate opens. No directed or one-way
+motion constraint is used.
+
+Run the level-6-inspired synchronized-windmill gauntlet:
+
+```matlab
+result = exampleWorldsHardestWindmillGauntlet();
+```
+
+Eight four-blade windmills rotate at one common rate through an S-shaped
+corridor. Coins are deliberately omitted. The boresight must traverse both
+rows, follow the changing clearance around a windmill, and take an opening
+to the next one. The benchmark supplies no guide path, corridor, preferred
+direction, or one-way edge; the safe-interval planner uses its default full
+eight-direction symmetric action set.
 
 Run the default 86,401-slice long-horizon benchmark:
 

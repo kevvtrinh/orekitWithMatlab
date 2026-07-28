@@ -1,7 +1,11 @@
-function plan = examplePlanAzElAvoidance(azElData)
+function plan = examplePlanAzElAvoidance(azElData, viewOptions)
 %EXAMPLEPLANAZELAVOIDANCE Run the standalone planner from one or more obstacles.
 %
 % azElData may be a scalar struct, struct array, or cell collection.
+
+if nargin < 2
+    viewOptions = struct();
+end
 
 startState = struct( ...
     "time_s", 2700, ...
@@ -33,5 +37,7 @@ plan = planAzElAvoidance( ...
 if ~plan.success
     error("examplePlanAzElAvoidance:NoPath", "%s", plan.message);
 end
-plotAzElAvoidancePlan(azElData, plan);
+plan.animationHandles = animateAzElAvoidancePlan( ...
+    azElData, plan, defaultAzElAnimationOptions( ...
+    viewOptions, struct("MaximumAnimationFrames", 240)));
 end

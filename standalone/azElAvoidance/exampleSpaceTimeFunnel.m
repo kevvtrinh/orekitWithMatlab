@@ -1,9 +1,13 @@
-function result = exampleSpaceTimeFunnel()
+function result = exampleSpaceTimeFunnel(viewOptions)
 %EXAMPLESPACETIMEFUNNEL Plan through two moving az/el/time volumes.
 %
 % The example is standalone: it creates canonical azElData directly,
 % plans a constrained boresight command, validates it, and animates both
 % the current 2-D geometry and the accumulated 3-D space-time volume.
+
+if nargin < 1
+    viewOptions = struct();
+end
 
 time_s = (0:30).';
 wallAzimuth = cell(numel(time_s), 1);
@@ -62,11 +66,11 @@ if any(blocked)
         nnz(blocked));
 end
 
-view = animateAzElAvoidancePlan(azElData, plan, struct( ...
-    "ViewMode", "combined", ...
+view = animateAzElAvoidancePlan(azElData, plan, ...
+    defaultAzElAnimationOptions(viewOptions, struct( ...
     "MaximumAnimationFrames", 120, ...
     "MaximumDisplayedSlices", 80, ...
-    "PauseSeconds", 0));
+    "PauseSeconds", 0)));
 result = struct( ...
     "azElData", {azElData}, ...
     "startState", startState, ...

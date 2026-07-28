@@ -145,6 +145,9 @@ diagnostics = analyzeRotatingSlotGauntlet(problem, plan);
 
 verifyTrue(testCase, plan.success);
 verifyEqual(testCase, plan.workspace.ObstacleCount, 4);
+verifyFalse(testCase, ...
+    isfield(problem.options, "GuideDirectionAngles_deg"));
+verifyEqual(testCase, plan.options.GuideDirectionStep_deg, 45);
 verifyEqual(testCase, diagnostics.blockedSampleCount, 0);
 verifyTrue(testCase, all(isfinite(diagnostics.crossingTime_s)));
 verifyGreaterThan(testCase, ...
@@ -155,9 +158,65 @@ verifyLessThanOrEqual(testCase, ...
 verifyGreaterThanOrEqual(testCase, ...
     nnz(diagnostics.chamberWait_s >= 10), 2);
 verifyGreaterThan(testCase, diagnostics.totalWaiting_s, 50);
+verifyGreaterThan(testCase, diagnostics.radius_deg(1), ...
+    max(problem.geometry.outerRadius_deg));
+verifyEqual(testCase, diagnostics.radius_deg(end), 0, ...
+    "AbsTol", 1e-9);
+verifyPlan(testCase, plan, problem.options);
+end
+
+function testSlowerPursuerForcesMotionUntilGoalOpens(testCase)
+problem = makeChasedBoresightGauntlet();
+
+plan = planAzElSpaceTimeFunnel( ...
+    problem.azElData, problem.startState, problem.stopState, ...
+    problem.limits, problem.options);
+diagnostics = analyzeChasedBoresightGauntlet(problem, plan);
+
+verifyTrue(testCase, plan.success);
+verifyFalse(testCase, ...
+    isfield(problem.options, "GuideDirectionAngles_deg"));
+verifyEqual(testCase, plan.options.GuideDirectionStep_deg, 45);
+verifyEqual(testCase, diagnostics.blockedSampleCount, 0);
+verifyGreaterThanOrEqual(testCase, ...
+    diagnostics.goalArrivalTime_s, diagnostics.goalOpenTime_s);
+verifyLessThan(testCase, diagnostics.goalArrivalTime_s, ...
+    problem.stopState.time_s);
+verifyGreaterThanOrEqual(testCase, ...
+    diagnostics.movingFractionBeforeGoalOpen, 0.8);
 verifyLessThanOrEqual(testCase, ...
-    diff(diagnostics.radius_deg), 1e-9 * ...
-    ones(numel(diagnostics.radius_deg) - 1, 1));
+    diagnostics.longestWaitBeforeGoalOpen_s, 12);
+verifyGreaterThan(testCase, diagnostics.angularPathLength_deg, 120);
+verifyGreaterThan(testCase, ...
+    nnz(plan.position_deg(:, 2) >= 5.9), 1);
+verifyGreaterThan(testCase, ...
+    nnz(plan.position_deg(:, 2) <= -5.9), 1);
+verifyPlan(testCase, plan, problem.options);
+end
+
+function testEightSynchronizedWindmillsRequireGapFollowing(testCase)
+problem = makeWorldsHardestWindmillGauntlet();
+
+plan = planAzElSpaceTimeFunnel( ...
+    problem.azElData, problem.startState, problem.stopState, ...
+    problem.limits, problem.options);
+diagnostics = analyzeWorldsHardestWindmillGauntlet(problem, plan);
+
+verifyTrue(testCase, plan.success);
+verifyEqual(testCase, plan.workspace.ObstacleCount, 9);
+verifyEqual(testCase, ...
+    range(problem.geometry.angularRate_deg_s), 0);
+verifyFalse(testCase, ...
+    isfield(problem.options, "GuideDirectionAngles_deg"));
+verifyEqual(testCase, plan.options.GuideDirectionStep_deg, 45);
+verifyEqual(testCase, diagnostics.blockedSampleCount, 0);
+verifyTrue(testCase, diagnostics.visitedUpperCorridor);
+verifyTrue(testCase, diagnostics.visitedLowerCorridor);
+verifyGreaterThanOrEqual(testCase, ...
+    diagnostics.maximumAzimuth_deg, ...
+    problem.geometry.rightConnectorAzimuth_deg);
+verifyGreaterThanOrEqual(testCase, ...
+    diagnostics.maximumFollowAngle_deg, 35);
 verifyPlan(testCase, plan, problem.options);
 end
 

@@ -1,5 +1,5 @@
 function plan = exampleVietnamChinaAzElAvoidance( ...
-        vietnamAzElData, chinaAzElData)
+        vietnamAzElData, chinaAzElData, viewOptions)
 %EXAMPLEVIETNAMCHINAAZELAVOIDANCE Avoid Vietnam and China together.
 %
 % plan = exampleVietnamChinaAzElAvoidance(vietnam, china)
@@ -12,7 +12,10 @@ function plan = exampleVietnamChinaAzElAvoidance( ...
 
 if nargin == 0
     [vietnamAzElData, chinaAzElData] = demoCountryProjections();
-elseif nargin ~= 2
+    viewOptions = struct();
+elseif nargin == 2
+    viewOptions = struct();
+elseif nargin ~= 3
     error("exampleVietnamChinaAzElAvoidance:InvalidInputCount", ...
         "Provide both Vietnam and China azElData structs, or no inputs.");
 end
@@ -67,9 +70,14 @@ names = string({plan.workspace.Obstacles.Name});
 fprintf("Packed obstacles: %s\n", strjoin(names, ", "));
 fprintf("Path length: %.3f deg (<= %.3fx global optimum).\n", ...
     plan.angularPathLength_deg, plan.suboptimalityBound);
-plotHandles = plotAzElAvoidancePlan(azElData, plan);
-title(plotHandles.AzElAxes, ...
+animationHandles = animateAzElAvoidancePlan( ...
+    azElData, plan, defaultAzElAnimationOptions( ...
+    viewOptions, struct( ...
+    "MaximumAnimationFrames", 240, ...
+    "MaximumDisplayedSlices", 120)));
+title(animationHandles.AzElAxes, ...
     "ADM0 boundaries in the demo az/el map");
+plan.animationHandles = animationHandles;
 end
 
 function state = boundaryState(time_s, position_deg)

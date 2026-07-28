@@ -77,6 +77,9 @@ nodes = initializeNodes(options.InitialNodeCapacity);
 startKey = stateKey(start.State, start.Acceleration, limits, options);
 startHeuristic = heuristic(start.State, goal, limits, options);
 startTie = motionTie(start.State, goal, limits, options);
+if options.Objective == "minimumAngularDistance"
+    startTie = 0;
+end
 [nodes, startIndex] = appendNode(nodes, start.State, 0, ...
     start.Acceleration, 0, startHeuristic, startTie, ...
     options.EpsilonSchedule(1));
@@ -291,22 +294,35 @@ while true
         next = nextStates(controlIndex, :);
         tentativeG = nodes.G(currentIndex) + ...
             transitionCost(current, acceleration, options);
+        tie = motionTie(next, goal, limits, options);
+        if options.Objective == "minimumAngularDistance"
+            % Among equal-length schedules, favor earlier goal progress.
+            tie = nodes.Tie(currentIndex) + ...
+                options.TimeStepSeconds * tie;
+        end
         nextKey = stateKey(next, acceleration, limits, options);
         if isKey(bestNode, nextKey)
             oldIndex = bestNode(nextKey);
-            if tentativeG >= nodes.G(oldIndex) - 1e-12
+            worseCost = tentativeG > nodes.G(oldIndex) + 1e-12;
+            equalCost = abs(tentativeG - nodes.G(oldIndex)) <= 1e-12;
+            if worseCost || (equalCost && ...
+                    tie >= nodes.Tie(oldIndex) - 1e-12)
                 continue;
             end
         end
         h = heuristic(next, goal, limits, options);
-        tie = motionTie(next, goal, limits, options);
         [nodes, nextIndex] = appendNode(nodes, next, currentIndex, ...
             acceleration, tentativeG, h, tie, epsilon);
         bestNode(nextKey) = nextIndex;
         generated = generated + 1;
 
         if isGoal(next, acceleration, goal, limits)
-            if goalIndex == 0 || tentativeG < nodes.G(goalIndex) - 1e-12
+            betterCost = goalIndex == 0 || ...
+                tentativeG < nodes.G(goalIndex) - 1e-12;
+            equalCost = goalIndex ~= 0 && ...
+                abs(tentativeG - nodes.G(goalIndex)) <= 1e-12;
+            if betterCost || (equalCost && ...
+                    tie < nodes.Tie(goalIndex) - 1e-12)
                 goalIndex = nextIndex;
             end
         elseif isKey(closed, nextKey)
@@ -964,7 +980,13 @@ elevationDistance = max(0, ...
 end
 
 function value = motionTie(state, goal, limits, options)
-[value, ~] = motionLowerBound(state, goal, limits, options);
+if options.Objective == "minimumAngularDistance"
+    [azimuthDistance, elevationDistance] = ...
+        positionDistance(state, goal, limits, options);
+    value = hypot(azimuthDistance, elevationDistance);
+else
+    [value, ~] = motionLowerBound(state, goal, limits, options);
+end
 end
 
 function yes = isGoal(state, acceleration, goal, limits)

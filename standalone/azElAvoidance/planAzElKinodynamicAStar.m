@@ -68,6 +68,9 @@ startKey = stateKey(start.State, start.Acceleration, limits, options);
 startHeuristic = options.HeuristicWeight * ...
     heuristic(start.State, goal, limits, options);
 startTie = motionTie(start.State, goal, limits, options);
+if options.Objective == "minimumAngularDistance"
+    startTie = 0;
+end
 [nodes, startIndex] = appendNode(nodes, start.State, 0, ...
     start.Acceleration, 0, startHeuristic, startTie);
 bestNode = containers.Map('KeyType', 'char', 'ValueType', 'double');
@@ -139,16 +142,24 @@ while heap.Count > 0
         next = nextStates(controlIndex, :);
         tentativeG = nodes.G(currentIndex) + ...
             transitionCost(current, acceleration, options);
+        tie = motionTie(next, goal, limits, options);
+        if options.Objective == "minimumAngularDistance"
+            % Among equal-length schedules, favor earlier goal progress.
+            tie = nodes.Tie(currentIndex) + ...
+                options.TimeStepSeconds * tie;
+        end
         nextKey = stateKey(next, acceleration, limits, options);
         if isKey(bestNode, nextKey)
             oldIndex = bestNode(nextKey);
-            if tentativeG >= nodes.G(oldIndex) - 1e-12
+            worseCost = tentativeG > nodes.G(oldIndex) + 1e-12;
+            equalCost = abs(tentativeG - nodes.G(oldIndex)) <= 1e-12;
+            if worseCost || (equalCost && ...
+                    tie >= nodes.Tie(oldIndex) - 1e-12)
                 continue;
             end
         end
         h = options.HeuristicWeight * ...
             heuristic(next, goal, limits, options);
-        tie = motionTie(next, goal, limits, options);
         [nodes, nextIndex] = appendNode(nodes, next, currentIndex, ...
             acceleration, tentativeG, h, tie);
         bestNode(nextKey) = nextIndex;
@@ -661,7 +672,13 @@ elevationDistance = max(0, ...
 end
 
 function value = motionTie(state, goal, limits, options)
-[value, ~] = motionLowerBound(state, goal, limits, options);
+if options.Objective == "minimumAngularDistance"
+    [azimuthDistance, elevationDistance] = ...
+        positionDistance(state, goal, limits, options);
+    value = hypot(azimuthDistance, elevationDistance);
+else
+    [value, ~] = motionLowerBound(state, goal, limits, options);
+end
 end
 
 function yes = isGoal(state, acceleration, goal, limits)
