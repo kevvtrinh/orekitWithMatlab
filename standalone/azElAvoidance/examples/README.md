@@ -15,15 +15,15 @@ azimuth/elevation/time workspace.
 
 | # | Entry point | Primary algorithm | What the example exercises |
 |---:|---|---|---|
-| 01 | `example01PlanFromAzElData` | `planAzElAvoidance` dispatcher | User-supplied `azElData`; continuous minimum-distance search first, then unweighted kinodynamic A* when the continuous search cannot solve the request. |
-| 02 | `example02VietnamChinaAvoidance` | Autonomous static corridor | Static-union rasterization, Theta*-style any-angle A*, visibility simplification, dynamic retiming, and polygon validation for two country obstacles. |
-| 03 | `example03KinodynamicARAStar` | Kinodynamic ARA* | Anytime repair of a position/rate/time lattice with constant-acceleration primitives and a decreasing epsilon bound. |
+| 01 | `example01PlanFromAzElData` | Space-Time Funnel: direct mode | User-supplied `azElData`; a collision-free direct wait-and-slew certificate reaches the angular lower bound. |
+| 02 | `example02VietnamChinaAvoidance` | Space-Time Funnel: static topology | Static-union rasterization, Theta*-style any-angle topology acceleration, visibility simplification, dynamic retiming, and polygon validation. |
+| 03 | `example03KinodynamicDetour` | Space-Time Funnel: static topology | A rate- and acceleration-limited detour around a static blocker using the unified planner. |
 | 04 | `example04SpaceTimeFunnel` | Space-time funnel | Event-compressed safe-interval planning followed by widening-corridor kinodynamic ARA* refinement through moving volumes. |
-| 05 | `example05FiveTurnSpiral` | Autonomous static corridor | Unguided Theta*-style topology discovery through a deep spiral, then visibility simplification and dynamically feasible retiming. |
-| 06 | `example06StopGoGates` | `planAzElAvoidance` minimum-distance mode | Continuous candidate timing and waypoint search through sequentially opening gates; waiting is produced by the planner. |
-| 07 | `example07WrappedAzimuthSeam` | `planAzElAvoidance` minimum-distance mode | Wrapped-azimuth geometry and a collision-free detour across the `-180/180` seam. |
-| 08 | `example08AlternatingSlalom` | Autonomous static corridor | Unguided any-angle topology search through alternating barriers, followed by route simplification and retiming. |
-| 09 | `example09UTrapEscape` | Multiresolution autonomous corridor | Coarse any-angle topology discovery, narrow-tube fine refinement, visibility simplification, and retiming out of a cul-de-sac. |
+| 05 | `example05FiveTurnSpiral` | Space-Time Funnel: static topology | Unguided any-angle topology discovery through a deep spiral, followed by visibility simplification and retiming. |
+| 06 | `example06StopGoGates` | Space-Time Funnel: dynamic | Safe-interval timing and optional ARA* refinement through sequentially opening gates; waiting is produced by the planner. |
+| 07 | `example07WrappedAzimuthSeam` | Space-Time Funnel: static topology | Wrapped-azimuth static topology acceleration across the `-180/180` seam. |
+| 08 | `example08AlternatingSlalom` | Space-Time Funnel: static topology | Unguided any-angle topology acceleration through alternating barriers. |
+| 09 | `example09UTrapEscape` | Space-Time Funnel: static topology | Coarse any-angle topology acceleration, narrow-tube refinement, visibility simplification, and retiming out of a cul-de-sac. |
 | 10 | `example10RotatingSlots` | Space-time funnel | Safe-interval timing through four independently rotating slots, including planner-selected chamber waits. |
 | 11 | `example11ChasedBoresight` | Space-time funnel | Dynamic safe-interval planning while a slower obstacle pursues the boresight and the goal remains closed. |
 | 12 | `example12SynchronizedWindmills` | Space-time funnel | Symmetric eight-direction safe-interval search through synchronized rotating windmills, with ARA* refinement when useful. |
@@ -35,20 +35,21 @@ Examples 05-09 can be run as a set:
 results = runStaticGauntletExamples();
 ```
 
-## Planner Layers
+## Unified Planner
 
-The public planners live at the package root:
+Every fixed-goal example calls `planAzElSpaceTimeFunnel`, either directly or
+through `runAzElGauntletCase`. Example 13 uses
+`planAzElMovingTargetIntercept`, which tests interception times by calling
+the same funnel for every candidate.
 
-- `planAzElAvoidance`: general dispatcher for minimum-distance and
-  minimum-time requests.
-- `planAzElAutonomousCorridor`: difficult static topology.
-- `planAzElKinodynamicAStar`: exact unweighted A* on the configured finite
-  motion lattice.
-- `planAzElKinodynamicARAStar`: anytime bounded search on that lattice.
-- `planAzElSpaceTimeFunnel`: dynamic az/el/time volumes.
-- `planAzElMovingTargetIntercept`: moving endpoint interception.
+The funnel selects its internal mode from the data:
 
-Algorithm-only dependencies are in `private`. Scenario construction and
-diagnostic code used only by these examples is in `support`. No example
-injects a reference path, one-way edge, state corridor, or preferred
-direction.
+- A direct wait-and-slew certificate handles unobstructed motion.
+- Static volumes use any-angle topology acceleration and dynamic retiming.
+- Dynamic volumes use event-compressed safe intervals.
+- Kinodynamic ARA* optionally refines the resulting space-time guide.
+
+Lower-level searches remain independently testable implementation
+components, but examples do not select them. Scenario construction and
+diagnostic code is in `support`. No example injects a reference path,
+one-way edge, state corridor, or preferred direction.

@@ -21,7 +21,9 @@ switch requested
             "country must be Vietnam, VNM, China, or CHN.");
 end
 
-dataDirectory = fullfile(fileparts(mfilename("fullpath")), "data");
+supportDirectory = fileparts(mfilename("fullpath"));
+packageRoot = fileparts(fileparts(supportDirectory));
+dataDirectory = fullfile(packageRoot, "data");
 values = readmatrix(fullfile(dataDirectory, fileName));
 if size(values, 2) < 3
     error("loadCountryBoundaryLatLon:InvalidData", ...

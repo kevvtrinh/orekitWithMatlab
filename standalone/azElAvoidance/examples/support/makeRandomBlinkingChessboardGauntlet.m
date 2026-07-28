@@ -50,7 +50,15 @@ cellOpen = blinkingSchedule( ...
     stream, time_s, switchTimes_s, cellParity, ...
     initialParity, generation);
 
-leftCandidates = find(cellColumn <= 2 & cellOpen(1, :).');
+firstTransferWindow_s = switchTimes_s(1) - ...
+    generation.OverlapDuration_s + generation.TransitionJitter_s;
+initialWindow = time_s <= firstTransferWindow_s + 1e-9;
+safeThroughFirstTransfer = all(cellOpen(initialWindow, :), 1).';
+leftCandidates = find(cellColumn <= 2 & safeThroughFirstTransfer);
+if isempty(leftCandidates)
+    error("makeRandomBlinkingChessboardGauntlet:NoSafeStart", ...
+        "No left-side cell remains safe through the first transfer window.");
+end
 startCell = leftCandidates(randi(stream, numel(leftCandidates)));
 startState = boundaryState(0, cellCenters(startCell, :));
 

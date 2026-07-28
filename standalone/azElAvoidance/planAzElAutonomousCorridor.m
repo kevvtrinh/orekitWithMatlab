@@ -30,7 +30,7 @@ elseif any(abs([ ...
         startState.acceleration_deg_s2, ...
         stopState.acceleration_deg_s2]) > 1e-12)
     fallbackReason = "nonzero boundary rate or acceleration";
-elseif ~workspaceIsStatic( ...
+elseif ~isAzElTimeObstacleWorkspaceStatic( ...
         workspace, startState.time_s, stopState.time_s)
     fallbackReason = "time-dependent obstacle geometry";
 end
@@ -258,38 +258,6 @@ plan = struct( ...
     "options", options, ...
     "workspace", workspace, ...
     "searchElapsed_s", elapsed_s);
-end
-
-function yes = workspaceIsStatic(workspace, startTime_s, stopTime_s)
-yes = true;
-for obstacle = reshape(workspace.Obstacles, 1, [])
-    if obstacle.SampleCount == 0
-        continue;
-    end
-    if obstacle.TimeSeconds(1) > startTime_s + 1e-9 || ...
-            obstacle.TimeSeconds(end) < stopTime_s - 1e-9
-        yes = false;
-        return;
-    end
-    count = double(diff(obstacle.SliceOffsets));
-    if any(count ~= count(1))
-        yes = false;
-        return;
-    end
-    firstIndex = double(obstacle.SliceOffsets(1)): ...
-        double(obstacle.SliceOffsets(2) - 1);
-    firstAzimuth = obstacle.AzimuthDeg(firstIndex);
-    firstElevation = obstacle.ElevationDeg(firstIndex);
-    for sample = 2:obstacle.SampleCount
-        index = double(obstacle.SliceOffsets(sample)): ...
-            double(obstacle.SliceOffsets(sample + 1) - 1);
-        if ~isequaln(obstacle.AzimuthDeg(index), firstAzimuth) || ...
-                ~isequaln(obstacle.ElevationDeg(index), firstElevation)
-            yes = false;
-            return;
-        end
-    end
-end
 end
 
 function [azimuth, elevation] = topologyGrid(limits, options)

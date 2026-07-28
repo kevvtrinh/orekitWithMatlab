@@ -1,8 +1,8 @@
-# Event-Compressed Safe-Interval Funnel ARA*
+# Unified Az/El Space-Time Funnel
 
 ## Purpose
 
-`planAzElSpaceTimeFunnel` plans a boresight command through a moving
+`planAzElSpaceTimeFunnel` plans a boresight command through a static or moving
 azimuth/elevation obstacle volume. Time is the third workspace coordinate,
 but the controlled state also includes azimuth/elevation rate and
 acceleration. The implementation is standalone and depends only on canonical
@@ -10,12 +10,13 @@ acceleration. The implementation is standalone and depends only on canonical
 
 The design targets long scenarios where a full
 azimuth/elevation/rate/time lattice would be too large. It combines three
-methods:
+methods behind one planner entry point:
 
 1. A direct wait-and-slew optimality certificate.
-2. Event-compressed Safe Interval Path Planning (SIPP) for topology and
+2. Any-angle topology acceleration for static obstacle volumes.
+3. Event-compressed Safe Interval Path Planning (SIPP) for topology and
    waiting decisions.
-3. A widening spatial funnel followed by kinodynamic Anytime Repairing A*
+4. A widening spatial funnel followed by kinodynamic Anytime Repairing A*
    (ARA*) for smooth lattice refinement.
 
 ## Problem
@@ -48,7 +49,21 @@ No feasible path can be shorter than that endpoint distance, so this result
 is a continuous-space global optimum for the angular-distance objective.
 `plan.optimalGlobally` is true only for this certificate.
 
-### 2. Event-compressed safe-interval guide
+### 2. Static topology acceleration
+
+When every obstacle slice is unchanged over the requested interval, the
+planner compresses the volume to one inflated occupancy raster. A
+Theta*-style any-angle search discovers the obstacle homotopy, optional
+narrow-tube refinement improves that route, and visibility shortcutting
+removes unnecessary stops. The resulting polyline is dynamically retimed
+and densely checked against the original polygons. This avoids expanding a
+large number of identical safe-interval states for deep static structures
+such as spirals and cul-de-sacs.
+
+This is an internal mode of `planAzElSpaceTimeFunnel`; examples do not select
+a separate planner or provide a route.
+
+### 3. Event-compressed safe-interval guide
 
 If the direct chord cannot be certified, the guide lazily associates each
 visited az/el grid point with run-length-compressed safe time intervals.
@@ -68,7 +83,7 @@ The guide searches for early feasible arrivals with an inflated
 time-to-go heuristic. It is intended to discover useful space-time topology,
 not certify a global optimum.
 
-### 3. Widening kinodynamic funnel
+### 4. Widening kinodynamic funnel
 
 The feasible guide trajectory defines a time-indexed spatial tube. The
 existing five-dimensional kinodynamic ARA* then searches position, angular
@@ -84,7 +99,7 @@ ARA* reuses search information while reducing epsilon. Its reported bound
 applies to the configured finite lattice and, for a funnel pass, only to
 that restricted lattice. It is not a continuous global-optimality claim.
 
-### 4. Validation
+### 5. Validation
 
 Candidate guide edges are checked on:
 

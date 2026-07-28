@@ -76,7 +76,7 @@ country. It applies the translation-only display mapping
 run without Orekit. This preserves the recognizable country outlines but is
 not a physical sensor-frame projection.
 
-## Direct planner
+## Unified planner
 
 ```matlab
 startState = struct( ...
@@ -99,13 +99,13 @@ limits = struct( ...
 
 options = struct( ...
     "SampleTime_s", 0.1, ...
-    "GridStep_deg", 0.1, ...
+    "GuideGridStep_deg", 0.1, ...
     "SafetyMargin_deg", 1, ...
     "AllowAzimuthWrap", true, ...
     "Objective", "minimumAngularDistance", ...
     "MaxSearchTime_s", 30);
 
-plan = planAzElAvoidance( ...
+plan = planAzElSpaceTimeFunnel( ...
     azElData, startState, stopState, limits, options);
 ```
 
@@ -114,15 +114,11 @@ The steering command is in `plan.time_s` and `plan.position_deg`.
 `-180/180` seam. Velocity, acceleration, waiting samples, search statistics,
 and the packed obstacle workspace are also returned.
 
-`minimumAngularDistance` first tests the globally shortest straight segment,
-then searches dynamically feasible waypoint paths with coarse-to-fine
-refinement. `plan.angularLowerBound_deg` and `plan.suboptimalityBound`
-quantify how close a returned waypoint route is to the unknown global
-optimum. Every returned sample is checked at `SampleTime_s`.
-
-Set `Objective` to `minimumTime` to use kinodynamic A* on the finite motion
-lattice. Long fixed-time lattice requests start with coarse control decisions
-while retaining `SampleTime_s` for collision checks and returned commands.
+The funnel first tests the globally shortest direct wait-and-slew command.
+Static obstacle volumes use any-angle topology acceleration and dynamic
+retiming. Moving volumes use event-compressed safe intervals, followed by
+optional kinodynamic ARA* refinement. Every returned sample is checked
+against the original packed polygons.
 
 ## Anytime kinodynamic ARA*
 
@@ -164,15 +160,16 @@ each epsilon pass. If a resource limit interrupts refinement, the best path
 is retained with the last completed certificate. A bound of one means exact
 optimality on the configured finite lattice, not in continuous space.
 
-Run the visual convergence example with:
+The low-level ARA* function remains available for algorithm research. The
+numbered kinodynamic detour example uses the unified funnel:
 
 ```matlab
-[result, handles] = example03KinodynamicARAStar();
+[result, handles] = example03KinodynamicDetour();
 ```
 
 ## Dynamic space-time funnel planner
 
-`planAzElSpaceTimeFunnel` is the high-level planner for moving 3-D
+`planAzElSpaceTimeFunnel` is the high-level planner for static or moving 3-D
 azimuth/elevation/time obstacle volumes:
 
 ```matlab
@@ -189,11 +186,10 @@ plan = planAzElSpaceTimeFunnel( ...
 
 It first tests a direct wait-and-slew trajectory. When that succeeds,
 `plan.optimalGlobally` is true because the route reaches the wrapped angular
-endpoint lower bound. Otherwise, an event-compressed safe-interval search
-discovers when to wait and how to pass the moving volumes without creating
-one search node per time sample. Widening spatial funnels then focus
-kinodynamic ARA* around that guide while retaining an optional unrestricted
-fallback.
+endpoint lower bound. Static volumes use an any-angle topology accelerator.
+Dynamic volumes use event-compressed safe-interval search to discover when
+to wait and how to pass without creating one node per time sample. Widening
+spatial funnels can focus kinodynamic ARA* around the resulting guide.
 
 Run the moving two-obstacle example:
 
@@ -274,14 +270,15 @@ benchmark = benchmarkSpaceTimeFunnelLongHorizon();
 The method, guarantees, complexity, tuning guidance, and references are in
 [`SPACE_TIME_FUNNEL.md`](docs/SPACE_TIME_FUNNEL.md).
 
-## Autonomous corridor planner
+## Static topology component
 
 The technical design, mathematical scope, guarantees, complexity analysis,
 and benchmark results are documented in
 [`docs/autonomous_az_el_corridor_planner_white_paper.md`](../../docs/autonomous_az_el_corridor_planner_white_paper.md).
 
-`planAzElAutonomousCorridor` handles difficult static topology without a
-supplied guide path:
+The funnel automatically invokes its autonomous corridor component for
+difficult static topology without a supplied guide path. The lower-level
+component can still be tested directly:
 
 ```matlab
 options = struct( ...
@@ -313,10 +310,9 @@ angular path length while concentrating search near the discovered route.
 The default coarse mode generally gives the best computation-time and
 maneuver-time balance.
 
-Time-dependent geometry, minimum-time objectives, and nonzero boundary rates
-or accelerations fall back to `planAzElAvoidance` by default. Set
-`FallbackToExistingPlanner` to false when a test must prove autonomous static
-topology discovery was used.
+Numbered examples do not call this component directly. They call
+`planAzElSpaceTimeFunnel`, which selects static topology only when every
+obstacle slice is unchanged over the requested interval.
 
 ## Animate the completed plan
 
@@ -363,12 +359,11 @@ No Orekit or scenario object is used:
 4. `example08AlternatingSlalom`
 5. `example09UTrapEscape`
 
-The five-turn spiral is intentionally beyond the practical topology-search
-range of the raw kinodynamic lattice. It runs
-`planAzElAutonomousCorridor` with fallback disabled, supplies no
-`GuidePath_deg`, and asserts that the route autonomously winds through the
-spiral before reaching its center. The discovered polyline is dynamically
-retimed and densely collision-checked against the original polygons.
+The five-turn spiral is intentionally beyond the practical search range of
+the raw kinodynamic lattice. It calls `planAzElSpaceTimeFunnel`, supplies no
+guide path or direction, and asserts that the funnel's static-topology mode
+autonomously winds through the spiral before reaching its center. The
+discovered polyline is dynamically retimed and densely collision-checked.
 Because the shortest legal path enters at the wall's outer opening and rounds
 its inner tip, its net polar winding is slightly above four turns even though
 the obstacle centerline itself contains five complete turns.
