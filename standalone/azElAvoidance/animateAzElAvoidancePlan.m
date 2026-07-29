@@ -162,7 +162,7 @@ view.ObstacleLegend = gobjects(0, 1);
 if compactObstacleLegend
     view.ObstacleLegend = plot(ax, NaN, NaN, "-", ...
         "Color", [0.25 0.25 0.25], "LineWidth", 1.8, ...
-        "DisplayName", sprintf('%d moving obstacles', numel(dataList)));
+        "DisplayName", sprintf('%d scenario obstacles', numel(dataList)));
 end
 xlabel(ax, "Azimuth (deg)");
 ylabel(ax, "Elevation (deg)");

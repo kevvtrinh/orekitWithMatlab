@@ -28,7 +28,7 @@ azimuth/elevation/time workspace.
 | 11 | `example11ChasedBoresight` | Adaptive A*: dynamic | Safe-interval planning while a slower obstacle pursues the boresight. |
 | 12 | `example12SynchronizedWindmills` | Adaptive A*: dynamic | Symmetric safe-interval A* through synchronized rotating windmills. |
 | 13 | `example13RandomBlinkingIntercept` | Moving-target adaptive A* | Interception-time search where every candidate uses the same dynamic A*. |
-| 14 | `example14MovingRendezvousAndTrail` | Velocity-matched adaptive A* | Crossy Road-style capture through twelve dense nonoverlapping four-vehicle rows; rows 9-12 form the end-pacing group. |
+| 14 | `example14MovingRendezvousAndTrail` | Velocity-matched adaptive A* | Crossy Road-style capture through twelve nonoverlapping four-vehicle rows in a narrow central corridor; rows 9-12 sweep the center slot as timed gates. |
 
 Examples 05-09 can be run as a set:
 
