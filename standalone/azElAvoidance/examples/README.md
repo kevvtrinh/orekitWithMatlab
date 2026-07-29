@@ -28,7 +28,7 @@ azimuth/elevation/time workspace.
 | 11 | `example11ChasedBoresight` | Adaptive A*: dynamic | Safe-interval planning while a slower obstacle pursues the boresight. |
 | 12 | `example12SynchronizedWindmills` | Adaptive A*: dynamic | Symmetric safe-interval A* through synchronized rotating windmills. |
 | 13 | `example13RandomBlinkingIntercept` | Moving-target adaptive A* | Interception-time search where every candidate uses the same dynamic A*. |
-| 14 | `example14MovingRendezvousAndTrail` | Velocity-matched adaptive A* | Quintic terminal capture matches a moving target's rate, then trails it until its path reaches an obstacle. |
+| 14 | `example14MovingRendezvousAndTrail` | Velocity-matched adaptive A* | Curved, variable-speed target capture through four traffic rows containing 12 reversing vehicles; the final four pace at alternating row ends. |
 
 Examples 05-09 can be run as a set:
 
