@@ -147,6 +147,13 @@ acceleration, and polygon collision checks remain valid. The plan records
 blocked sample is added. Run `example14MovingRendezvousAndTrail` for the
 animated demonstration.
 
+Every unsuccessful public planning call also returns
+`plan.failureAssessment`, containing a viability category, reason code,
+plain-language summary, actionable suggestions, and (when applicable) the
+obstacle-free kinematic lower bound. The same diagnosis prints once in the
+Command Window. Set `options.PrintFailureSuggestions=false` for quiet batch
+runs; the structured assessment remains available in the returned plan.
+
 ## Dynamic safe-interval A*
 
 Run the moving two-obstacle example:
