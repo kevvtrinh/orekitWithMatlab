@@ -25,9 +25,6 @@ and an algorithm-by-algorithm breakdown.
 The mathematical design, pseudocode, guarantees, complexity, and maintenance
 boundaries for the planner used by every numbered example are documented in
 [`ADAPTIVE_ASTAR_PLANNER.md`](docs/ADAPTIVE_ASTAR_PLANNER.md).
-For a visual explanation of packed polygons, raster memory, and local
-coarse-to-fine refinement, see
-[`WORKSPACE_DISCRETIZATION.md`](docs/WORKSPACE_DISCRETIZATION.md).
 
 ## Input data
 
@@ -83,80 +80,6 @@ country. It applies the translation-only display mapping
 run without Orekit. This preserves the recognizable country outlines but is
 not a physical sensor-frame projection.
 
-## Coarse-to-fine workspace raster
-
-The packed polygon workspace is not a giant voxel array. Build a small
-global raster first, then add fine patches only where topology or clearance
-needs more detail:
-
-```matlab
-workspace = buildAzElTimeObstacleWorkspace(azElData);
-pyramid = buildAzElTimeWorkspacePyramid( ...
-    workspace, struct( ...
-    "AzimuthLimitsDeg", [-180 180], ...
-    "ElevationLimitsDeg", [-90 90], ...
-    "TimeLimitsSeconds", [time_s(1) time_s(end)]), struct( ...
-    "CoarseCellSizeDeg", 2, ...
-    "FineCellSizeDeg", 0.25, ...
-    "MaximumCoarseTimeSamples", 200));
-
-region = struct( ...
-    "AzimuthLimitsDeg", [-20 30], ...
-    "ElevationLimitsDeg", [10 45], ...
-    "TimeLimitsSeconds", [2700 3000]);
-[pyramid, patch] = refineAzElTimeWorkspacePyramid( ...
-    pyramid, workspace, region);
-
-plotAzElTimeWorkspacePyramid(pyramid);
-```
-
-Run `demoCoarseToFineWorkspace` for a complete visual example. The raster is
-for inspection and search acceleration; validate final paths with
-`queryAzElTimeObstacle`.
-
-## Adaptive 2-D and 3-D discretization
-
-For a planning mesh that stays coarse in open space and refines only near
-moving obstacle boundaries, build an adaptive az/el quadtree:
-
-```matlab
-mesh = buildAdaptiveAzElTimeMesh(workspace, struct( ...
-    "AzimuthLimitsDeg", [-180 180], ...
-    "ElevationLimitsDeg", [-90 90], ...
-    "TimeLimitsSeconds", [time_s(1) time_s(end)]), struct( ...
-    "InitialCellSizeDeg", 8, ...
-    "MinimumCellSizeDeg", 0.5, ...
-    "MaximumTimeSamples", 300, ...
-    "SafetyMarginDeg", 1, ...
-    "AllowAzimuthWrap", true));
-
-plotAdaptiveAzElTimeMesh(mesh, struct( ...
-    "ViewMode", "combined", ...       % "2d", "3d", or "combined"
-    "VolumeContent", "free", ...      % "free", "blocked", "unresolved"
-    "ShowCellEdges", false));         % turn on for 3-D prism inspection
-```
-
-In 2-D, every rectangle is one leaf at the selected time. In 3-D, each leaf
-is extruded only through its compressed free or occupied time intervals.
-`mesh.AdjacencyEdges` and each leaf's `NeighborIds` are ready for graph
-search. Minimum-size mixed cells are marked unresolved and treated as
-occupied.
-
-Run `demoAdaptiveAzElDiscretization` to see the adaptive cells and sparse
-3-D travelable volume. This mesh accelerates search and exposes topology;
-the packed polygons remain authoritative for final trajectory validation.
-
-The adaptive mesh can also be supplied directly to
-`planAzElKinodynamicAStar` as a conservative collision model. The complete
-cross-example timing and accuracy experiment is reproducible with:
-
-```matlab
-report = benchmarkAdaptiveMeshKinodynamicAStar();
-```
-
-See [`ADAPTIVE_KINODYNAMIC_BENCHMARK.md`](docs/ADAPTIVE_KINODYNAMIC_BENCHMARK.md)
-for measured results and the recommended hybrid architecture.
-
 ## Unified planner
 
 ```matlab
@@ -201,52 +124,28 @@ progressive event-compressed safe-interval A*. Both modes use analytic
 rest-to-rest slews and validate the command against the original packed
 polygons.
 
-## Anytime kinodynamic ARA*
+### Moving rendezvous and trailing
 
-`planAzElKinodynamicARAStar` is a separate low-level planner that reuses its
-search while progressively reducing heuristic inflation:
-
-```matlab
-workspace = buildAzElTimeObstacleWorkspace(azElData);
-
-start = struct( ...
-    "AzimuthDeg", -6, ...
-    "ElevationDeg", 45, ...
-    "Time", workspace.ReferenceTime);
-goal = struct( ...
-    "AzimuthDeg", 6, ...
-    "ElevationDeg", 45);
-limits = struct( ...
-    "AzimuthLimitsDeg", [-180 180], ...
-    "ElevationLimitsDeg", [40 50], ...
-    "AzimuthRateLimitDegPerSec", 2, ...
-    "ElevationRateLimitDegPerSec", 2, ...
-    "AzimuthAccelerationLimitDegPerSec2", 1, ...
-    "ElevationAccelerationLimitDegPerSec2", 1);
-options = struct( ...
-    "Objective", "minimumTime", ...
-    "EpsilonSchedule", [2.5 2 1.5 1], ...
-    "TimeStepSeconds", 1, ...
-    "CollisionCheckStepSeconds", 0.2);
-
-result = planAzElKinodynamicARAStar( ...
-    workspace, start, goal, limits, options);
-```
-
-Each edge is a constant-acceleration motion primitive. Position, rate,
-acceleration, time-window, collision, safety-margin, and azimuth-wrap
-constraints use the same definitions as `planAzElKinodynamicAStar`.
-`result.SolutionHistory` records the incumbent cost and certified bound after
-each epsilon pass. If a resource limit interrupts refinement, the best path
-is retained with the last completed certificate. A bound of one means exact
-optimality on the configured finite lattice, not in continuous space.
-
-The low-level ARA* function remains available for algorithm research. The
-numbered kinodynamic detour example uses the unified adaptive A* planner:
+`planAzElMovingTargetIntercept` can match a moving target's position,
+velocity, and acceleration at capture without adding velocity to every A*
+state. Internal edges remain rest-to-rest; only the final edge uses a
+quintic boundary profile:
 
 ```matlab
-[result, handles] = example03KinodynamicDetour();
+options.MatchTargetVelocity = true;
+options.MatchTargetAcceleration = true;
+options.ContinueTrackingAfterIntercept = true;
+options.TrackingEndTime_s = target.time_s(end);
+
+plan = planAzElMovingTargetIntercept( ...
+    azElData, startState, target, limits, options);
 ```
+
+After capture, target samples are appended only while position, rate,
+acceleration, and polygon collision checks remain valid. The plan records
+`trackingTerminationReason`; an obstacle ends tracking before its first
+blocked sample is added. Run `example14MovingRendezvousAndTrail` for the
+animated demonstration.
 
 ## Dynamic safe-interval A*
 
@@ -345,8 +244,7 @@ options = struct( ...
     "TopologyGridStep_deg", 0.5, ...
     "SafetyMargin_deg", 0.5, ...
     "AllowAzimuthWrap", false, ...
-    "Objective", "minimumAngularDistance", ...
-    "FallbackToExistingPlanner", false);
+    "Objective", "minimumAngularDistance");
 
 plan = planAzElAutonomousCorridor( ...
     azElData, startState, stopState, limits, options);
@@ -387,6 +285,28 @@ route, the selected route, current obstacle boundary, and current boresight.
 The 3-D pane places the same search information beside accumulating obstacle
 slices in azimuth/elevation/time space. Display decimation does not change
 the plan or collision workspace.
+
+## Plot and export boresight kinematics
+
+Plot position, velocity, acceleration, and sampled jerk after planning:
+
+```matlab
+kinematics = plotAzElPlanKinematics(plan);
+```
+
+The underlying values are returned in `kinematics.Data`. Excel export is off
+by default. Enable it explicitly when needed:
+
+```matlab
+kinematics = plotAzElPlanKinematics(plan, struct( ...
+    "ExportExcel", true, ...
+    "ExcelFile", "boresight_kinematics.xlsx"));
+```
+
+The spreadsheet includes absolute and elapsed time, wrapped and unwrapped
+position, velocity, acceleration, and finite-difference jerk for both axes.
+Sampled jerk shows acceleration-command transitions; the planner does not
+currently impose a jerk limit.
 
 ## Workspace and collision queries
 

@@ -419,7 +419,7 @@ packed polygon representation with:
 
 For a certified static workspace, adjacent time slices contain the same
 geometry. The time-padding behavior remains useful because the retimer and
-fallback planner share collision semantics.
+public adaptive planner share collision semantics.
 
 A successful result therefore establishes collision freedom at every
 internal check sample, not for every continuous instant. Safety-critical use
@@ -427,9 +427,10 @@ must select a check interval and margin from a bound on relative obstacle and
 boresight motion, or replace sampled checks with conservative swept-volume
 or interval methods.
 
-## 11. Dispatch and Fallback
+## 11. Dispatch and Failure Behavior
 
-The autonomous method is bypassed when any of the following is true:
+The autonomous method returns an explicit failure when any of the following
+is true:
 
 - the objective is not `minimumAngularDistance`;
 - any boundary velocity or acceleration is nonzero;
@@ -437,10 +438,10 @@ The autonomous method is bypassed when any of the following is true:
 - topology search fails or exceeds its resource limits; or
 - the discovered route cannot be retimed and validated.
 
-With `FallbackToExistingPlanner = true`, the request is passed to
-`planAzElAvoidance`. With the option set to false, the function returns an
-explicit failure. Tests and benchmarks use false when they must prove that
-the autonomous route was genuinely discovered by the new method.
+`planAzElAdaptiveAStar` performs this dispatch at the public API boundary:
+static minimum-distance problems use the autonomous component, while moving
+geometry uses safe-interval A*. The static component no longer calls a
+second planner internally.
 
 The physical Vietnam example illustrates the intended division of labor.
 Its Orekit-projected az/el polygon moves with time, so the dynamic
@@ -557,7 +558,7 @@ powered benchmark campaign.
 The spiral input is generated directly as static `azElData`. The planner:
 
 - receives no `GuidePath_deg`;
-- has fallback disabled;
+- runs directly through the autonomous component;
 - uses a 0.5 degree topology grid and 0.5 degree safety margin;
 - discovers the winding direction autonomously; and
 - retimes the route under the configured limits.
@@ -585,7 +586,7 @@ arrival at 60 seconds. Every feasible route therefore had the same reported
 time cost, and tie ordering selected a valid but unnecessarily long path.
 
 The corrected example uses `minimumAngularDistance`, a 0.25 degree topology
-grid, and the autonomous planner with fallback disabled.
+grid, and the autonomous planner.
 
 | Metric | Earlier fixed-time route | Autonomous distance route |
 |---|---:|---:|
@@ -634,7 +635,7 @@ continuous optimum.
 
 1. Autonomous five-turn spiral with no guide path
 2. Short wrapped-azimuth seam route
-3. Explicit dynamic-geometry fallback
+3. Explicit dynamic-geometry failure
 4. Optional narrow-tube refinement
 
 The generated gauntlet adds stop-go timing, wrapped seam detour, alternating
@@ -644,10 +645,11 @@ across the standalone MATLAB files.
 
 ## 15. Operational Guidance
 
-1. Use `planAzElAutonomousCorridor` only when obstacle slices are expected to
-   be static. Leave fallback enabled in mixed workloads.
-2. Set `FallbackToExistingPlanner = false` in validation tests that must
-   prove the autonomous method ran.
+1. Use `planAzElAdaptiveAStar` for mixed workloads. Call
+   `planAzElAutonomousCorridor` directly only when obstacle slices are
+   expected to be static.
+2. Check `plan.success` and `plan.message` when testing the static component
+   directly.
 3. Begin with a topology grid near the smallest corridor scale that matters.
    Halving the step can increase grid size by roughly four.
 4. Use a safety margin that accounts for boundary reduction, pointing error,
@@ -658,7 +660,7 @@ across the standalone MATLAB files.
    length warrants more computation.
 7. Select `RouteShortcutStep_deg` and the dense collision interval from the
    thinnest relevant obstacle and maximum slew rate.
-8. Inspect `plan.method`, `plan.fallbackReason`,
+8. Inspect `plan.method`, `plan.message`,
    `plan.angularPathLength_deg`, `plan.angularLowerBound_deg`, and
    `plan.suboptimalityBound`.
 9. Independently validate commands at higher temporal and geometric

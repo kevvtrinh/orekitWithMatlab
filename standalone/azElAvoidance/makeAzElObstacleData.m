@@ -7,6 +7,8 @@ function data = makeAzElObstacleData( ...
 
 time_s = double(time_s(:));
 sampleCount = numel(time_s);
+% Numeric boundaries describe a static polygon and are repeated across the
+% supplied time base. Cell inputs preserve independent moving slices.
 if ~iscell(azimuthBoundary)
     azimuthBoundary = repmat( ...
         {double(azimuthBoundary(:))}, sampleCount, 1);

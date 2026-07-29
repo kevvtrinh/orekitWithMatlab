@@ -49,6 +49,8 @@ occupied = false(queryCount, 1);
 obstacleIndex = zeros(queryCount, 1, "uint32");
 
 for obstacleNumber = 1:numel(workspace.Obstacles)
+    % Once any obstacle claims a query, later obstacles cannot change the
+    % boolean result. Skipping resolved rows keeps multi-obstacle queries fast.
     unresolved = ~occupied & isfinite(azimuthDeg) & ...
         isfinite(elevationDeg) & isfinite(timeSeconds);
     if ~any(unresolved)
@@ -57,6 +59,8 @@ for obstacleNumber = 1:numel(workspace.Obstacles)
     obstacle = workspace.Obstacles(obstacleNumber);
     [sampleIndex, validTime] = nearestSamples(obstacle, timeSeconds);
     valid = unresolved & validTime;
+    % Time padding conservatively checks neighboring source slices without
+    % constructing interpolated polygons between them.
     for offset = -options.TimePaddingSamples:options.TimePaddingSamples
         candidateIndex = sampleIndex + offset;
         candidate = valid & candidateIndex >= 1 & ...
@@ -117,6 +121,7 @@ rows = find(candidate);
 samples = sampleIndex(rows);
 bounds = double(obstacle.BoundsDeg(samples, :));
 broadMargin = margin + safetyMargin;
+% Bounding boxes reject most points before the more expensive edge query.
 insideBounds = all(isfinite(bounds), 2) & ...
     azimuthDeg(rows) >= bounds(:, 1) - broadMargin(1) & ...
     azimuthDeg(rows) <= bounds(:, 2) + broadMargin(1) & ...
@@ -163,6 +168,8 @@ activeEdgeCount = edgeCount(hasEdges);
 edgeStart = double(obstacle.EdgeOffsets(activeSamples));
 groupCount = numel(activeSamples);
 totalEdges = sum(activeEdgeCount);
+% Expand ragged edge ranges into one flat batch. group records which source
+% query owns each edge-distance result.
 group = repelem((1:groupCount).', activeEdgeCount);
 group = group(:);
 groupBase = repelem( ...
@@ -188,6 +195,7 @@ dx = x2 - x1;
 dy = y2 - y1;
 lengthSquared = dx.^2 + dy.^2;
 minimumDistanceSquared = inf(totalEdges, 1);
+% Adjacent azimuth images keep clearance continuous across the wrap seam.
 for azimuthShift = [-360 0 360]
     shiftedX = qx + azimuthShift;
     fraction = ((shiftedX - x1) .* dx + (qy - y1) .* dy) ./ ...
@@ -224,6 +232,8 @@ edgeStart = double(obstacle.EdgeOffsets(activeSamples));
 edgeStart = edgeStart(:);
 groupCount = numel(activeSamples);
 totalEdges = sum(edgeCount);
+% Expand the ragged edge lists so all point-in-polygon tests can use one
+% vectorized ray-crossing operation.
 group = repelem((1:groupCount).', edgeCount);
 groupBase = repelem(cumsum([0; edgeCount(1:end - 1)]), edgeCount);
 group = group(:);
@@ -245,6 +255,8 @@ y2 = y2(:);
 qx = qx(:);
 qy = qy(:);
 
+% Odd-even ray crossing handles concave rings. An explicit boundary test
+% below classifies points on polygon edges as occupied.
 straddles = (y1 > qy) ~= (y2 > qy);
 crosses = false(totalEdges, 1);
 crosses(straddles) = qx(straddles) < x1(straddles) + ...

@@ -20,6 +20,8 @@ output(1, :) = route_deg(1, :);
 current = 1;
 collisionChecks = 0;
 while current < size(route_deg, 1)
+    % Greedily retain the farthest visible downstream waypoint. Stopping at
+    % the first blocked extension preserves traversal order and homotopy.
     best = current + 1;
     candidate = current + 2;
     while candidate <= size(route_deg, 1)
@@ -44,6 +46,8 @@ end
 function yes = segmentFree( ...
         workspace, first, second, queryTime_s, limits, options)
 distance = hypot(second(1) - first(1), second(2) - first(2));
+% RouteShortcutStep_deg controls the continuous chord sampling density; this
+% check uses packed polygons rather than the topology raster.
 sampleCount = max(2, ceil(distance / options.RouteShortcutStep_deg) + 1);
 fraction = linspace(0, 1, sampleCount).';
 point = first + fraction .* (second - first);

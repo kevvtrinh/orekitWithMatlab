@@ -48,16 +48,16 @@ No route, guide path, or homotopy label is supplied by the caller.
    per axis. Collision sampling automatically becomes finer than output
    sampling when the grid and maximum slew rate require it.
 
-7. **Dense sampled validation or fallback**
+7. **Dense sampled validation**
 
    The final command is queried against the time-indexed workspace. Dynamic
-   geometry, minimum-time objectives, and unsupported boundary states use
-   the existing planner unless fallback is disabled.
+   geometry, minimum-time objectives, and unsupported boundary states return
+   an explicit failure. The public adaptive planner routes moving geometry to
+   its safe-interval search before this static component is invoked.
 
 ## Spiral benchmark
 
-The standalone five-turn-wall gauntlet uses no `GuidePath_deg` and disables
-fallback.
+The standalone five-turn-wall gauntlet uses no `GuidePath_deg`.
 
 | Mode | Angular route | Motion complete | Typical planner time |
 |---|---:|---:|---:|

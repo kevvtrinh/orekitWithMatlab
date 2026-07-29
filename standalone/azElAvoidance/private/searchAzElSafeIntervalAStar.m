@@ -1,14 +1,20 @@
 function result = searchAzElSafeIntervalAStar( ...
         workspace, startState, stopState, limits, options)
-%SEARCHAZELSAFEINTERVALASTAR Find a dynamic rest-to-rest space-time route.
+%SEARCHAZELSAFEINTERVALASTAR Find a dynamic space-time route.
 %
 % This is a SIPP-inspired guide search. Each state is an az/el grid point
 % paired with one run-length-compressed safe time interval. Transitions are
 % analytic rest-to-rest slews checked against the moving packed polygons.
+% An explicitly enabled final edge may match nonzero terminal dynamics.
 % Time is continuous inside the sampled safe intervals, so long waits do not
 % require one search state per time sample.
 
 timer = tic;
+hasTerminalDynamics = options.AllowNonzeroTerminalState && ...
+    any(abs([stopState.velocity_deg_s, ...
+    stopState.acceleration_deg_s2]) > 1e-12);
+% Event times are the only instants used to classify a stationary grid
+% point. Long consecutive safe runs are compressed into one SIPP interval.
 eventTimes = safeIntervalTimes( ...
     workspace, startState.time_s, stopState.time_s, options);
 safeCache = containers.Map( ...
@@ -38,9 +44,14 @@ if goalInterval == 0
     return;
 end
 
-[directFound, directRoute, directProfile] = directAngularCertificate( ...
-    workspace, startState, stopState, limits, options, eventTimes, ...
-    startIntervals(startInterval, :), goalIntervals(goalInterval, :));
+[directFound, directRoute, directProfile] = deal(false, struct(), struct());
+% A collision-free direct slew has the Euclidean lower-bound distance and is
+% therefore a global certificate for the angular-distance objective.
+if ~hasTerminalDynamics
+    [directFound, directRoute, directProfile] = directAngularCertificate( ...
+        workspace, startState, stopState, limits, options, eventTimes, ...
+        startIntervals(startInterval, :), goalIntervals(goalInterval, :));
+end
 if directFound && options.Objective == "minimumAngularDistance"
     result = struct( ...
         "Success", true, ...
@@ -65,12 +76,15 @@ if directFound && options.Objective == "minimumAngularDistance"
 end
 
 offsets = guideOffsets(options);
+% One node represents (spatial grid point, safe-interval index). Arrival time
+% is the label optimized within that state; waiting remains continuous.
 nodes = initializeNodes(options.InitialNodeCapacity);
 startKey = stateKey( ...
     startState.position_deg, startInterval, limits, options);
-startHeuristic = minimumSegmentDuration( ...
+startHeuristic = remainingTimeHeuristic( ...
     wrappedDelta(startState.position_deg, ...
-    stopState.position_deg, limits, options), limits);
+    stopState.position_deg, limits, options), limits, ...
+    hasTerminalDynamics);
 [nodes, startIndex] = appendNode(nodes, ...
     startState.position_deg, startInterval, startState.time_s, ...
     0, NaN, 0, startHeuristic);
@@ -110,6 +124,8 @@ while heap.Count > 0
     currentIntervalIndex = nodes.IntervalIndex(currentIndex);
     currentKey = stateKey( ...
         currentPosition, currentIntervalIndex, limits, options);
+    % Better labels are appended instead of decreasing heap keys. Ignore
+    % superseded entries when they eventually rise to the heap root.
     if ~isKey(bestNode, currentKey) || ...
             bestNode(currentKey) ~= currentIndex
         continue;
@@ -134,9 +150,19 @@ while heap.Count > 0
         candidatePosition = candidates(candidateIndex, :);
         delta = wrappedDelta( ...
             currentPosition, candidatePosition, limits, options);
-        [motionDuration, motion] = segmentMotion(delta, limits);
-        if motionDuration <= 1e-12
-            continue;
+        terminalCandidate = hasTerminalDynamics && ...
+            samePosition(candidatePosition, ...
+            stopState.position_deg, limits, options);
+        % Internal primitives are rest-to-rest. Only the final capture edge
+        % may use a quintic that ends with nonzero target kinematics.
+        if terminalCandidate
+            motionDuration = NaN;
+            motion = struct();
+        else
+            [motionDuration, motion] = segmentMotion(delta, limits);
+            if motionDuration <= 1e-12
+                continue;
+            end
         end
         [candidateIntervals, safeCache, safeQueryCount] = ...
             safeIntervalsAt(candidatePosition, workspace, ...
@@ -152,11 +178,22 @@ while heap.Count > 0
                     intervalIndex ~= goalInterval
                 continue;
             end
-            [scheduled, departureTime, arrivalTime] = ...
-                scheduleTransition(workspace, currentPosition, delta, ...
-                nodes.ArrivalTime_s(currentIndex), currentSafe, ...
-                candidateSafe, motionDuration, motion, eventTimes, ...
-                limits, options);
+            if terminalCandidate
+                [scheduled, departureTime, arrivalTime, motionDuration] = ...
+                    scheduleTerminalTransition( ...
+                    workspace, currentPosition, ...
+                    nodes.ArrivalTime_s(currentIndex), currentSafe, ...
+                    candidateSafe, stopState, eventTimes, limits, options);
+            else
+                [scheduled, departureTime, arrivalTime] = ...
+                    scheduleTransition( ...
+                    workspace, currentPosition, delta, ...
+                    nodes.ArrivalTime_s(currentIndex), currentSafe, ...
+                    candidateSafe, motionDuration, motion, eventTimes, ...
+                    limits, options);
+            end
+            % A transition includes any wait at the parent and must arrive
+            % inside the child's safe interval before the mission deadline.
             if ~scheduled || arrivalTime > stopState.time_s + 1e-9
                 continue;
             end
@@ -170,9 +207,10 @@ while heap.Count > 0
                     continue;
                 end
             end
-            heuristic = minimumSegmentDuration( ...
+            heuristic = remainingTimeHeuristic( ...
                 wrappedDelta(candidatePosition, ...
-                stopState.position_deg, limits, options), limits);
+                stopState.position_deg, limits, options), limits, ...
+                hasTerminalDynamics);
             if arrivalTime + heuristic > stopState.time_s + 1e-9
                 continue;
             end
@@ -206,11 +244,16 @@ profile = makeRouteProfile( ...
 validationProfile = makeRouteProfile( ...
     route, startState.time_s, stopState.time_s, ...
     options.ValidationStep_s, limits, options);
+route.angularPathLength_deg = sum(hypot( ...
+    diff(validationProfile.positionUnwrapped_deg(:, 1)), ...
+    diff(validationProfile.positionUnwrapped_deg(:, 2))));
 blocked = queryAzElTimeObstacle(workspace, ...
     [validationProfile.position_deg(:, 1); profile.position_deg(:, 1)], ...
     [validationProfile.position_deg(:, 2); profile.position_deg(:, 2)], ...
     [validationProfile.time_s; profile.time_s], ...
     collisionOptions(options));
+% Safe intervals guide the graph search; the packed polygons remain the
+% authority. Validate both the fine safety grid and the returned sample grid.
 if any(blocked)
     result = failedResult( ...
         sprintf('Safe-interval A* failed dense validation at %d samples.', ...
@@ -245,6 +288,8 @@ result = struct( ...
 end
 
 function times = safeIntervalTimes(workspace, startTime, stopTime, options)
+% Preserve obstacle sample events when possible, then decimate globally if
+% the requested horizon would make every point query too expensive.
 times = [startTime; stopTime];
 for obstacle = reshape(workspace.Obstacles, 1, [])
     candidate = double(obstacle.TimeSeconds(:));
@@ -276,6 +321,8 @@ blocked = queryAzElTimeObstacle(workspace, ...
     repmat(position(2), numel(eventTimes), 1), ...
     eventTimes, collisionOptions(options));
 safe = ~blocked(:);
+% Run-length compression is the key SIPP reduction: hundreds of safe samples
+% at one position become a single continuous waiting state.
 changes = diff([false; safe; false]);
 starts = find(changes == 1);
 stops = find(changes == -1) - 1;
@@ -297,13 +344,18 @@ function [scheduled, departure, arrival] = scheduleTransition( ...
         candidateSafe, duration, motion, eventTimes, limits, options)
 lower = max(currentArrival, candidateSafe(1) - duration);
 upper = min(currentSafe(2), candidateSafe(2) - duration);
+% [lower, upper] is exactly the departure window that keeps both endpoint
+% occupancy constraints valid.
 if upper < lower - 1e-9
     scheduled = false;
     departure = NaN;
     arrival = NaN;
     return;
 end
+
 candidateTimes = eventTimes(eventTimes >= lower & eventTimes <= upper);
+% Test interval boundaries and obstacle event times first; those are where
+% feasibility changes. The trial cap controls worst-case edge cost.
 candidateTimes = unique([lower; candidateTimes; upper]);
 if numel(candidateTimes) > options.MaximumDepartureTrials
     keep = unique(round(linspace( ...
@@ -330,6 +382,101 @@ for batchStart = 1:batchSize:numel(candidateTimes)
 end
 end
 
+function [scheduled, departure, arrival, duration] = ...
+        scheduleTerminalTransition( ...
+        workspace, startPosition, currentArrival, currentSafe, ...
+        candidateSafe, stopState, eventTimes, limits, options)
+scheduled = false;
+departure = NaN;
+arrival = NaN;
+duration = NaN;
+if stopState.time_s < candidateSafe(1) - 1e-9 || ...
+        stopState.time_s > candidateSafe(2) + 1e-9
+    return;
+end
+% Arrival is fixed by the rendezvous state. Search departure time instead;
+% changing it changes the quintic duration and thus all dynamic extrema.
+lower = max(currentArrival, currentSafe(1));
+upper = min(currentSafe(2), stopState.time_s - 1e-6);
+if upper < lower
+    return;
+end
+
+eventCandidates = eventTimes(eventTimes >= lower & eventTimes <= upper);
+uniformCount = min(options.MaximumDepartureTrials, 16);
+uniformCandidates = linspace(lower, upper, uniformCount).';
+candidateTimes = unique([lower; eventCandidates; uniformCandidates; upper]);
+if numel(candidateTimes) > options.MaximumDepartureTrials
+    keep = unique(round(linspace( ...
+        1, numel(candidateTimes), options.MaximumDepartureTrials)));
+    candidateTimes = candidateTimes(keep);
+end
+for k = 1:numel(candidateTimes)
+    candidateDeparture = candidateTimes(k);
+    candidateDuration = stopState.time_s - candidateDeparture;
+    if terminalTransitionFree( ...
+            workspace, startPosition, candidateDeparture, ...
+            candidateDuration, stopState, limits, options)
+        scheduled = true;
+        departure = candidateDeparture;
+        arrival = stopState.time_s;
+        duration = candidateDuration;
+        return;
+    end
+end
+end
+
+function free = terminalTransitionFree( ...
+        workspace, startPosition, departure, duration, ...
+        stopState, limits, options)
+if duration <= 0 || ...
+        any(abs(stopState.velocity_deg_s) > ...
+        limits.maxVelocity_deg_s + 1e-9) || ...
+        any(abs(stopState.acceleration_deg_s2) > ...
+        limits.maxAcceleration_deg_s2 + 1e-9)
+    free = false;
+    return;
+end
+delta = wrappedDelta( ...
+    startPosition, stopState.position_deg, limits, options);
+stopPosition = startPosition + delta;
+step = min(options.CollisionCheckStep_s, options.ValidationStep_s);
+sampleCount = max(21, ceil(duration / step) + 1);
+tau = linspace(0, duration, sampleCount).';
+% The terminal polynomial exactly matches all six boundary conditions.
+% Sampling then rejects rate/acceleration or obstacle violations.
+profile = evaluateAzElBoundaryProfile( ...
+    startPosition, [0 0], [0 0], ...
+    stopPosition, stopState.velocity_deg_s, ...
+    stopState.acceleration_deg_s2, duration, tau);
+if any(abs(profile.velocity_deg_s) > ...
+        limits.maxVelocity_deg_s + 1e-9, "all") || ...
+        any(abs(profile.acceleration_deg_s2) > ...
+        limits.maxAcceleration_deg_s2 + 1e-9, "all")
+    free = false;
+    return;
+end
+position = profile.position_deg;
+inside = position(:, 2) >= limits.elevation_deg(1) - 1e-9 & ...
+    position(:, 2) <= limits.elevation_deg(2) + 1e-9;
+if ~options.AllowAzimuthWrap
+    inside = inside & ...
+        position(:, 1) >= limits.azimuth_deg(1) - 1e-9 & ...
+        position(:, 1) <= limits.azimuth_deg(2) + 1e-9;
+end
+if ~all(inside)
+    free = false;
+    return;
+end
+queryPosition = position;
+queryPosition(:, 1) = canonicalAzimuth( ...
+    queryPosition(:, 1), limits, options);
+blocked = queryAzElTimeObstacle(workspace, ...
+    queryPosition(:, 1), queryPosition(:, 2), departure + tau, ...
+    collisionOptions(options));
+free = ~any(blocked);
+end
+
 function free = transitionFree(workspace, startPosition, delta, ...
         departures, duration, motion, gridOrigin, limits, options)
 departureCount = numel(departures);
@@ -348,6 +495,8 @@ for candidate = 1:departureCount
         options.ValidationStep_s, gridOrigin); ...
         alignedTimes(departure, arrival, ...
         options.SampleTime_s, gridOrigin)];
+    % Include both a duration-relative grid and mission-aligned grids so a
+    % moving obstacle cannot repeatedly fall between all validation samples.
     tau = unique([regularTau; aligned - departure]);
     [progress, ~, ~] = segmentProgress(tau, duration, motion);
     unwrappedAzimuth = startPosition(1) + progress * delta(1);
@@ -367,6 +516,7 @@ blocked = queryAzElTimeObstacle(workspace, ...
     queryAzimuth, queryElevation, queryTime, ...
     collisionOptions(options));
 free = true(departureCount, 1);
+% One vectorized collision query evaluates the whole departure batch.
 free(unique(queryOwner(blocked))) = false;
 end
 
@@ -386,6 +536,8 @@ function [found, route, profile] = directAngularCertificate( ...
 delta = wrappedDelta( ...
     startState.position_deg, stopState.position_deg, limits, options);
 [duration, motion] = segmentMotion(delta, limits);
+% Waiting does not add angular distance, so any feasible departure for this
+% straight segment attains the endpoint-distance lower bound.
 if duration <= 1e-12
     found = startSafe(2) >= stopState.time_s - 1e-9 && ...
         goalSafe(1) <= startState.time_s + 1e-9;
@@ -461,6 +613,8 @@ departure(end) = stopState.time_s;
 
 unwrapped = position;
 unwrapped(1, :) = startState.position_deg;
+% Keep a continuous azimuth representation for length and dynamics while
+% retaining canonical wrapped positions for collision queries and output.
 for k = 2:size(position, 1)
     delta = wrappedDelta( ...
         unwrapped(k - 1, :), position(k, :), limits, options);
@@ -482,6 +636,13 @@ route = struct( ...
     "departureTime_s", departure, ...
     "motionDuration_s", duration, ...
     "waitingDuration_s", max(0, departure - arrival), ...
+    "hasTerminalCapture", ...
+        options.AllowNonzeroTerminalState && ...
+        any(abs([stopState.velocity_deg_s, ...
+        stopState.acceleration_deg_s2]) > 1e-12), ...
+    "terminalVelocity_deg_s", stopState.velocity_deg_s, ...
+    "terminalAcceleration_deg_s2", ...
+        stopState.acceleration_deg_s2, ...
     "angularPathLength_deg", sum(hypot( ...
     diff(unwrapped(:, 1)), diff(unwrapped(:, 2)))));
 end
@@ -504,28 +665,43 @@ for node = 2:size(route.positionUnwrapped_deg, 1)
     unwrapped(reached, :) = repmat( ...
         route.positionUnwrapped_deg(node, :), nnz(reached), 1);
 end
+% Waiting is established above by holding the most recently reached node.
+% Maneuver samples overwrite only each edge's active time window.
 for edge = 1:size(route.positionUnwrapped_deg, 1) - 1
     departure = route.departureTime_s(edge);
     duration = route.motionDuration_s(edge);
     moving = time >= departure - 1e-10 & ...
-        time < departure + duration - 1e-10;
+        time <= departure + duration + 1e-10;
     if ~any(moving)
         continue;
     end
-    delta = route.positionUnwrapped_deg(edge + 1, :) - ...
-        route.positionUnwrapped_deg(edge, :);
-    [~, motion] = segmentMotion(delta, limits);
-    tau = time(moving) - departure;
-    [progress, rate, accelerationValue] = ...
-        segmentProgress(tau, duration, motion);
-    unwrapped(moving, :) = ...
-        route.positionUnwrapped_deg(edge, :) + progress * delta;
-    velocity(moving, :) = rate * delta;
-    acceleration(moving, :) = accelerationValue * delta;
+    tau = min(max(time(moving) - departure, 0), duration);
+    if route.hasTerminalCapture && ...
+            edge == size(route.positionUnwrapped_deg, 1) - 1
+        terminal = evaluateAzElBoundaryProfile( ...
+            route.positionUnwrapped_deg(edge, :), [0 0], [0 0], ...
+            route.positionUnwrapped_deg(edge + 1, :), ...
+            route.terminalVelocity_deg_s, ...
+            route.terminalAcceleration_deg_s2, duration, tau);
+        unwrapped(moving, :) = terminal.position_deg;
+        velocity(moving, :) = terminal.velocity_deg_s;
+        acceleration(moving, :) = terminal.acceleration_deg_s2;
+    else
+        delta = route.positionUnwrapped_deg(edge + 1, :) - ...
+            route.positionUnwrapped_deg(edge, :);
+        [~, motion] = segmentMotion(delta, limits);
+        [progress, rate, accelerationValue] = ...
+            segmentProgress(tau, duration, motion);
+        unwrapped(moving, :) = ...
+            route.positionUnwrapped_deg(edge, :) + progress * delta;
+        velocity(moving, :) = rate * delta;
+        acceleration(moving, :) = accelerationValue * delta;
+    end
 end
 position = unwrapped;
 position(:, 1) = canonicalAzimuth(position(:, 1), limits, options);
-acceleration([1 end], :) = 0;
+velocity(1, :) = 0;
+acceleration(1, :) = 0;
 profile = struct( ...
     "time_s", time, ...
     "position_deg", position, ...
@@ -550,6 +726,8 @@ rateLimit = min(limits.maxVelocity_deg_s(active) ./ ...
     absoluteDelta(active));
 acceleration = min(limits.maxAcceleration_deg_s2(active) ./ ...
     absoluteDelta(active));
+% Both axes follow one normalized progress law. Taking the most restrictive
+% normalized limit guarantees each physical axis respects its own bounds.
 if rateLimit^2 / acceleration >= 1
     accelerationTime = sqrt(1 / acceleration);
     peakRate = sqrt(acceleration);
@@ -569,6 +747,15 @@ end
 
 function duration = minimumSegmentDuration(delta, limits)
 [duration, ~] = segmentMotion(delta, limits);
+end
+
+function duration = remainingTimeHeuristic( ...
+        delta, limits, hasTerminalDynamics)
+if hasTerminalDynamics
+    duration = max(abs(delta) ./ limits.maxVelocity_deg_s);
+else
+    duration = minimumSegmentDuration(delta, limits);
+end
 end
 
 function [progress, rate, acceleration] = ...

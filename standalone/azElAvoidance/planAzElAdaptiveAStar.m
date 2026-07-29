@@ -9,8 +9,9 @@ function plan = planAzElAdaptiveAStar( ...
 % resolutions:
 %   1. A spatial state is an az/el grid point.
 %   2. Time at that point is compressed into maximal safe intervals.
-%   3. A* edges are analytic rest-to-rest slews plus optional waiting.
-%   4. Every edge is checked against the original packed polygons.
+%   3. Internal edges are analytic rest-to-rest slews plus optional waiting.
+%   4. An enabled terminal edge may match nonzero velocity/acceleration.
+%   5. Every edge is checked against the original packed polygons.
 %
 % Coarse levels discover open topology cheaply. Finer levels are attempted
 % only when a coarse graph cannot represent a valid route. Obstacle
@@ -24,17 +25,23 @@ end
 [startState, stopState, limits, options] = ...
     normalizeAdaptiveAStarInputs(startState, stopState, limits, options);
 
-if any(abs([startState.velocity_deg_s, stopState.velocity_deg_s, ...
-        startState.acceleration_deg_s2, ...
-        stopState.acceleration_deg_s2]) > 1e-12)
+if any(abs([startState.velocity_deg_s, ...
+        startState.acceleration_deg_s2]) > 1e-12)
     error("planAzElAdaptiveAStar:NonzeroBoundaryDynamics", ...
-        "The maintainable planner currently requires rest-to-rest " + ...
-        "start and stop states.");
+        "The maintainable planner requires a rest initial state.");
+end
+hasTerminalDynamics = any(abs([stopState.velocity_deg_s, ...
+    stopState.acceleration_deg_s2]) > 1e-12);
+if hasTerminalDynamics && ~options.AllowNonzeroTerminalState
+    error("planAzElAdaptiveAStar:NonzeroTerminalStateDisabled", ...
+        "Set AllowNonzeroTerminalState to true for terminal capture.");
 end
 
 prebuiltWorkspace = isstruct(azElData) && isscalar(azElData) && ...
     isfield(azElData, "Format") && ...
     string(azElData.Format) == "AzElTimeObstacleWorkspace";
+% Reusing a packed workspace avoids repacking the same polygons when a
+% caller evaluates several start/stop pairs against one obstacle field.
 if prebuiltWorkspace
     workspace = azElData;
 else
@@ -43,7 +50,11 @@ else
 end
 
 schedule = options.GridStepSchedule_deg(:).';
-if options.Objective == "minimumAngularDistance" && ...
+% A static minimum-distance case can use a cheaper complete 2-D graph.
+% Terminal dynamics remain in the safe-interval search because the final
+% edge must match velocity and acceleration at an exact arrival time.
+if ~hasTerminalDynamics && ...
+        options.Objective == "minimumAngularDistance" && ...
         isAzElTimeObstacleWorkspaceStatic( ...
         workspace, startState.time_s, stopState.time_s)
     plan = progressiveStaticAStar( ...
@@ -76,6 +87,8 @@ endpointDelta = wrappedDelta( ...
     startState.position_deg, stopState.position_deg, limits, options);
 endpointLowerBound = hypot(endpointDelta(1), endpointDelta(2));
 
+% Coarse failures only mean that a graph could not represent a route. Retry
+% the same search at progressively finer spatial resolutions.
 for level = 1:numel(schedule)
     remaining = options.MaxSearchTime_s - toc(timer);
     if remaining <= 0
@@ -89,6 +102,8 @@ for level = 1:numel(schedule)
             schedule(level) * options.PrimitiveRadiusMultipliers);
     end
     remainingLevels = numel(schedule) - level + 1;
+    % Reserve time for later levels so one difficult coarse graph cannot
+    % consume the complete wall-time budget.
     levelBudget = remaining / remainingLevels;
     if level == numel(schedule)
         levelBudget = remaining;
@@ -117,7 +132,8 @@ for level = 1:numel(schedule)
         "Selected", false);
     search = candidate;
     if candidate.Success
-        if abs(candidate.Route.angularPathLength_deg - ...
+        if ~hasTerminalDynamics && ...
+                abs(candidate.Route.angularPathLength_deg - ...
                 endpointLowerBound) <= 1e-9
             candidate.GlobalAngularOptimal = true;
             search = candidate;
@@ -134,6 +150,8 @@ for level = 1:numel(schedule)
             bestObjective = candidateObjective;
             bestGridStep = schedule(level);
         end
+        % Stop only for an objective certificate or the minimum-time policy.
+        % Otherwise keep the best validated candidate and continue refining.
         if candidate.GlobalAngularOptimal || ...
                 options.Objective == "minimumTime"
             break;
@@ -162,6 +180,8 @@ end
 
 profile = search.Profile;
 route = search.Route;
+% Search nodes are maneuver breakpoints. Profile is the uniform command
+% history that downstream visualization and control code consumes.
 delta = wrappedDelta( ...
     startState.position_deg, stopState.position_deg, limits, options);
 lowerBound = hypot(delta(1), delta(2));
@@ -228,6 +248,8 @@ attemptCount = 0;
 bestPlan = struct();
 bestCost = Inf;
 
+% Each static level is a complete finite occupancy graph. Candidate paths
+% still undergo exact packed-polygon validation before they are accepted.
 for level = 1:numel(schedule)
     remaining = options.MaxSearchTime_s - toc(timer);
     if remaining <= 0
@@ -240,7 +262,6 @@ for level = 1:numel(schedule)
         options.HeuristicWeight;
     staticOptions.MaximumTopologyExpansions = ...
         options.MaxExpansions;
-    staticOptions.FallbackToExistingPlanner = false;
     staticOptions.EnableTopologyRefinement = ...
         options.EnableTopologyRefinement && level == numel(schedule);
     staticOptions.MaxSearchTime_s = ...
@@ -284,6 +305,8 @@ for level = 1:numel(schedule)
         bestPlan = candidate;
         bestCost = candidate.objectiveCost;
     end
+    % Matching the straight-line lower bound proves global angular optimality
+    % and makes further spatial refinement unnecessary.
     if candidate.success && candidate.optimalGlobally
         break;
     end
@@ -443,6 +466,7 @@ defaults = struct( ...
     "TimePaddingSamples", 1, ...
     "SafetyMargin_deg", 0, ...
     "AllowAzimuthWrap", diff(limits.azimuth_deg) >= 360 - 1e-9, ...
+    "AllowNonzeroTerminalState", false, ...
     "Objective", "minimumAngularDistance", ...
     "EnableTopologyRefinement", false, ...
     "MaximumVerticesPerRegion", 500);
@@ -505,6 +529,10 @@ end
 validateattributes(options.AllowAzimuthWrap, ...
     {'logical', 'numeric'}, {'scalar'});
 options.AllowAzimuthWrap = logical(options.AllowAzimuthWrap);
+validateattributes(options.AllowNonzeroTerminalState, ...
+    {'logical', 'numeric'}, {'scalar'});
+options.AllowNonzeroTerminalState = ...
+    logical(options.AllowNonzeroTerminalState);
 validateattributes(options.EnableTopologyRefinement, ...
     {'logical', 'numeric'}, {'scalar'});
 options.EnableTopologyRefinement = ...

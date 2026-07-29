@@ -66,6 +66,8 @@ function obstacle = packObstacle(data, options)
 timeSeconds = data.time_s;
 n = numel(timeSeconds);
 
+% First pass computes exact storage sizes. This avoids growing the packed
+% arrays across long missions with tens of thousands of slices.
 counts = zeros(n, 1, "uint64");
 edgeCounts = zeros(n, 1, "uint64");
 bounds = nan(n, 4, "single");
@@ -86,6 +88,8 @@ for k = 1:n
 end
 packedCount = double(offsets(end) - 1);
 packedEdgeCount = double(edgeOffsets(end) - 1);
+% Vertices support reconstruction and plotting; explicit edges support the
+% vectorized point-in-polygon and safety-margin narrow phases.
 packedAzimuth = nan(packedCount, 1, "single");
 packedElevation = nan(packedCount, 1, "single");
 edgeStartAzimuth = nan(packedEdgeCount, 1, "single");
@@ -150,6 +154,7 @@ if all(finite)
     return;
 end
 changes = diff([false; finite; false]);
+% NaN rows separate independent polygon regions in one time slice.
 starts = find(changes == 1);
 stops = find(changes == -1) - 1;
 count = 0;
@@ -175,6 +180,8 @@ if ~any(finite)
     return;
 end
 if all(finite)
+    % A repeated closing vertex already supplies every edge except the
+    % zero-length last-to-first edge. Otherwise close the polygon explicitly.
     if numel(azimuth) > 1 && hypot(azimuth(1) - azimuth(end), ...
             elevation(1) - elevation(end)) <= 1e-12
         startAzimuth = azimuth(1:end - 1);
@@ -247,6 +254,8 @@ if all(finite)
     return;
 end
 
+% Preserve NaN-separated regions as separate rings. Reducing each ring
+% independently prevents a false edge from connecting disconnected regions.
 changes = diff([false; finite; false]);
 starts = find(changes == 1);
 stops = find(changes == -1) - 1;
@@ -295,6 +304,8 @@ isClosed = numel(azimuth) > 3 && ...
 if ~isfinite(maximumVertices) || numel(azimuth) <= maximumVertices
     return;
 end
+% Uniform boundary subsampling is a storage/performance control, not a
+% geometric simplifier. Preserve explicit ring closure when it is present.
 if isClosed
     retained = maximumVertices - 1;
     index = round(linspace(1, numel(azimuth) - 1, retained));

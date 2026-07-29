@@ -34,6 +34,8 @@ end
 validatePlan(plan);
 workspace = planWorkspace(plan, dataList);
 
+% Frame decimation affects display only. The plan and collision workspace
+% retain all samples for analysis and validation.
 frameIndices = displayIndices( ...
     numel(plan.time_s), options.MaximumAnimationFrames);
 colors = lines(max(1, numel(dataList)));
@@ -315,6 +317,8 @@ if ~options.ShowObstacleSlices || options.MaximumDisplayedSlices == 0
     return;
 end
 obstacleCount = numel(workspace.Obstacles);
+% Share the global display budget across obstacles so adding another
+% obstacle cannot multiply figure object count without bound.
 maximumPerObstacle = max(1, floor( ...
     options.MaximumDisplayedSlices / max(1, obstacleCount)));
 for obstacleIndex = 1:obstacleCount
@@ -369,6 +373,8 @@ indices = reshape(indices, [], 1);
 azimuth = plan.position_deg(indices, 1);
 elevation = plan.position_deg(indices, 2);
 time_s = plan.time_s(indices);
+% Insert NaNs at canonical azimuth jumps so plotting does not draw a false
+% chord across the entire figure.
 wrapBreak = [false; abs(diff(azimuth)) > 180];
 azimuth(wrapBreak) = NaN;
 elevation(wrapBreak) = NaN;
@@ -416,6 +422,7 @@ end
 function handles = plotCandidateRoutes2D(ax, plan, options)
 handles = gobjects(0, 1);
 attempts = candidateAttempts(plan, options);
+% These are successful but unselected resolution attempts, not unsafe paths.
 for k = 1:numel(attempts)
     [azimuth, elevation] = segmentedCandidate( ...
         attempts(k).CandidatePosition_deg, []);
@@ -530,6 +537,8 @@ if isempty(values) || values(end) < limits(2) - 1e-9
     values(end + 1) = limits(2);
 end
 if numel(values) > maximumCount
+    % Decimate lines uniformly for readability; this is not the planner's
+    % actual state reduction.
     selected = unique(round(linspace(1, numel(values), maximumCount)));
     values = values(selected);
 end
@@ -645,7 +654,7 @@ required = ["success", "time_s", "position_deg"];
 if ~isstruct(plan) || ~isscalar(plan) || ...
         ~all(isfield(plan, cellstr(required))) || ~plan.success
     error("animateAzElAvoidancePlan:InvalidPlan", ...
-        "plan must be a successful planAzElAvoidance result.");
+        "plan must be a successful planAzElAdaptiveAStar result.");
 end
 validateattributes(plan.time_s, {'numeric'}, ...
     {'vector', 'real', 'finite', 'increasing'});

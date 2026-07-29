@@ -33,6 +33,8 @@ end
 
 az_deg = reshape(input.az_deg, [], 1);
 el_deg = reshape(input.el_deg, [], 1);
+% Column-oriented cell arrays give all downstream packers one predictable
+% shape while allowing each time slice to contain a different vertex count.
 for k = 1:n
     validateattributes(az_deg{k}, {'numeric'}, {'vector', 'real'});
     validateattributes(el_deg{k}, {'numeric'}, {'vector', 'real'});

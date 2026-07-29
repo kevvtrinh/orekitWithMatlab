@@ -22,6 +22,8 @@ elevation = inclusiveGrid( ...
 point = [azimuthGrid(:), elevationGrid(:)];
 distanceSquared = pointToPolylineDistanceSquared( ...
     point, coarseRoute_deg);
+% Only cells inside a tube around the coarse route are queried. Everything
+% outside is deliberately blocked so refinement cannot change homotopy.
 candidate = distanceSquared <= ...
     options.RefinementCorridorHalfWidth_deg^2;
 
@@ -62,6 +64,7 @@ for segment = 1:size(route, 1) - 1
     if lengthSquared <= eps
         candidate = sum((point - first).^2, 2);
     else
+        % Clamp the orthogonal projection to the finite segment endpoints.
         fraction = ((point(:, 1) - first(1)) * delta(1) + ...
             (point(:, 2) - first(2)) * delta(2)) / lengthSquared;
         fraction = min(max(fraction, 0), 1);

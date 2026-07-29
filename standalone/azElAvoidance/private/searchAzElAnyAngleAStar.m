@@ -47,6 +47,8 @@ end
 gScore = inf(nodeCount, 1);
 parent = zeros(nodeCount, 1, "uint32");
 closed = false(nodeCount, 1);
+% Duplicate heap entries are simpler than indexed decrease-key updates.
+% gScore and closed identify stale entries when they are popped.
 gScore(startNode) = 0;
 parent(startNode) = uint32(startNode);
 heap = emptyHeap(options.InitialHeapCapacity);
@@ -105,6 +107,7 @@ while heap.Count > 0
                 diagonalCornerBlocked(occupied, currentRow, ...
                 currentColumn, neighborRow, neighborColumn, ...
                 options.AllowAzimuthWrap)
+            % Forbid diagonal corner cutting through touching obstacles.
             continue;
         end
 
@@ -112,6 +115,8 @@ while heap.Count > 0
             [rowCount columnCount], neighborRow, neighborColumn);
         anchorNode = currentNode;
         if options.UseAnyAngleRelaxation
+            % Theta* connects directly to the current node's parent whenever
+            % the raster line of sight remains free.
             candidateAnchor = double(parent(currentNode));
             if candidateAnchor ~= currentNode && ...
                     gridLineOfSight(occupied, candidateAnchor, ...
@@ -199,6 +204,8 @@ end
 rowDelta = secondRow - firstRow;
 sampleCount = max(2, ...
     ceil(4 * max(abs(rowDelta), abs(columnDelta))) + 1);
+% Oversample in index space so shallow lines do not skip narrow occupied
+% cells when continuous coordinates are rounded to raster indices.
 row = round(firstRow + linspace(0, rowDelta, sampleCount));
 column = round(firstColumn + linspace(0, columnDelta, sampleCount));
 if allowWrap
@@ -250,6 +257,8 @@ end
 distanceSquared = azimuthDelta.^2 + ...
     (elevationGrid - position(2)).^2;
 distanceSquared(occupied) = Inf;
+% Endpoint snapping is followed by exact endpoint checks in the caller, so
+% the topology raster cannot silently legalize a blocked requested state.
 [minimumDistance, node] = min(distanceSquared(:));
 if ~isfinite(minimumDistance)
     node = 0;
@@ -292,6 +301,8 @@ if allowWrap
         span = span + median(diff(azimuth));
     end
     for k = 2:size(path, 1)
+        % Convert canonical grid columns into a continuous route before
+        % computing length or retiming across the azimuth seam.
         delta = mod(path(k, 1) - path(k - 1, 1) + ...
             span / 2, span) - span / 2;
         path(k, 1) = path(k - 1, 1) + delta;

@@ -15,6 +15,8 @@ if nargin == 0
 end
 
 items = cell(0, 1);
+% Flatten first, then normalize. This keeps nested input handling separate
+% from schema validation and preserves caller ordering.
 for inputIndex = 1:nargin
     items = [items; flattenInput(varargin{inputIndex}, inputIndex)]; ...
         %#ok<AGROW>

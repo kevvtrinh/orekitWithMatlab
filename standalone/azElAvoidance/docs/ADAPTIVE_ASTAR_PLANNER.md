@@ -87,9 +87,11 @@ options = struct( ...
     "HeuristicWeight", 1);
 ```
 
-The current planner requires rest-to-rest endpoints. Therefore, the start
-and stop velocity and acceleration must be zero. Nonzero values are rejected
-rather than silently ignored.
+The planner requires a rest initial state. Ordinary fixed-target plans also
+use a rest terminal state. An explicit `AllowNonzeroTerminalState` mode lets
+the final safe-interval edge use a quintic boundary profile that matches
+requested terminal velocity and acceleration; internal graph states remain
+rest-to-rest.
 
 ### The `azElData` contract
 
@@ -191,6 +193,13 @@ For example, `GridStep_deg = 0.5` produces:
 
 The coarse graph is cheap and often reveals the useful topology. A finer
 graph can represent narrower gaps and usually produces a shorter route.
+
+Each scheduled value of $h$ applies to the complete configured az/el domain.
+The static implementation rebuilds the full grid at that spacing; it does
+not refine only near the previous route. `EnableTopologyRefinement` is a
+separate optional static pass that creates a fine search tube around a
+coarse route. In dynamic mode, $h$ still defines a global lattice, but nodes
+and safe intervals are generated lazily only where A* explores.
 
 ![Progressive static search](figures/02_progressive_static_search.png)
 
@@ -430,8 +439,10 @@ return it only if every validation sample is free
 ## 6. Turning an edge into a physical slew
 
 The search cannot assume that a boresight teleports between graph points.
-Every edge is retimed as a synchronized rest-to-rest maneuver that obeys both
-axis rate and acceleration limits.
+Every ordinary edge is retimed as a synchronized rest-to-rest maneuver that
+obeys both axis rate and acceleration limits. An enabled terminal-capture
+edge instead uses a quintic profile to match nonzero final velocity and
+acceleration.
 
 ![Rest-to-rest edge profiles](figures/04_rest_to_rest_edge.png)
 
@@ -582,6 +593,7 @@ Wrapped limits must span exactly 360 degrees.
 | `MaxSearchTime_s` | `45` | Total planner wall-time budget |
 | `TimePaddingSamples` | `1` | Temporal obstacle padding |
 | `AllowAzimuthWrap` | inferred | Enable circular azimuth |
+| `AllowNonzeroTerminalState` | `false` | Enable a quintic terminal capture edge |
 | `Objective` | `minimumAngularDistance` | Public candidate-selection objective |
 | `MaximumVerticesPerRegion` | `500` | Boundary cap while packing obstacles |
 
@@ -654,12 +666,23 @@ The animation shows 2-D az/el motion and the corresponding 3-D
 az/el/time route. Successful candidates that were not selected can also be
 drawn from `plan.resolutionAttempts`.
 
+Plot the boresight command and obtain an analysis table with:
+
+```matlab
+kinematics = plotAzElPlanKinematics(plan);
+```
+
+Set `ExportExcel` to `true` to write the table to an `.xlsx` file. Export is
+off by default. Jerk is computed as the finite-difference derivative of the
+sampled acceleration command and does not imply that the planner enforces a
+jerk limit.
+
 ## 12. Guarantees and non-guarantees
 
 ### What the planner guarantees under its configured model
 
-- Returned trajectories respect the analytic rest-to-rest velocity and
-  acceleration limits.
+- Returned trajectories respect the analytic velocity and acceleration
+  limits for both rest-to-rest and terminal-capture edges.
 - Returned trajectories passed packed-polygon collision checks at all
   configured validation samples.
 - Azimuth wrapping is handled consistently when enabled.
@@ -680,14 +703,15 @@ drawn from `plan.resolutionAttempts`.
   can disappear if event sampling is too sparse.
 - The dynamic search is earliest-arrival ordered, even when the public
   candidate-selection objective is angular distance.
-- The current implementation does not support nonzero endpoint rates or
-  accelerations.
+- The initial state must be at rest. Nonzero final rates or accelerations
+  require `AllowNonzeroTerminalState` and are supported only on the final
+  safe-interval edge.
 
 The most accurate description is:
 
 > A progressively refined, sample-validated A* planner with analytic
-> rest-to-rest motion edges and safe-interval compression for dynamic
-> obstacles.
+> rest-to-rest internal edges, an optional velocity-matched terminal edge,
+> and safe-interval compression for dynamic obstacles.
 
 ## 13. Computational cost
 
@@ -737,6 +761,7 @@ The dominant dynamic costs are usually:
 | `private/searchAzElAnyAngleAStar.m` | Static 2-D any-angle A* |
 | `private/searchAzElSafeIntervalAStar.m` | Dynamic safe-interval A* |
 | `animateAzElAvoidancePlan.m` | 2-D and 3-D route animation |
+| `plotAzElPlanKinematics.m` | Position/rate/acceleration/jerk plots and optional Excel export |
 | `docs/generateAdaptiveAStarDocumentationFigures.m` | Rebuilds this guide's figures |
 
 Scenario generation belongs under `examples`. Example files may choose

@@ -39,6 +39,8 @@ if any(points(:, 2) < limits.elevation_deg(1) | ...
 end
 
 delta = diff(points, 1, 1);
+% Each segment uses one normalized progress law shared by azimuth and
+% elevation. The tighter axis limit determines the segment duration.
 [duration, peakRate, acceleration] = ...
     motionParameters(delta.', limits);
 minimumDuration_s = sum(duration);
@@ -52,6 +54,9 @@ if slack_s < -1e-9
 end
 
 candidateCount = max(1, min(100, floor(max(0, slack_s)) + 1));
+% All unavoidable waiting is placed before motion. Trying different launch
+% times is sufficient for static geometry and remains useful for the limited
+% dynamic fallback represented by this helper.
 motionStarts = linspace( ...
     startState.time_s, startState.time_s + max(0, slack_s), ...
     candidateCount);
@@ -72,6 +77,8 @@ for candidate = 1:candidateCount
         segmentStart_s, duration, peakRate, acceleration, ...
         collisionOptions);
     if profileCollisionFree(workspace, collisionProfile, options)
+        % Return the user-requested sample rate only after a potentially
+        % denser collision profile has passed exact polygon checks.
         length_deg = sum(hypot(delta(:, 1), delta(:, 2)));
         directDelta = points(end, :) - points(1, :);
         lowerBound_deg = hypot(directDelta(1), directDelta(2));
@@ -127,6 +134,9 @@ progress = zeros(size(tau));
 rate = zeros(size(tau));
 accelerationValue = zeros(size(tau));
 
+% Matrix expansion evaluates every segment at every output time in one pass.
+% At any given time, completed segments contribute progress one and future
+% segments contribute zero, so summing through matrix multiplication works.
 accelerationMatrix = repmat(acceleration, numel(time_s), 1);
 accelerationTimeMatrix = repmat( ...
     accelerationTime, numel(time_s), 1);
@@ -176,6 +186,8 @@ for axisIndex = 1:2
 end
 rateLimit = min(rateCandidate, [], 1);
 acceleration = min(accelerationCandidate, [], 1);
+% Normalized rate and acceleration are constrained by the most restrictive
+% active physical axis on each segment.
 stationary = ~isfinite(rateLimit);
 rateLimit(stationary) = 0;
 acceleration(stationary) = 1;
