@@ -52,6 +52,27 @@ verifyGreaterThan(testCase, plan.expandedNodeCount, 0);
 verifyPlan(testCase, plan);
 end
 
+function testMovingGeometryAllowsDirectDynamicCertificate(testCase)
+time_s = (0:0.5:20).';
+azimuth = repmat({zeros(0, 1)}, numel(time_s), 1);
+elevation = repmat({zeros(0, 1)}, numel(time_s), 1);
+azimuth{2} = [-9; -8; -8; -9; -9];
+elevation{2} = [3; 3; 4; 4; 3];
+data = makeAzElObstacleData( ...
+    "Irrelevant moving obstacle", time_s, azimuth, elevation);
+[initialState, goalState, limits] = standardProblem(20);
+
+plan = planAzElAdaptiveAStar(data, initialState, goalState, ...
+    limits, struct("SampleTime_s", 0.25, ...
+    "GridStepSchedule_deg", [2 1], "MaxSearchTime_s", 8));
+
+verifyTrue(testCase, plan.success);
+verifyEqual(testCase, plan.method, "progressiveSafeIntervalAStar");
+verifyTrue(testCase, plan.optimalGlobally);
+verifyEqual(testCase, plan.angularPathLength_deg, 8, "AbsTol", 1e-9);
+verifyPlan(testCase, plan);
+end
+
 function testWrappedAzimuthUsesShortChord(testCase)
 time_s = (0:20).';
 empty = repmat({zeros(0, 1)}, numel(time_s), 1);

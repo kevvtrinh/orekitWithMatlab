@@ -16,14 +16,14 @@ azimuth/elevation/time workspace.
 | # | Entry point | Primary algorithm | What the example exercises |
 |---:|---|---|---|
 | 01 | `example01PlanFromAzElData` | Adaptive A*: direct certificate | User-supplied `azElData`; a collision-free direct wait-and-slew reaches the angular lower bound. |
-| 02 | `example02VietnamChinaAvoidance` | Adaptive A*: static | Progressive any-angle A*, rest-to-rest retiming, and polygon validation around two obstacles. |
-| 03 | `example03KinodynamicDetour` | Adaptive A*: static | A rate- and acceleration-limited detour around a static blocker. |
+| 02 | `example02VietnamChinaAvoidance` | Goal-rooted Dijkstra | Progressive complete-grid Dijkstra, rest-to-rest retiming, and polygon validation around two obstacles. |
+| 03 | `example03KinodynamicDetour` | Goal-rooted Dijkstra | A rate- and acceleration-limited detour around a static blocker. |
 | 04 | `example04DynamicSafeIntervals` | Adaptive A*: dynamic | Event-compressed safe-interval A* through two moving volumes. |
-| 05 | `example05FiveTurnSpiral` | Adaptive A*: static | Unguided coarse-to-fine any-angle A* through a deep spiral. |
+| 05 | `example05FiveTurnSpiral` | Goal-rooted Dijkstra | Unguided global coarse-to-fine Dijkstra through a deep spiral. |
 | 06 | `example06StopGoGates` | Adaptive A*: dynamic | Safe-interval A* through sequentially opening gates; waiting is planner-selected. |
-| 07 | `example07WrappedAzimuthSeam` | Adaptive A*: static | Any-angle A* across the wrapped `-180/180` azimuth seam. |
-| 08 | `example08AlternatingSlalom` | Adaptive A*: static | Coarse-to-fine any-angle A* through alternating barriers. |
-| 09 | `example09UTrapEscape` | Adaptive A*: static | Coarse-to-fine any-angle A* out of a cul-de-sac. |
+| 07 | `example07WrappedAzimuthSeam` | Goal-rooted Dijkstra | Shortest wrapped lattice route across the `-180/180` azimuth seam. |
+| 08 | `example08AlternatingSlalom` | Goal-rooted Dijkstra | Global coarse-to-fine Dijkstra through alternating barriers. |
+| 09 | `example09UTrapEscape` | Goal-rooted Dijkstra | Global coarse-to-fine Dijkstra out of a cul-de-sac. |
 | 10 | `example10RotatingSlots` | Adaptive A*: dynamic | Safe-interval timing through four rotating slots and planner-selected chamber waits. |
 | 11 | `example11ChasedBoresight` | Adaptive A*: dynamic | Safe-interval planning while a slower obstacle pursues the boresight. |
 | 12 | `example12SynchronizedWindmills` | Adaptive A*: dynamic | Symmetric safe-interval A* through synchronized rotating windmills. |
@@ -44,13 +44,13 @@ through `runAzElGauntletCase`. Example 13 uses
 `planAzElMovingTargetIntercept`, which tests interception times by calling
 the same adaptive A* planner.
 
-The planner collapses static safe intervals into progressive any-angle A*.
+The planner routes static geometry through progressive goal-rooted Dijkstra.
 Moving volumes use progressive event-compressed safe-interval A*. Both modes
 retime analytic rest-to-rest internal slews and validate against the packed
 polygons. Example 14 enables the optional quintic terminal edge to match a
 moving target's nonzero rate before trailing it.
 
-Lower-level searches remain independently testable implementation
-components, but examples do not select them. Scenario construction and
-diagnostic code is in `support`. No example injects a reference path,
-one-way edge, state corridor, or preferred direction.
+The static search, exact shortcutter, and retimer are local functions inside
+the unified planner. The dynamic safe-interval search remains a separate
+private kernel because it is an independently complex algorithm. Scenario
+construction and diagnostics remain under `support`.

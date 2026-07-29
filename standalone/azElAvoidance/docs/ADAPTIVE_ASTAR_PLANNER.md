@@ -14,10 +14,10 @@ The planner answers this question:
 > limits, and forbidden az/el regions that may move with time, where should
 > the boresight point at every time so that it avoids all obstacles?
 
-The implementation is intentionally split into small, maintainable pieces.
-It uses A* for static geometry, a safe-interval form of A* for moving
-geometry, analytic rest-to-rest slew profiles, and the original obstacle
-polygons as the final collision authority.
+The implementation keeps one public fixed-goal planner. It uses goal-rooted
+Dijkstra for static geometry, safe-interval A* for moving geometry, analytic
+rest-to-rest slew profiles, and the original obstacle polygons as the final
+collision authority.
 
 ## The 60-second mental model
 
@@ -29,7 +29,7 @@ Time is the vertical coordinate.
 - The original slices are packed efficiently; the full 3-D volume is not
   converted into millions of voxels.
 - A coarse graph is searched first. Finer graphs are tried as needed.
-- Static obstacles use a 2-D any-angle A* search.
+- Static obstacles use a 2-D goal-rooted Dijkstra search.
 - Moving obstacles use states that pair a spatial point with a continuous
   safe time interval.
 - Each proposed graph edge is converted into a physically limited slew and
@@ -39,7 +39,7 @@ Time is the vertical coordinate.
 flowchart LR
     A["azElData polygon slices"] --> B["Packed polygon workspace"]
     B --> C{"Geometry static?"}
-    C -->|Yes| D["Progressive 2-D any-angle A*"]
+    C -->|Yes| D["Progressive goal-rooted Dijkstra"]
     C -->|No| E["Progressive safe-interval A*"]
     D --> F["Analytic rest-to-rest retiming"]
     E --> F
@@ -54,19 +54,19 @@ The public call is:
 
 ```matlab
 plan = planAzElAdaptiveAStar( ...
-    azElData, startState, stopState, limits, options);
+    azElData, initialState, goalState, limits, options);
 ```
 
 A typical setup is:
 
 ```matlab
-startState = struct( ...
+initialState = struct( ...
     "time_s", 0, ...
     "position_deg", [-10 0], ...
     "velocity_deg_s", [0 0], ...
     "acceleration_deg_s2", [0 0]);
 
-stopState = struct( ...
+goalState = struct( ...
     "time_s", 30, ...
     "position_deg", [10 0], ...
     "velocity_deg_s", [0 0], ...
@@ -195,11 +195,10 @@ The coarse graph is cheap and often reveals the useful topology. A finer
 graph can represent narrower gaps and usually produces a shorter route.
 
 Each scheduled value of $h$ applies to the complete configured az/el domain.
-The static implementation rebuilds the full grid at that spacing; it does
-not refine only near the previous route. `EnableTopologyRefinement` is a
-separate optional static pass that creates a fine search tube around a
-coarse route. In dynamic mode, $h$ still defines a global lattice, but nodes
-and safe intervals are generated lazily only where A* explores.
+The static implementation rebuilds the full grid at that spacing and does
+not refine only near a previous route. In dynamic mode, $h$ still defines a
+global lattice, but nodes and safe intervals are generated lazily only where
+A* explores.
 
 ![Progressive static search](figures/02_progressive_static_search.png)
 
@@ -238,23 +237,20 @@ Each grid state is marked free or occupied by querying the packed polygon
 workspace. The search initially considers the eight neighboring grid states.
 Diagonal corner-cutting through occupied cells is forbidden.
 
-### 4.2 A* ordering
+### 4.2 Goal-rooted cost propagation
 
-Ordinary A* assigns each state:
+Dijkstra begins at the goal with cost zero. For each settled state \(q_i\),
+it relaxes every free neighbor \(q_j\):
 
 $$
-f(q)=g(q)+w\,h(q),
+J(q_j)\leftarrow
+\min\left(J(q_j), d(q_j,q_i)+J(q_i)\right).
 $$
 
-where:
-
-- $g(q)$ is the route length from the start to $q$;
-- $h(q)$ is straight-line angular distance from $q$ to the goal;
-- $w$ is `HeuristicWeight`.
-
-With $w=1$, the heuristic is admissible on the basic Euclidean graph. Values
-greater than one make the search greedier and often faster, but remove the
-ordinary graph-optimality guarantee.
+When this candidate is better, the planner stores \(q_i\) as the next state
+from \(q_j\) toward the goal. The search ends when the initial state is
+settled. Following these successors recovers the route without a heuristic
+or preferred direction.
 
 Angular distance is:
 
@@ -269,20 +265,14 @@ $$
 When wrapping is enabled, $\Delta\alpha_{\mathrm{wrap}}$ is the shortest
 signed azimuth displacement across the 360-degree boundary.
 
-### 4.3 Any-angle relaxation
+### 4.3 Exact route shortening
 
-A raw eight-connected path contains staircase-shaped turns. The static search
-therefore applies a Theta*-style parent relaxation:
-
-1. Expand the current grid state.
-2. For each neighbor, inspect the current state's parent.
-3. If that parent has grid line of sight to the neighbor, connect the
-   neighbor directly to the parent.
-4. Otherwise, use the ordinary current-to-neighbor edge.
-
-This produces a shorter polyline with fewer corners while preserving the
-simple A* implementation. The line-of-sight test guides topology; the final
-retimed command is still checked against the packed polygons.
+The recovered eight-connected route can contain staircase-shaped turns.
+Starting at each retained waypoint, the planner keeps the farthest downstream
+waypoint whose connecting segment clears the original packed polygons.
+Unlike the old topology relaxation, this step does not decide connectivity;
+it only shortens an already complete Dijkstra route using authoritative
+geometry.
 
 ### 4.4 Static pseudocode
 
@@ -290,8 +280,10 @@ retimed command is still checked against the packed polygons.
 best = no solution
 
 for grid step from coarse to fine:
-    sample a 2-D occupancy graph
-    route = any-angle A*(graph, start, goal)
+    sample the complete 2-D occupancy graph
+    propagate cost backward from the goal with Dijkstra
+    route = follow stored successors from initial state to goal
+    route = remove exactly visible intermediate corners
 
     if route exists:
         command = retime every segment as a rest-to-rest slew
@@ -586,7 +578,7 @@ Wrapped limits must span exactly 360 degrees.
 | `SafetyMargin_deg` | `0` | Conservative angular obstacle expansion |
 | `PrimitiveRadiusMultipliers` | `[1 2 4 8]` | Dynamic edge lengths in grid-step units |
 | `DirectionStep_deg` | `45` | Dynamic edge direction spacing |
-| `HeuristicWeight` | `1` | A* heuristic multiplier |
+| `HeuristicWeight` | `1` | Dynamic safe-interval A* heuristic multiplier |
 | `MaximumSafeIntervalSamples` | `10000` | Cap on event times used for intervals |
 | `MaximumDepartureTrials` | `64` | Candidate departures tested per edge |
 | `MaxExpansions` | `100000` | Search expansion budget |
@@ -688,10 +680,8 @@ jerk limit.
 - Azimuth wrapping is handled consistently when enabled.
 - A direct collision-free route has the Euclidean angular-distance lower
   bound and is therefore globally shortest in angular distance.
-- With `HeuristicWeight = 1`, the static search uses an admissible Euclidean
-  heuristic for its base grid. The Theta*-style parent relaxation improves
-  route shape, but it is not a proof of the globally shortest path in the
-  continuous plane.
+- Goal-rooted Dijkstra returns the globally shortest route on each completed
+  finite occupancy lattice.
 
 ### What it does not guarantee
 
@@ -709,22 +699,22 @@ jerk limit.
 
 The most accurate description is:
 
-> A progressively refined, sample-validated A* planner with analytic
-> rest-to-rest internal edges, an optional velocity-matched terminal edge,
-> and safe-interval compression for dynamic obstacles.
+> A progressively refined planner using goal-rooted Dijkstra for static
+> geometry, safe-interval A* for dynamic geometry, analytic rest-to-rest
+> internal edges, and an optional velocity-matched terminal edge.
 
 ## 13. Computational cost
 
 ### Static mode
 
-For $N=N_\alpha N_\epsilon$ sampled spatial states, ordinary grid A* is
+For $N=N_\alpha N_\epsilon$ sampled spatial states, binary-heap Dijkstra is
 approximately:
 
 $$
 O(N\log N)
 $$
 
-in the worst explored region, with additional line-of-sight and exact
+in the worst explored region, with additional polygon rasterization and exact
 validation work. Coarse levels reduce $N$ dramatically because halving the
 grid spacing in both axes creates roughly four times as many states.
 
@@ -754,11 +744,9 @@ The dominant dynamic costs are usually:
 
 | File | Responsibility |
 | --- | --- |
-| `planAzElAdaptiveAStar.m` | Public API, normalization, mode selection, progressive schedule |
+| `planAzElAdaptiveAStar.m` | Public API, progressive schedule, inline static Dijkstra, shortening, and retiming |
 | `buildAzElTimeObstacleWorkspace.m` | Packs original polygon slices |
 | `queryAzElTimeObstacle.m` | Authoritative point/time collision query |
-| `planAzElAutonomousCorridor.m` | Static route retiming and validation |
-| `private/searchAzElAnyAngleAStar.m` | Static 2-D any-angle A* |
 | `private/searchAzElSafeIntervalAStar.m` | Dynamic safe-interval A* |
 | `animateAzElAvoidancePlan.m` | 2-D and 3-D route animation |
 | `plotAzElPlanKinematics.m` | Position/rate/acceleration/jerk plots and optional Excel export |
@@ -787,9 +775,9 @@ The generator runs the real planner and writes PNG files under
    Heuristic Determination of Minimum Cost Paths,” *IEEE Transactions on
    Systems Science and Cybernetics*, vol. 4, no. 2, pp. 100-107, 1968.
    [DOI: 10.1109/TSSC.1968.300136](https://doi.org/10.1109/TSSC.1968.300136)
-2. A. Nash, K. Daniel, S. Koenig, and A. Felner, “Theta*: Any-Angle Path
-   Planning on Grids,” *Proceedings of AAAI*, pp. 1177-1183, 2007.
-   [AAAI paper](https://aaai.org/Papers/AAAI/2007/AAAI07-187.pdf)
+2. E. W. Dijkstra, "A Note on Two Problems in Connexion with Graphs,"
+   *Numerische Mathematik*, vol. 1, pp. 269-271, 1959.
+   [DOI: 10.1007/BF01386390](https://doi.org/10.1007/BF01386390)
 3. M. Phillips and M. Likhachev, “SIPP: Safe Interval Path Planning for
    Dynamic Environments,” *Proceedings of the IEEE International Conference
    on Robotics and Automation*, 2011.

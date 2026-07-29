@@ -83,13 +83,13 @@ not a physical sensor-frame projection.
 ## Unified planner
 
 ```matlab
-startState = struct( ...
+initialState = struct( ...
     "time_s", 2700, ...
     "position_deg", [-30, 0], ...
     "velocity_deg_s", [0, 0], ...
     "acceleration_deg_s2", [0, 0]);
 
-stopState = struct( ...
+goalState = struct( ...
     "time_s", 3000, ...
     "position_deg", [80, 80], ...
     "velocity_deg_s", [0, 0], ...
@@ -111,7 +111,7 @@ options = struct( ...
     "MaxSearchTime_s", 30);
 
 plan = planAzElAdaptiveAStar( ...
-    azElData, startState, stopState, limits, options);
+    azElData, initialState, goalState, limits, options);
 ```
 
 The steering command is in `plan.time_s` and `plan.position_deg`.
@@ -119,8 +119,8 @@ The steering command is in `plan.time_s` and `plan.position_deg`.
 `-180/180` seam. Velocity, acceleration, waiting samples, search statistics,
 and the packed obstacle workspace are also returned.
 
-Static obstacle volumes use progressive any-angle A*. Moving volumes use
-progressive event-compressed safe-interval A*. Both modes use analytic
+Static obstacle volumes use progressive goal-rooted Dijkstra. Moving volumes
+use progressive event-compressed safe-interval A*. Both modes use analytic
 rest-to-rest slews and validate the command against the original packed
 polygons.
 
@@ -138,7 +138,7 @@ options.ContinueTrackingAfterIntercept = true;
 options.TrackingEndTime_s = target.time_s(end);
 
 plan = planAzElMovingTargetIntercept( ...
-    azElData, startState, target, limits, options);
+    azElData, initialState, target, limits, options);
 ```
 
 After capture, target samples are appended only while position, rate,
@@ -237,45 +237,23 @@ The design summary is in
 
 ## Static topology component
 
-The technical design, mathematical scope, guarantees, complexity analysis,
-and benchmark results are documented in
-[`docs/autonomous_az_el_corridor_planner_white_paper.md`](../../docs/autonomous_az_el_corridor_planner_white_paper.md).
+The static implementation is documented in
+[`docs/STATIC_DIJKSTRA.md`](docs/STATIC_DIJKSTRA.md).
 
-The adaptive planner invokes its static any-angle component for difficult
-static topology without a supplied guide path. The lower-level component can
-still be tested directly:
+The adaptive planner first proves that every obstacle slice is unchanged
+over the requested interval. At each requested grid spacing it then:
 
-```matlab
-options = struct( ...
-    "SampleTime_s", 0.5, ...
-    "TopologyGridStep_deg", 0.5, ...
-    "SafetyMargin_deg", 0.5, ...
-    "AllowAzimuthWrap", false, ...
-    "Objective", "minimumAngularDistance");
+1. builds a complete inflated occupancy grid;
+2. propagates Dijkstra cost backward from the goal;
+3. follows stored successors from the initial grid state to the goal;
+4. removes unnecessary grid corners using exact polygon visibility checks;
+5. retimes the route under rate and acceleration limits; and
+6. validates the complete command against the packed polygons.
 
-plan = planAzElAutonomousCorridor( ...
-    azElData, startState, stopState, limits, options);
-```
-
-The planner verifies that packed obstacle slices are static, constructs one
-inflated occupancy raster, discovers a route with any-angle A*, removes grid
-staircasing through line-of-sight parent relaxation, and automatically
-retimes the resulting corridor under the rate and acceleration limits.
-Collision validation uses a finer internal timestep than the requested output
-when necessary, reducing the risk that fast slews cross thin obstacles
-between samples. Visibility shortcutting then removes waypoint stops only
-when dense samples along the replacement chord clear the original polygons.
-
-Set `EnableTopologyRefinement` to true to run a second any-angle search on a
-finer grid restricted to a narrow tube around the coarse route. Configure it
-with `RefinementGridStep_deg` and
-`RefinementCorridorHalfWidth_deg`. This spends more computation to reduce
-angular path length while concentrating search near the discovered route.
-The default coarse mode generally gives the best computation-time and
-maneuver-time balance.
-
-Numbered examples call `planAzElAdaptiveAStar`, which selects static topology
-only when every obstacle slice is unchanged over the requested interval.
+`plan.topologySearch.CostToGoal_deg` and `SettledMask` expose the propagated
+workspace for diagnosis. Every value in `GridStepSchedule_deg` applies to the
+complete az/el domain. There is no route-tube, supplied guide, preferred
+direction, or separate static planner entry point.
 
 ## Animate the completed plan
 
@@ -287,7 +265,7 @@ view = animateAzElAvoidancePlan( ...
     "MaximumDisplayedSlices", 100));
 ```
 
-The 2-D pane shows the selected A* lattice, every valid rejected resolution
+The 2-D pane shows the selected search lattice, every valid rejected resolution
 route, the selected route, current obstacle boundary, and current boresight.
 The 3-D pane places the same search information beside accumulating obstacle
 slices in azimuth/elevation/time space. Display decimation does not change
@@ -347,7 +325,7 @@ No Orekit or scenario object is used:
 
 The five-turn spiral is intentionally beyond the practical search range of
 the raw kinodynamic lattice. It calls `planAzElAdaptiveAStar`, supplies no
-guide path or direction, and asserts that static any-angle A* autonomously
+guide path or direction, and asserts that static goal-rooted Dijkstra autonomously
 winds through the spiral before reaching its center. The
 discovered polyline is dynamically retimed and densely collision-checked.
 Because the shortest legal path enters at the wall's outer opening and rounds
