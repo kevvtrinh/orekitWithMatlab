@@ -1,181 +1,775 @@
-# Maintainable Adaptive A* Planner
+# Plan Az/El Adaptive A*: Technical Guide
 
-## Goal
+## Purpose and audience
 
-`planAzElAdaptiveAStar` is the single planner used by the numbered examples.
-It avoids a dense azimuth/elevation/time voxel lattice and uses only A*
-search components.
+This guide explains how `planAzElAdaptiveAStar` converts moving forbidden
+regions in azimuth/elevation coordinates into a route for a rate- and
+acceleration-limited boresight. It is written for readers who know basic
+programming and introductory mechanics but may not have studied motion
+planning.
 
-The obstacle workspace remains a packed collection of the original polygons.
-Discretization creates search states and edges only. Every returned trajectory
-is checked against the packed polygons.
+The planner answers this question:
 
-## State spaces
+> Given a start pointing state, a required final pointing state, actuator
+> limits, and forbidden az/el regions that may move with time, where should
+> the boresight point at every time so that it avoids all obstacles?
 
-### Static obstacles
+The implementation is intentionally split into small, maintainable pieces.
+It uses A* for static geometry, a safe-interval form of A* for moving
+geometry, analytic rest-to-rest slew profiles, and the original obstacle
+polygons as the final collision authority.
 
-If every obstacle slice is identical over the planning interval, time adds no
-topological information. The planner searches a 2-D azimuth/elevation graph:
+## The 60-second mental model
+
+Think of azimuth and elevation as the two horizontal coordinates of a map.
+Time is the vertical coordinate.
+
+- A forbidden polygon at one instant is a 2-D slice.
+- Repeating those slices over time creates an implicit 3-D obstacle volume.
+- The original slices are packed efficiently; the full 3-D volume is not
+  converted into millions of voxels.
+- A coarse graph is searched first. Finer graphs are tried as needed.
+- Static obstacles use a 2-D any-angle A* search.
+- Moving obstacles use states that pair a spatial point with a continuous
+  safe time interval.
+- Each proposed graph edge is converted into a physically limited slew and
+  checked against the original moving polygons.
+
+```mermaid
+flowchart LR
+    A["azElData polygon slices"] --> B["Packed polygon workspace"]
+    B --> C{"Geometry static?"}
+    C -->|Yes| D["Progressive 2-D any-angle A*"]
+    C -->|No| E["Progressive safe-interval A*"]
+    D --> F["Analytic rest-to-rest retiming"]
+    E --> F
+    F --> G["Exact polygon queries at validation samples"]
+    G -->|Collision| H["Reject candidate or refine"]
+    G -->|Free| I["Return az/el/time command"]
+```
+
+## 1. Planner inputs
+
+The public call is:
+
+```matlab
+plan = planAzElAdaptiveAStar( ...
+    azElData, startState, stopState, limits, options);
+```
+
+A typical setup is:
+
+```matlab
+startState = struct( ...
+    "time_s", 0, ...
+    "position_deg", [-10 0], ...
+    "velocity_deg_s", [0 0], ...
+    "acceleration_deg_s2", [0 0]);
+
+stopState = struct( ...
+    "time_s", 30, ...
+    "position_deg", [10 0], ...
+    "velocity_deg_s", [0 0], ...
+    "acceleration_deg_s2", [0 0]);
+
+limits = struct( ...
+    "azimuth_deg", [-180 180], ...
+    "elevation_deg", [-90 90], ...
+    "maxVelocity_deg_s", [3 3], ...
+    "maxAcceleration_deg_s2", [1 1]);
+
+options = struct( ...
+    "SampleTime_s", 0.25, ...
+    "GridStep_deg", 0.5, ...
+    "GridStepSchedule_deg", [2 1 0.5], ...
+    "SafetyMargin_deg", 0.2, ...
+    "AllowAzimuthWrap", true, ...
+    "HeuristicWeight", 1);
+```
+
+The current planner requires rest-to-rest endpoints. Therefore, the start
+and stop velocity and acceleration must be zero. Nonzero values are rejected
+rather than silently ignored.
+
+### The `azElData` contract
+
+Each obstacle contains:
+
+| Field | Meaning |
+| --- | --- |
+| `targetName` | Human-readable obstacle name |
+| `time_s` | Time of each polygon slice |
+| `az_deg{k}` | Azimuth vertices at slice `k` |
+| `el_deg{k}` | Elevation vertices at slice `k` |
+
+Multiple scalar structs, struct arrays, cell arrays, and nested mixtures are
+accepted. Each scalar data struct is treated as one independent obstacle.
+
+## 2. From polygon slices to a workspace
+
+`buildAzElTimeObstacleWorkspace` transforms `azElData` into a compact query
+structure.
+
+![Workspace transformation](figures/01_workspace_transformation.png)
+
+### 2.1 What the figure shows
+
+Panel (a) is the input representation: a polygon at each supplied time.
+Panel (b) places those same polygons at their time coordinates. Together,
+they describe a moving obstacle in azimuth/elevation/time space.
+
+Panel (c) shows the actual storage strategy. The vertices from all slices
+are placed in contiguous single-precision arrays:
 
 ```text
-state = (azimuth grid index, elevation grid index)
+AzimuthDeg   = [slice 1 vertices, slice 2 vertices, ...]
+ElevationDeg = [slice 1 vertices, slice 2 vertices, ...]
+SliceOffsets = [start of slice 1, start of slice 2, ...]
 ```
 
-Eight-connected A* discovers connectivity. Any-angle parent relaxation tests
-line of sight to skip unnecessary grid corners. The resulting polyline is
-retimed with analytic rest-to-rest rate and acceleration profiles, then checked
-against the original polygons.
+Edges, time values, and per-slice bounding boxes are also precomputed. This
+layout reduces MATLAB object overhead and lets collision queries reject
+distant polygons by bounding box before performing point-in-polygon tests.
 
-### Moving obstacles
+### 2.2 What is not built
 
-For moving obstacles, a separate state for every time sample would make long
-waits expensive. The planner instead uses safe-interval states:
+The workspace is not a dense 3-D Boolean array. No memory is reserved for
+every possible `(azimuth, elevation, time)` voxel.
+
+This distinction is central:
 
 ```text
-state = (azimuth, elevation, maximal safe time interval)
+Obstacle representation: original packed polygons
+Search representation:    sampled graph states and edges
 ```
 
-At a spatial state `q`, sampled occupancy is run-length encoded into intervals
+The graph may be coarse, but a returned trajectory is never approved solely
+because a coarse cell looks free. Its motion samples are sent back to
+`queryAzElTimeObstacle`, which checks the packed geometry.
 
-```math
-I_k(q) = [t_k^{start}, t_k^{end}].
-```
+### 2.3 Collision query
 
-One state represents any arrival time inside the interval. Waiting changes the
-departure time but does not create another A* node.
+Conceptually, a collision query evaluates
 
-## Motion edges
+$$
+\operatorname{blocked}(\alpha,\epsilon,t)
+=
+\bigvee_{o=1}^{N_o}
+\operatorname{inside}\left(
+(\alpha,\epsilon), P_o(t) \oplus M
+\right),
+$$
 
-Candidate neighbors are generated symmetrically at several radii and direction
-angles. No preferred direction or example-specific route is supplied.
+where:
 
-For displacement `d = [d_az, d_el]`, the edge uses a synchronized
-rest-to-rest trapezoidal or triangular slew. Its duration is the shortest
-duration satisfying both axes' configured velocity and acceleration limits.
+- $\alpha$ is azimuth;
+- $\epsilon$ is elevation;
+- $P_o(t)$ is obstacle $o$ at time $t$;
+- $M$ is the configured angular safety margin;
+- $\oplus M$ means the obstacle is conservatively expanded by that margin.
 
-An edge from `(q_i, I_i)` to `(q_j, I_j)` is accepted only if:
+The exact interpolation and time-padding behavior comes from
+`queryAzElTimeObstacle`. Safety therefore depends on both the source
+`azElData` sampling and the planner's validation sampling.
 
-1. departure and arrival lie inside their safe intervals;
-2. the analytic slew respects rate and acceleration limits;
-3. sampled points along the complete edge are outside every packed polygon;
-4. the arrival can still reach the requested final time.
+## 3. What “adaptive” means
 
-Azimuth differences use the shortest wrapped displacement when
-`AllowAzimuthWrap` is true.
+In this implementation, adaptive means progressive global resolution. It
+does not mean quadtree or octree cell subdivision.
 
-## Coarse-to-fine policy
+If the finest requested grid spacing is $h$, the default schedule is:
 
-When no graph is explicitly configured, the default angular schedule is
+$$
+[4h,\;2h,\;h].
+$$
+
+For example, `GridStep_deg = 0.5` produces:
 
 ```text
-[4h, 2h, h]
+[2.0, 1.0, 0.5] degrees
 ```
 
-where `h` is `GridStep_deg`, or one degree when omitted.
+The coarse graph is cheap and often reveals the useful topology. A finer
+graph can represent narrower gaps and usually produces a shorter route.
 
-For static scenes, the same any-angle A* is run from coarse to fine. Every
-successful level is exactly validated and the shortest result is retained.
-For moving scenes, safe-interval A* starts coarse and stops at the first
-validated solution; finer levels are attempted only after failure.
+![Progressive static search](figures/02_progressive_static_search.png)
 
-This policy avoids allocating a global fine 3-D raster. Narrow passages remain
-discoverable at `h`, while open topology is tested cheaply first.
+In this example:
 
-If `GridStep_deg` and `PrimitiveRadii_deg` are both supplied, they define one
-explicit graph and are used directly. This keeps carefully configured dynamic
-problems reproducible.
+- the 4-degree graph cannot represent a route;
+- the 2-degree and 1-degree graphs find valid candidates;
+- the 0.5-degree graph finds the shortest validated candidate;
+- red dots are blocked graph states, while the outlined polygon remains the
+  authoritative obstacle.
 
-## Search pseudocode
+For static geometry, every successful level is retained and compared. For
+moving geometry, the planner can stop after a valid result when the objective
+or a direct-path certificate permits it. Every attempted level is recorded
+in `plan.resolutionAttempts`.
+
+## 4. Static-obstacle mode
+
+An obstacle workspace is considered static over the planning interval when
+its polygon geometry does not change. Time then adds no new connectivity
+information, so the planner searches a 2-D graph.
+
+### 4.1 Graph construction
+
+At resolution $h$, grid states are:
+
+$$
+q_{ij} =
+\begin{bmatrix}
+\alpha_{\min}+ih \\
+\epsilon_{\min}+jh
+\end{bmatrix}.
+$$
+
+Each grid state is marked free or occupied by querying the packed polygon
+workspace. The search initially considers the eight neighboring grid states.
+Diagonal corner-cutting through occupied cells is forbidden.
+
+### 4.2 A* ordering
+
+Ordinary A* assigns each state:
+
+$$
+f(q)=g(q)+w\,h(q),
+$$
+
+where:
+
+- $g(q)$ is the route length from the start to $q$;
+- $h(q)$ is straight-line angular distance from $q$ to the goal;
+- $w$ is `HeuristicWeight`.
+
+With $w=1$, the heuristic is admissible on the basic Euclidean graph. Values
+greater than one make the search greedier and often faster, but remove the
+ordinary graph-optimality guarantee.
+
+Angular distance is:
+
+$$
+d(q_1,q_2)=
+\sqrt{
+\Delta\alpha_{\mathrm{wrap}}^2+
+\Delta\epsilon^2
+}.
+$$
+
+When wrapping is enabled, $\Delta\alpha_{\mathrm{wrap}}$ is the shortest
+signed azimuth displacement across the 360-degree boundary.
+
+### 4.3 Any-angle relaxation
+
+A raw eight-connected path contains staircase-shaped turns. The static search
+therefore applies a Theta*-style parent relaxation:
+
+1. Expand the current grid state.
+2. For each neighbor, inspect the current state's parent.
+3. If that parent has grid line of sight to the neighbor, connect the
+   neighbor directly to the parent.
+4. Otherwise, use the ordinary current-to-neighbor edge.
+
+This produces a shorter polyline with fewer corners while preserving the
+simple A* implementation. The line-of-sight test guides topology; the final
+retimed command is still checked against the packed polygons.
+
+### 4.4 Static pseudocode
 
 ```text
-workspace = pack(original obstacle polygons)
-levels = choose coarse-to-fine angular resolutions
+best = no solution
 
-if obstacle geometry is static:
-    best = none
-    for h in levels:
-        occupancy = sample one 2-D grid at resolution h
-        route = any-angle A*(occupancy)
-        command = rest-to-rest retime(route)
-        if exact_polygon_validation(command):
-            best = shorter(best, command)
-    return best
+for grid step from coarse to fine:
+    sample a 2-D occupancy graph
+    route = any-angle A*(graph, start, goal)
 
-for h in levels:
-    open = {(start_position, start_safe_interval)}
-    while open is not empty:
-        current = pop_lowest_f(open)
-        for symmetric motion primitive from current:
-            intervals = cached_safe_intervals(neighbor)
-            departure = earliest_exact_valid_departure(
-                current, neighbor, intervals)
-            relax(neighbor_interval, departure)
-    if exact_polygon_validation(goal_command):
-        return goal_command
+    if route exists:
+        command = retime every segment as a rest-to-rest slew
 
-return no_path
+        if exact sampled polygon validation passes:
+            retain command if its angular length is shorter
+
+return best
 ```
 
-## Practical tuning
+## 5. Moving-obstacle mode
 
-Start with:
+For moving obstacles, the same az/el point may alternate between free and
+blocked. A conventional 3-D time-expanded grid would create one state for
+every spatial point at every time step:
+
+$$
+N_{\mathrm{dense}} =
+N_{\alpha}N_{\epsilon}N_t.
+$$
+
+This becomes large quickly. A 720-by-360 angular grid over 86,400 time
+samples would contain more than 22 billion possible states.
+
+The planner instead uses a safe-interval state:
+
+$$
+s=(q,I_k(q)),
+$$
+
+where $q=(\alpha,\epsilon)$ and $I_k(q)$ is one maximal time interval during
+which $q$ is sampled as collision-free.
+
+![Dynamic safe intervals](figures/03_dynamic_safe_intervals.png)
+
+### 5.1 Safe intervals
+
+For a fixed spatial state, collision is evaluated at the obstacle event
+times. A Boolean sequence such as
+
+```text
+safe safe safe blocked blocked safe safe safe safe
+```
+
+is run-length compressed into maximal safe intervals:
+
+```text
+[first time, time before blockage]
+[first time after blockage, last time]
+```
+
+One A* node represents arrival anywhere inside one interval. Waiting changes
+the departure time within that node; it does not create a chain of duplicate
+states at consecutive time samples.
+
+Safe intervals are computed lazily and cached by spatial state. Unvisited
+regions do not pay the safe-interval query cost.
+
+### 5.2 Neighbor generation
+
+The dynamic graph generates symmetric motion candidates from:
+
+- direction angles separated by `DirectionStep_deg`, or explicit
+  `DirectionAngles_deg`;
+- radii from `PrimitiveRadii_deg`, or
+  `GridStep_deg .* PrimitiveRadiusMultipliers`;
+- the exact goal position when useful.
+
+There is no preferred travel direction and no scenario-specific route hint.
+
+### 5.3 Scheduling a transition
+
+Suppose the current state is $(q_i,I_i)$ and a candidate state is
+$(q_j,I_j)$. Let the slew duration be $\tau_{ij}$. A departure time $t_d$
+must satisfy:
+
+$$
+t_d \in I_i
+\quad\text{and}\quad
+t_d+\tau_{ij}\in I_j.
+$$
+
+The feasible departure range is therefore:
+
+$$
+\left[
+\max(t_{\mathrm{arrival}}, I_j^{\mathrm{start}}-\tau_{ij}),
+\;
+\min(I_i^{\mathrm{end}}, I_j^{\mathrm{end}}-\tau_{ij})
+\right].
+$$
+
+Candidate departures are tested in batches. The complete continuous-time
+motion profile is sampled at `CollisionCheckStep_s`, `ValidationStep_s`, and
+aligned event times. The first valid departure defines the edge.
+
+### 5.4 Dynamic A* priority
+
+The dynamic search orders nodes by:
+
+$$
+f(s)=t_{\mathrm{arrival}}(s)+
+w\,\hat{\tau}(s,\mathrm{goal}),
+$$
+
+where $\hat{\tau}$ is the minimum obstacle-free slew time to the goal under
+the actuator limits.
+
+This is an earliest-arrival search ordering. When the public objective is
+`minimumAngularDistance`, the public planner compares successful resolution
+candidates using their angular lengths, but the internal dynamic A* search
+does not exhaustively optimize angular length. This is why a successful
+dynamic route should not be described as a globally shortest continuous
+path.
+
+### 5.5 Dynamic pseudocode
+
+```text
+event times = start, stop, and all obstacle slice times
+start intervals = safeIntervals(start position)
+open = {(start position, containing start interval)}
+
+while open is not empty:
+    current = state with smallest arrival + weighted time heuristic
+
+    if current is the required goal interval:
+        reconstruct route
+        break
+
+    for each symmetric spatial neighbor:
+        neighbor intervals = cached safeIntervals(neighbor)
+        motion = minimum-time rest-to-rest slew(current, neighbor)
+
+        for each neighbor interval:
+            find earliest valid departure from current interval
+            sample the moving edge against packed polygons
+
+            if collision-free and arrival improves this state:
+                relax(neighbor, interval)
+
+dense-validate the reconstructed command
+return it only if every validation sample is free
+```
+
+## 6. Turning an edge into a physical slew
+
+The search cannot assume that a boresight teleports between graph points.
+Every edge is retimed as a synchronized rest-to-rest maneuver that obeys both
+axis rate and acceleration limits.
+
+![Rest-to-rest edge profiles](figures/04_rest_to_rest_edge.png)
+
+### 6.1 One-axis intuition
+
+For angular distance $D$, maximum velocity $v_{\max}$, and maximum
+acceleration $a_{\max}$, define:
+
+$$
+D_{\mathrm{switch}} =
+\frac{v_{\max}^2}{a_{\max}}.
+$$
+
+If $D\le D_{\mathrm{switch}}$, the maneuver never reaches the velocity
+limit. It has a triangular velocity profile:
+
+$$
+t_a=\sqrt{\frac{D}{a_{\max}}},
+\qquad
+T=2t_a.
+$$
+
+If $D>D_{\mathrm{switch}}$, the velocity reaches $v_{\max}$ and cruises:
+
+$$
+t_a=\frac{v_{\max}}{a_{\max}},
+$$
+
+$$
+t_c=\frac{D-v_{\max}^2/a_{\max}}{v_{\max}},
+\qquad
+T=2t_a+t_c.
+$$
+
+The left column of the figure shows the triangular case. The right column
+shows the trapezoidal case: accelerate, cruise, then decelerate.
+
+### 6.2 Two-axis synchronization
+
+For an az/el displacement
+
+$$
+\Delta q=
+\begin{bmatrix}
+\Delta\alpha\\
+\Delta\epsilon
+\end{bmatrix},
+$$
+
+the implementation describes position as:
+
+$$
+q(t)=q_0+p(t)\Delta q,
+\qquad 0\le p(t)\le1.
+$$
+
+A single normalized progress function $p(t)$ drives both axes. The allowed
+normalized rate and acceleration are selected so that:
+
+$$
+|\dot p(t)\Delta q_i|\le v_{\max,i},
+\qquad
+|\ddot p(t)\Delta q_i|\le a_{\max,i}
+$$
+
+for both axes. This synchronizes azimuth and elevation: they start together
+and arrive together with zero rate.
+
+### 6.3 Waiting
+
+If a safe transition is not yet available, the route may remain at a
+collision-free spatial state. Waiting samples have zero rate and
+acceleration and are marked in `plan.isWaiting`.
+
+## 7. Exact validation and safety
+
+“Exact” in the code means exact polygon queries at the chosen sample times,
+not a mathematical proof over all continuous time.
+
+Validation uses:
+
+- the packed polygon boundaries;
+- the configured safety margin;
+- regular collision samples along each analytic edge;
+- samples aligned to event and validation grids;
+- a final dense pass over the reconstructed command.
+
+A useful conservative sampling rule is:
+
+$$
+\Delta t_{\mathrm{validation}}
+\ll
+\frac{\text{smallest important angular clearance}}
+{\text{largest relative angular speed}}.
+$$
+
+If an obstacle or boresight can cross a narrow gap between validation
+samples, reduce `ValidationStep_s`, reduce `CollisionCheckStep_s`, increase
+the safety margin, or provide more closely spaced obstacle slices.
+
+## 8. Azimuth wrapping
+
+With `AllowAzimuthWrap = true`, azimuth is topologically circular. For a
+360-degree range:
+
+```text
+179 deg and -179 deg are 2 deg apart, not 358 deg apart.
+```
+
+The shortest wrapped difference is:
+
+$$
+\Delta\alpha_{\mathrm{wrap}}
+=
+\operatorname{mod}
+\left(
+\Delta\alpha+\frac{S}{2},S
+\right)
+-\frac{S}{2},
+$$
+
+where $S$ is the azimuth span, normally 360 degrees.
+
+The planner maintains an unwrapped internal trace for smooth interpolation
+and returns both:
+
+- `position_deg`: canonical wrapped azimuth;
+- `positionUnwrapped_deg`: continuous azimuth used by the motion profile.
+
+Wrapped limits must span exactly 360 degrees.
+
+## 9. Important options
+
+| Option | Default | Effect |
+| --- | ---: | --- |
+| `GridStep_deg` | `1` | Finest angular resolution |
+| `GridStepSchedule_deg` | `[4h 2h h]` | Coarse-to-fine levels |
+| `SampleTime_s` | `0.5` | Output command sample spacing |
+| `ValidationStep_s` | automatic | Final trajectory validation spacing |
+| `CollisionCheckStep_s` | validation step | Per-edge collision spacing |
+| `SafetyMargin_deg` | `0` | Conservative angular obstacle expansion |
+| `PrimitiveRadiusMultipliers` | `[1 2 4 8]` | Dynamic edge lengths in grid-step units |
+| `DirectionStep_deg` | `45` | Dynamic edge direction spacing |
+| `HeuristicWeight` | `1` | A* heuristic multiplier |
+| `MaximumSafeIntervalSamples` | `10000` | Cap on event times used for intervals |
+| `MaximumDepartureTrials` | `64` | Candidate departures tested per edge |
+| `MaxExpansions` | `100000` | Search expansion budget |
+| `MaxSearchTime_s` | `45` | Total planner wall-time budget |
+| `TimePaddingSamples` | `1` | Temporal obstacle padding |
+| `AllowAzimuthWrap` | inferred | Enable circular azimuth |
+| `Objective` | `minimumAngularDistance` | Public candidate-selection objective |
+| `MaximumVerticesPerRegion` | `500` | Boundary cap while packing obstacles |
+
+An explicitly supplied `GridStep_deg` and `PrimitiveRadii_deg` define one
+dynamic graph unless a schedule is also supplied.
+
+## 10. Practical tuning workflow
+
+Use this order:
+
+1. Choose a safety margin based on pointing uncertainty and modeling error.
+2. Set validation timing from relative motion and the narrowest clearance
+   that matters.
+3. Choose `GridStep_deg` small enough to represent the narrowest traversable
+   passage.
+4. Let the coarse schedule accelerate open-space discovery.
+5. Add larger primitive radii for large open dynamic scenes.
+6. Reduce `DirectionStep_deg` only when the scene needs more steering
+   directions; this increases branching.
+7. Increase search time or expansions only after confirming that the graph
+   can represent the passage.
+
+Example:
 
 ```matlab
 options = struct( ...
     "GridStep_deg", 0.5, ...
     "GridStepSchedule_deg", [2 1 0.5], ...
+    "SampleTime_s", 0.2, ...
+    "ValidationStep_s", 0.05, ...
+    "CollisionCheckStep_s", 0.05, ...
+    "SafetyMargin_deg", 0.25, ...
     "PrimitiveRadiusMultipliers", [1 2 4 8], ...
     "DirectionStep_deg", 45, ...
     "HeuristicWeight", 1, ...
-    "SafetyMargin_deg", 0.25, ...
     "MaxSearchTime_s", 30);
 ```
 
-- Reduce `GridStep_deg` only when the narrowest useful passage cannot be
-  represented.
-- Add longer primitive radii for large open workspaces.
-- Reduce `DirectionStep_deg` when diagonal geometry needs more angular
-  choices; this increases branching.
-- Keep `HeuristicWeight = 1` for ordinary A*. Values above one trade graph
-  optimality for speed.
-- Set `ValidationStep_s` from obstacle motion and required safety fidelity,
-  not from animation frame rate.
-- Increase `MaximumSafeIntervalSamples` when short opening windows must be
-  preserved.
+## 11. Reading the result
 
-## Guarantees and limits
+Important fields in `plan` include:
 
-- Returned commands are validated against the original polygons at the
-  configured temporal and edge-sampling resolution.
-- Velocity and acceleration limits are enforced by analytic motion profiles.
-- A direct exact-valid path attains the global angular-distance lower bound.
-- Other optimality claims apply only to the configured finite graph and only
-  when the A* heuristic weight is one.
-- Coarser failed levels do not imply no continuous path; the finest configured
-  level defines search resolution completeness.
-- The current public planner supports rest-to-rest boundary states. Nonzero
-  boundary rate or acceleration is rejected explicitly.
-- Polygon motion between input samples is represented by the workspace query
-  rules. Safety-critical use must choose input and validation sampling that
-  bounds that interpolation error.
+| Field | Meaning |
+| --- | --- |
+| `success` | Whether a validated trajectory was found |
+| `message` | Human-readable result |
+| `method` | Static or dynamic planner path |
+| `time_s` | Command sample times |
+| `position_deg` | Wrapped azimuth/elevation command |
+| `positionUnwrapped_deg` | Continuous internal command |
+| `velocity_deg_s` | Commanded angular velocity |
+| `acceleration_deg_s2` | Commanded angular acceleration |
+| `isWaiting` | Samples with no motion |
+| `angularPathLength_deg` | Geometric length of selected route |
+| `selectedGridStep_deg` | Resolution that supplied the selected route |
+| `exactCollisionValidated` | Whether final sampled polygon validation passed |
+| `expandedNodeCount` | Total expanded nodes |
+| `searchElapsed_s` | Planner wall time |
+| `resolutionAttempts` | Result and candidate from every attempted level |
+| `workspace` | Packed obstacle workspace |
+| `safeIntervalSearch` | Dynamic-search diagnostics |
 
-## Maintenance boundaries
+Plot or animate the result with:
 
-The core is intentionally split by responsibility:
+```matlab
+animateAzElAvoidancePlan(azElData, plan);
+```
 
-- `planAzElAdaptiveAStar.m`: input normalization, resolution loop, mode choice.
-- `private/searchAzElAnyAngleAStar.m`: static A* graph search.
-- `private/searchAzElSafeIntervalAStar.m`: dynamic safe-interval A*.
-- `queryAzElTimeObstacle.m`: authoritative collision query.
-- `planAzElAutonomousCorridor.m`: static retiming and exact validation.
+The animation shows 2-D az/el motion and the corresponding 3-D
+az/el/time route. Successful candidates that were not selected can also be
+drawn from `plan.resolutionAttempts`.
 
-Scenario generators and assertions live under `examples`; they do not inject
-routes, one-way edges, corridors, or preferred directions.
+## 12. Guarantees and non-guarantees
 
-## Search visualization
+### What the planner guarantees under its configured model
 
-Every numbered example uses `animateAzElAvoidancePlan`. Its 2-D and 3-D views
-show the display-decimated selected lattice, every successful resolution
-candidate that was not selected, and the selected route. Candidate trajectories
-come from `plan.resolutionAttempts`; they are actual exact-validated planner
-outputs rather than reconstructed display approximations.
+- Returned trajectories respect the analytic rest-to-rest velocity and
+  acceleration limits.
+- Returned trajectories passed packed-polygon collision checks at all
+  configured validation samples.
+- Azimuth wrapping is handled consistently when enabled.
+- A direct collision-free route has the Euclidean angular-distance lower
+  bound and is therefore globally shortest in angular distance.
+- With `HeuristicWeight = 1`, the static search uses an admissible Euclidean
+  heuristic for its base grid. The Theta*-style parent relaxation improves
+  route shape, but it is not a proof of the globally shortest path in the
+  continuous plane.
+
+### What it does not guarantee
+
+- It does not prove continuous-time collision freedom between samples.
+- It does not prove the globally shortest path in continuous az/el/time
+  space, except for the certified direct-path case.
+- A coarse failed graph does not prove that no continuous path exists.
+- Safe intervals are derived from capped event samples; very short openings
+  can disappear if event sampling is too sparse.
+- The dynamic search is earliest-arrival ordered, even when the public
+  candidate-selection objective is angular distance.
+- The current implementation does not support nonzero endpoint rates or
+  accelerations.
+
+The most accurate description is:
+
+> A progressively refined, sample-validated A* planner with analytic
+> rest-to-rest motion edges and safe-interval compression for dynamic
+> obstacles.
+
+## 13. Computational cost
+
+### Static mode
+
+For $N=N_\alpha N_\epsilon$ sampled spatial states, ordinary grid A* is
+approximately:
+
+$$
+O(N\log N)
+$$
+
+in the worst explored region, with additional line-of-sight and exact
+validation work. Coarse levels reduce $N$ dramatically because halving the
+grid spacing in both axes creates roughly four times as many states.
+
+### Dynamic mode
+
+A dense time-expanded graph would scale with $N_\alpha N_\epsilon N_t$.
+Safe intervals replace $N_t$ with the much smaller number of free runs at
+states that are actually visited:
+
+$$
+N_{\mathrm{SIPP}}
+\approx
+\sum_{q\in Q_{\mathrm{visited}}}
+K(q),
+$$
+
+where $K(q)$ is the number of safe intervals at $q$.
+
+The dominant dynamic costs are usually:
+
+- polygon queries used to construct new safe-interval cache entries;
+- candidate departure checks;
+- branching from directions and primitive radii;
+- finer spatial resolutions.
+
+## 14. File map
+
+| File | Responsibility |
+| --- | --- |
+| `planAzElAdaptiveAStar.m` | Public API, normalization, mode selection, progressive schedule |
+| `buildAzElTimeObstacleWorkspace.m` | Packs original polygon slices |
+| `queryAzElTimeObstacle.m` | Authoritative point/time collision query |
+| `planAzElAutonomousCorridor.m` | Static route retiming and validation |
+| `private/searchAzElAnyAngleAStar.m` | Static 2-D any-angle A* |
+| `private/searchAzElSafeIntervalAStar.m` | Dynamic safe-interval A* |
+| `animateAzElAvoidancePlan.m` | 2-D and 3-D route animation |
+| `docs/generateAdaptiveAStarDocumentationFigures.m` | Rebuilds this guide's figures |
+
+Scenario generation belongs under `examples`. Example files may choose
+planner settings, but they do not inject routes, one-way edges, preferred
+directions, or hand-authored corridors.
+
+## 15. Reproducing the figures
+
+From the repository root:
+
+```matlab
+addpath(genpath(fullfile(pwd, "standalone", "azElAvoidance")));
+files = generateAdaptiveAStarDocumentationFigures();
+disp(files);
+```
+
+The generator runs the real planner and writes PNG files under
+`standalone/azElAvoidance/docs/figures`.
+
+## 16. References
+
+1. P. E. Hart, N. J. Nilsson, and B. Raphael, “A Formal Basis for the
+   Heuristic Determination of Minimum Cost Paths,” *IEEE Transactions on
+   Systems Science and Cybernetics*, vol. 4, no. 2, pp. 100-107, 1968.
+   [DOI: 10.1109/TSSC.1968.300136](https://doi.org/10.1109/TSSC.1968.300136)
+2. A. Nash, K. Daniel, S. Koenig, and A. Felner, “Theta*: Any-Angle Path
+   Planning on Grids,” *Proceedings of AAAI*, pp. 1177-1183, 2007.
+   [AAAI paper](https://aaai.org/Papers/AAAI/2007/AAAI07-187.pdf)
+3. M. Phillips and M. Likhachev, “SIPP: Safe Interval Path Planning for
+   Dynamic Environments,” *Proceedings of the IEEE International Conference
+   on Robotics and Automation*, 2011.
+   [Carnegie Mellon publication](https://www.ri.cmu.edu/publications/sipp-safe-interval-path-planning-for-dynamic-environments/)
+
+These references motivate the search structures. This MATLAB implementation
+is a project-specific engineering design, not a line-for-line reproduction
+of any one paper.
