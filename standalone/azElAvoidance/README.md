@@ -22,9 +22,12 @@ tests are in `tests`, and performance runners are in `benchmarks`.
 See [`examples/README.md`](examples/README.md) for the numbered example list
 and an algorithm-by-algorithm breakdown.
 
-The complete mathematical design, pseudocode, guarantees, complexity
-analysis, validation strategy, and references are in the
-[`Unified Azimuth-Elevation Space-Time Funnel Planning` white paper](../../docs/az_el_obstacle_avoidance_white_paper.md).
+The mathematical design, pseudocode, guarantees, complexity, and maintenance
+boundaries for the planner used by every numbered example are documented in
+[`ADAPTIVE_ASTAR_PLANNER.md`](docs/ADAPTIVE_ASTAR_PLANNER.md).
+For a visual explanation of packed polygons, raster memory, and local
+coarse-to-fine refinement, see
+[`WORKSPACE_DISCRETIZATION.md`](docs/WORKSPACE_DISCRETIZATION.md).
 
 ## Input data
 
@@ -80,6 +83,80 @@ country. It applies the translation-only display mapping
 run without Orekit. This preserves the recognizable country outlines but is
 not a physical sensor-frame projection.
 
+## Coarse-to-fine workspace raster
+
+The packed polygon workspace is not a giant voxel array. Build a small
+global raster first, then add fine patches only where topology or clearance
+needs more detail:
+
+```matlab
+workspace = buildAzElTimeObstacleWorkspace(azElData);
+pyramid = buildAzElTimeWorkspacePyramid( ...
+    workspace, struct( ...
+    "AzimuthLimitsDeg", [-180 180], ...
+    "ElevationLimitsDeg", [-90 90], ...
+    "TimeLimitsSeconds", [time_s(1) time_s(end)]), struct( ...
+    "CoarseCellSizeDeg", 2, ...
+    "FineCellSizeDeg", 0.25, ...
+    "MaximumCoarseTimeSamples", 200));
+
+region = struct( ...
+    "AzimuthLimitsDeg", [-20 30], ...
+    "ElevationLimitsDeg", [10 45], ...
+    "TimeLimitsSeconds", [2700 3000]);
+[pyramid, patch] = refineAzElTimeWorkspacePyramid( ...
+    pyramid, workspace, region);
+
+plotAzElTimeWorkspacePyramid(pyramid);
+```
+
+Run `demoCoarseToFineWorkspace` for a complete visual example. The raster is
+for inspection and search acceleration; validate final paths with
+`queryAzElTimeObstacle`.
+
+## Adaptive 2-D and 3-D discretization
+
+For a planning mesh that stays coarse in open space and refines only near
+moving obstacle boundaries, build an adaptive az/el quadtree:
+
+```matlab
+mesh = buildAdaptiveAzElTimeMesh(workspace, struct( ...
+    "AzimuthLimitsDeg", [-180 180], ...
+    "ElevationLimitsDeg", [-90 90], ...
+    "TimeLimitsSeconds", [time_s(1) time_s(end)]), struct( ...
+    "InitialCellSizeDeg", 8, ...
+    "MinimumCellSizeDeg", 0.5, ...
+    "MaximumTimeSamples", 300, ...
+    "SafetyMarginDeg", 1, ...
+    "AllowAzimuthWrap", true));
+
+plotAdaptiveAzElTimeMesh(mesh, struct( ...
+    "ViewMode", "combined", ...       % "2d", "3d", or "combined"
+    "VolumeContent", "free", ...      % "free", "blocked", "unresolved"
+    "ShowCellEdges", false));         % turn on for 3-D prism inspection
+```
+
+In 2-D, every rectangle is one leaf at the selected time. In 3-D, each leaf
+is extruded only through its compressed free or occupied time intervals.
+`mesh.AdjacencyEdges` and each leaf's `NeighborIds` are ready for graph
+search. Minimum-size mixed cells are marked unresolved and treated as
+occupied.
+
+Run `demoAdaptiveAzElDiscretization` to see the adaptive cells and sparse
+3-D travelable volume. This mesh accelerates search and exposes topology;
+the packed polygons remain authoritative for final trajectory validation.
+
+The adaptive mesh can also be supplied directly to
+`planAzElKinodynamicAStar` as a conservative collision model. The complete
+cross-example timing and accuracy experiment is reproducible with:
+
+```matlab
+report = benchmarkAdaptiveMeshKinodynamicAStar();
+```
+
+See [`ADAPTIVE_KINODYNAMIC_BENCHMARK.md`](docs/ADAPTIVE_KINODYNAMIC_BENCHMARK.md)
+for measured results and the recommended hybrid architecture.
+
 ## Unified planner
 
 ```matlab
@@ -103,13 +180,14 @@ limits = struct( ...
 
 options = struct( ...
     "SampleTime_s", 0.1, ...
-    "GuideGridStep_deg", 0.1, ...
+    "GridStep_deg", 0.5, ...
+    "GridStepSchedule_deg", [2 1 0.5], ...
     "SafetyMargin_deg", 1, ...
     "AllowAzimuthWrap", true, ...
     "Objective", "minimumAngularDistance", ...
     "MaxSearchTime_s", 30);
 
-plan = planAzElSpaceTimeFunnel( ...
+plan = planAzElAdaptiveAStar( ...
     azElData, startState, stopState, limits, options);
 ```
 
@@ -118,11 +196,10 @@ The steering command is in `plan.time_s` and `plan.position_deg`.
 `-180/180` seam. Velocity, acceleration, waiting samples, search statistics,
 and the packed obstacle workspace are also returned.
 
-The funnel first tests the globally shortest direct wait-and-slew command.
-Static obstacle volumes use any-angle topology acceleration and dynamic
-retiming. Moving volumes use event-compressed safe intervals, followed by
-optional kinodynamic ARA* refinement. Every returned sample is checked
-against the original packed polygons.
+Static obstacle volumes use progressive any-angle A*. Moving volumes use
+progressive event-compressed safe-interval A*. Both modes use analytic
+rest-to-rest slews and validate the command against the original packed
+polygons.
 
 ## Anytime kinodynamic ARA*
 
@@ -165,40 +242,18 @@ is retained with the last completed certificate. A bound of one means exact
 optimality on the configured finite lattice, not in continuous space.
 
 The low-level ARA* function remains available for algorithm research. The
-numbered kinodynamic detour example uses the unified funnel:
+numbered kinodynamic detour example uses the unified adaptive A* planner:
 
 ```matlab
 [result, handles] = example03KinodynamicDetour();
 ```
 
-## Dynamic space-time funnel planner
-
-`planAzElSpaceTimeFunnel` is the high-level planner for static or moving 3-D
-azimuth/elevation/time obstacle volumes:
-
-```matlab
-options = struct( ...
-    "SampleTime_s", 0.25, ...
-    "GuideGridStep_deg", 1, ...
-    "SafetyMargin_deg", 0.1, ...
-    "CorridorRadiusSchedule_deg", [2 4 8], ...
-    "EpsilonSchedule", [2.5 1.5 1]);
-
-plan = planAzElSpaceTimeFunnel( ...
-    azElData, startState, stopState, limits, options);
-```
-
-It first tests a direct wait-and-slew trajectory. When that succeeds,
-`plan.optimalGlobally` is true because the route reaches the wrapped angular
-endpoint lower bound. Static volumes use an any-angle topology accelerator.
-Dynamic volumes use event-compressed safe-interval search to discover when
-to wait and how to pass without creating one node per time sample. Widening
-spatial funnels can focus kinodynamic ARA* around the resulting guide.
+## Dynamic safe-interval A*
 
 Run the moving two-obstacle example:
 
 ```matlab
-result = example04SpaceTimeFunnel();
+result = example04DynamicSafeIntervals();
 ```
 
 Run the animated four-ring timing gauntlet:
@@ -268,14 +323,11 @@ real multi-cell traversal, and endpoint motion through closed cells.
 Run the default 86,401-slice long-horizon benchmark:
 
 ```matlab
-benchmark = benchmarkSpaceTimeFunnelLongHorizon();
+benchmark = benchmarkAdaptiveAStarLongHorizon();
 ```
 
-The concise design summary is in
-[`SPACE_TIME_FUNNEL.md`](docs/SPACE_TIME_FUNNEL.md). The full derivation,
-pseudocode, guarantees, complexity analysis, and scholarly references are in
-the
-[`Version 2 technical white paper`](../../docs/az_el_obstacle_avoidance_white_paper.md).
+The design summary is in
+[`ADAPTIVE_ASTAR_PLANNER.md`](docs/ADAPTIVE_ASTAR_PLANNER.md).
 
 ## Static topology component
 
@@ -283,9 +335,9 @@ The technical design, mathematical scope, guarantees, complexity analysis,
 and benchmark results are documented in
 [`docs/autonomous_az_el_corridor_planner_white_paper.md`](../../docs/autonomous_az_el_corridor_planner_white_paper.md).
 
-The funnel automatically invokes its autonomous corridor component for
-difficult static topology without a supplied guide path. The lower-level
-component can still be tested directly:
+The adaptive planner invokes its static any-angle component for difficult
+static topology without a supplied guide path. The lower-level component can
+still be tested directly:
 
 ```matlab
 options = struct( ...
@@ -317,9 +369,8 @@ angular path length while concentrating search near the discovered route.
 The default coarse mode generally gives the best computation-time and
 maneuver-time balance.
 
-Numbered examples do not call this component directly. They call
-`planAzElSpaceTimeFunnel`, which selects static topology only when every
-obstacle slice is unchanged over the requested interval.
+Numbered examples call `planAzElAdaptiveAStar`, which selects static topology
+only when every obstacle slice is unchanged over the requested interval.
 
 ## Animate the completed plan
 
@@ -331,10 +382,11 @@ view = animateAzElAvoidancePlan( ...
     "MaximumDisplayedSlices", 100));
 ```
 
-The 2-D pane shows the current obstacle boundary, current boresight, traveled
-path, and future path. The 3-D pane places the route and accumulating
-obstacle slices in azimuth/elevation/time space. Display decimation does not
-change the plan or collision workspace.
+The 2-D pane shows the selected A* lattice, every valid rejected resolution
+route, the selected route, current obstacle boundary, and current boresight.
+The 3-D pane places the same search information beside accumulating obstacle
+slices in azimuth/elevation/time space. Display decimation does not change
+the plan or collision workspace.
 
 ## Workspace and collision queries
 
@@ -367,9 +419,9 @@ No Orekit or scenario object is used:
 5. `example09UTrapEscape`
 
 The five-turn spiral is intentionally beyond the practical search range of
-the raw kinodynamic lattice. It calls `planAzElSpaceTimeFunnel`, supplies no
-guide path or direction, and asserts that the funnel's static-topology mode
-autonomously winds through the spiral before reaching its center. The
+the raw kinodynamic lattice. It calls `planAzElAdaptiveAStar`, supplies no
+guide path or direction, and asserts that static any-angle A* autonomously
+winds through the spiral before reaching its center. The
 discovered polyline is dynamically retimed and densely collision-checked.
 Because the shortest legal path enters at the wall's outer opening and rounds
 its inner tip, its net polar winding is slightly above four turns even though

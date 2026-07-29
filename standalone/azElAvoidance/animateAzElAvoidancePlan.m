@@ -16,6 +16,10 @@ function handles = animateAzElAvoidancePlan(azElData, plan, options)
 %   ShowFuturePath           Show the remaining path (default true).
 %   ShowObstacleSlices       Reveal accumulated 3-D slices (default true).
 %   ObstacleFaceAlpha        3-D slice opacity (default 0.08).
+%   ShowDiscretization       Show the selected A* lattice (default true).
+%   ShowCandidateRoutes      Show rejected valid routes (default true).
+%   MaximumDiscretizationLines  Per-axis lattice-line cap (default 40).
+%   MaximumDiscretizationTimePlanes  3-D time-plane cap (default 6).
 %   MovingTarget             Optional struct with time_s and position_deg.
 %   FigureVisible            "on" or "off" (default "on").
 
@@ -96,6 +100,12 @@ function view = initializeTwoDimensionalView( ...
 hold(ax, "on");
 grid(ax, "on");
 box(ax, "on");
+view.Discretization = plotDiscretization2D(ax, plan, options);
+view.CandidateRoutes = plotCandidateRoutes2D(ax, plan, options);
+view.SelectedRoute = plot(ax, ...
+    plan.position_deg(:, 1), plan.position_deg(:, 2), "-", ...
+    "Color", [0.02 0.24 0.62], "LineWidth", 2.8, ...
+    "DisplayName", "Selected route");
 view.FuturePath = plot(ax, NaN, NaN, "--", ...
     "Color", [0.65 0.67 0.72], "LineWidth", 1.1, ...
     "DisplayName", "Future path", ...
@@ -151,6 +161,16 @@ function viewState = initializeThreeDimensionalView( ...
 hold(ax, "on");
 grid(ax, "on");
 box(ax, "on");
+viewState.Discretization = ...
+    plotDiscretization3D(ax, plan, options);
+viewState.CandidateRoutes = ...
+    plotCandidateRoutes3D(ax, plan, options);
+[selectedAz, selectedEl, selectedTime] = segmentedPlan( ...
+    plan, 1:numel(plan.time_s));
+viewState.SelectedRoute = plot3(ax, ...
+    selectedAz, selectedEl, selectedTime, "-", ...
+    "Color", [0.02 0.24 0.62], "LineWidth", 2.8, ...
+    "DisplayName", "Selected route");
 [futureAz, futureEl, futureTime] = segmentedPlan(plan, ...
     1:numel(plan.time_s));
 viewState.FuturePath = plot3(ax, futureAz, futureEl, futureTime, "--", ...
@@ -355,6 +375,183 @@ elevation(wrapBreak) = NaN;
 time_s(wrapBreak) = NaN;
 end
 
+function handle = plotDiscretization2D(ax, plan, options)
+handle = gobjects(0, 1);
+if ~options.ShowDiscretization
+    return;
+end
+[azimuth, elevation, step] = latticeLineData(plan, options);
+if isempty(azimuth)
+    return;
+end
+handle = plot(ax, azimuth, elevation, ":", ...
+    "Color", [0.72 0.75 0.80], "LineWidth", 0.55, ...
+    "DisplayName", sprintf("Selected lattice (%.3g deg)", step));
+end
+
+function handle = plotDiscretization3D(ax, plan, options)
+handle = gobjects(0, 1);
+if ~options.ShowDiscretization
+    return;
+end
+[azimuth, elevation, step] = latticeLineData(plan, options);
+if isempty(azimuth)
+    return;
+end
+times = discretizationTimes(plan, ...
+    options.MaximumDiscretizationTimePlanes);
+count = numel(azimuth);
+x = repmat(azimuth, numel(times), 1);
+y = repmat(elevation, numel(times), 1);
+z = zeros(size(x));
+for k = 1:numel(times)
+    rows = (k - 1) * count + (1:count);
+    z(rows) = times(k);
+end
+handle = plot3(ax, x, y, z, ":", ...
+    "Color", [0.76 0.78 0.82], "LineWidth", 0.45, ...
+    "DisplayName", sprintf("A* lattice planes (%.3g deg)", step));
+end
+
+function handles = plotCandidateRoutes2D(ax, plan, options)
+handles = gobjects(0, 1);
+attempts = candidateAttempts(plan, options);
+for k = 1:numel(attempts)
+    [azimuth, elevation] = segmentedCandidate( ...
+        attempts(k).CandidatePosition_deg, []);
+    visibilityValue = "off";
+    if k == 1
+        visibilityValue = "on";
+    end
+    handles(end + 1, 1) = plot(ax, azimuth, elevation, "--", ...
+        "Color", [0.88 0.38 0.10], "LineWidth", 1.25, ...
+        "DisplayName", "Rejected valid contender", ...
+        "HandleVisibility", visibilityValue); %#ok<AGROW>
+end
+end
+
+function handles = plotCandidateRoutes3D(ax, plan, options)
+handles = gobjects(0, 1);
+attempts = candidateAttempts(plan, options);
+for k = 1:numel(attempts)
+    [azimuth, elevation, time_s] = segmentedCandidate( ...
+        attempts(k).CandidatePosition_deg, ...
+        attempts(k).CandidateTime_s);
+    visibilityValue = "off";
+    if k == 1
+        visibilityValue = "on";
+    end
+    handles(end + 1, 1) = plot3(ax, ...
+        azimuth, elevation, time_s, "--", ...
+        "Color", [0.88 0.38 0.10], "LineWidth", 1.25, ...
+        "DisplayName", "Rejected valid contender", ...
+        "HandleVisibility", visibilityValue); %#ok<AGROW>
+end
+end
+
+function attempts = candidateAttempts(plan, options)
+attempts = struct([]);
+if ~options.ShowCandidateRoutes || ...
+        ~isfield(plan, "resolutionAttempts") || ...
+        isempty(plan.resolutionAttempts)
+    return;
+end
+allAttempts = plan.resolutionAttempts;
+required = ["Success", "Selected", ...
+    "CandidateTime_s", "CandidatePosition_deg"];
+if ~all(isfield(allAttempts, cellstr(required)))
+    return;
+end
+success = reshape([allAttempts.Success], [], 1);
+selected = reshape([allAttempts.Selected], [], 1);
+hasPosition = reshape(arrayfun( ...
+    @(item) ~isempty(item.CandidatePosition_deg), allAttempts), [], 1);
+keep = success & ~selected & hasPosition;
+attempts = allAttempts(keep);
+end
+
+function [azimuth, elevation, time_s] = ...
+        segmentedCandidate(position, time_s)
+azimuth = position(:, 1);
+elevation = position(:, 2);
+if isempty(time_s)
+    time_s = zeros(size(azimuth));
+else
+    time_s = time_s(:);
+end
+wrapBreak = [false; abs(diff(azimuth)) > 180];
+azimuth(wrapBreak) = NaN;
+elevation(wrapBreak) = NaN;
+time_s(wrapBreak) = NaN;
+end
+
+function [azimuth, elevation, step] = ...
+        latticeLineData(plan, options)
+azimuth = zeros(0, 1);
+elevation = zeros(0, 1);
+step = NaN;
+if ~isfield(plan, "selectedGridStep_deg") || ...
+        ~isfinite(plan.selectedGridStep_deg) || ...
+        plan.selectedGridStep_deg <= 0 || ...
+        ~isfield(plan, "limits") || ...
+        ~all(isfield(plan.limits, ["azimuth_deg", "elevation_deg"]))
+    return;
+end
+step = plan.selectedGridStep_deg;
+azimuthValues = sampledGridValues( ...
+    plan.limits.azimuth_deg, step, ...
+    options.MaximumDiscretizationLines);
+elevationValues = sampledGridValues( ...
+    plan.limits.elevation_deg, step, ...
+    options.MaximumDiscretizationLines);
+verticalCount = numel(azimuthValues);
+horizontalCount = numel(elevationValues);
+azimuth = nan( ...
+    3 * (verticalCount + horizontalCount), 1);
+elevation = azimuth;
+cursor = 1;
+for value = azimuthValues
+    rows = cursor:cursor + 2;
+    azimuth(rows) = [value; value; NaN];
+    elevation(rows) = [plan.limits.elevation_deg(:); NaN];
+    cursor = cursor + 3;
+end
+for value = elevationValues
+    rows = cursor:cursor + 2;
+    azimuth(rows) = [plan.limits.azimuth_deg(:); NaN];
+    elevation(rows) = [value; value; NaN];
+    cursor = cursor + 3;
+end
+end
+
+function values = sampledGridValues(limits, step, maximumCount)
+values = limits(1):step:limits(2);
+if isempty(values) || values(end) < limits(2) - 1e-9
+    values(end + 1) = limits(2);
+end
+if numel(values) > maximumCount
+    selected = unique(round(linspace(1, numel(values), maximumCount)));
+    values = values(selected);
+end
+values = double(values);
+end
+
+function times = discretizationTimes(plan, maximumCount)
+times = zeros(0, 1);
+if isfield(plan, "safeIntervalSearch") && ...
+        isstruct(plan.safeIntervalSearch) && ...
+        isfield(plan.safeIntervalSearch, "EventTimes_s")
+    times = double(plan.safeIntervalSearch.EventTimes_s(:));
+end
+if isempty(times)
+    times = linspace(plan.time_s(1), plan.time_s(end), ...
+        min(3, maximumCount)).';
+elseif numel(times) > maximumCount
+    selected = unique(round(linspace(1, numel(times), maximumCount)));
+    times = times(selected);
+end
+end
+
 function sample = nearestSample(time_s, queryTime_s)
 [~, sample] = min(abs(time_s - queryTime_s));
 end
@@ -468,6 +665,9 @@ end
 
 function view = emptyTwoDimensionalView()
 view = struct( ...
+    "Discretization", gobjects(0, 1), ...
+    "CandidateRoutes", gobjects(0, 1), ...
+    "SelectedRoute", gobjects(1), ...
     "FuturePath", gobjects(1), ...
     "TraveledPath", gobjects(1), ...
     "CurrentBoresight", gobjects(1), ...
@@ -481,6 +681,9 @@ end
 
 function view = emptyThreeDimensionalView()
 view = struct( ...
+    "Discretization", gobjects(0, 1), ...
+    "CandidateRoutes", gobjects(0, 1), ...
+    "SelectedRoute", gobjects(1), ...
     "FuturePath", gobjects(1), ...
     "TraveledPath", gobjects(1), ...
     "CurrentBoresight", gobjects(1), ...
@@ -501,6 +704,10 @@ defaults = struct( ...
     "ShowFuturePath", true, ...
     "ShowObstacleSlices", true, ...
     "ObstacleFaceAlpha", 0.08, ...
+    "ShowDiscretization", true, ...
+    "ShowCandidateRoutes", true, ...
+    "MaximumDiscretizationLines", 40, ...
+    "MaximumDiscretizationTimePlanes", 6, ...
     "MovingTarget", [], ...
     "FigureVisible", "on");
 options = applyDefaults(input, defaults);
@@ -517,10 +724,18 @@ validateattributes(options.PauseSeconds, {'numeric'}, ...
     {'scalar', 'real', 'finite', 'nonnegative'});
 validateattributes(options.ObstacleFaceAlpha, {'numeric'}, ...
     {'scalar', 'real', 'finite', '>=', 0, '<=', 1});
+validateattributes(options.MaximumDiscretizationLines, {'numeric'}, ...
+    {'scalar', 'integer', 'positive'});
+validateattributes(options.MaximumDiscretizationTimePlanes, {'numeric'}, ...
+    {'scalar', 'integer', 'positive'});
 options.ShowFuturePath = logicalScalar( ...
     options.ShowFuturePath, "ShowFuturePath");
 options.ShowObstacleSlices = logicalScalar( ...
     options.ShowObstacleSlices, "ShowObstacleSlices");
+options.ShowDiscretization = logicalScalar( ...
+    options.ShowDiscretization, "ShowDiscretization");
+options.ShowCandidateRoutes = logicalScalar( ...
+    options.ShowCandidateRoutes, "ShowCandidateRoutes");
 options.MovingTarget = normalizeMovingTarget(options.MovingTarget);
 options.FigureVisible = lower(string(options.FigureVisible));
 if ~isscalar(options.FigureVisible) || ...

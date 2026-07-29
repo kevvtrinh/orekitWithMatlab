@@ -1,0 +1,293 @@
+function pyramid = buildAzElTimeWorkspacePyramid( ...
+        workspace, gridSpec, options)
+%BUILDAZELTIMEWORKSPACEPYRAMID Build a cheap global az/el/time raster.
+%
+% pyramid = buildAzElTimeWorkspacePyramid(workspace, gridSpec)
+% pyramid = buildAzElTimeWorkspacePyramid(workspace, gridSpec, options)
+%
+% The packed polygon workspace remains the collision authority. This
+% function creates a decimated coarse raster for inspection and global
+% search, then records where local fine patches are likely to be useful.
+% Use REFINEAZELTIMEWORKSPACEPYRAMID to rasterize only a selected
+% azimuth/elevation/time region at fine resolution.
+%
+% Required gridSpec fields:
+%   AzimuthLimitsDeg    [minimum maximum]
+%   ElevationLimitsDeg  [minimum maximum]
+%
+% Optional gridSpec field:
+%   TimeLimitsSeconds   [minimum maximum]. The default is the union of all
+%                       obstacle time ranges.
+%
+% Options:
+%   CoarseCellSizeDeg        Scalar or [azimuth elevation], default [2 2].
+%   FineCellSizeDeg          Scalar or pair, default coarse size / 4.
+%   MaximumCoarseTimeSamples Maximum retained coarse times, default 200.
+%   MaximumFineTimeSamples   Default cap used by later patches, 2000.
+%   CoarseTimeSeconds        Explicit coarse time samples, default [].
+%   TimeMapping              'nearest' or 'bracket', default 'bracket'.
+%   OutOfRangeTime           'error', 'clamp', or 'free', default 'free'.
+%   MarginCells              Coarse occupancy dilation, default 0.
+%   RefinementBandCells      Spatial cells around changes, default 1.
+%   RefinementBandTimeSamples Time pages around changes, default 1.
+%   UseParallel              Forwarded to the rasterizer, default false.
+%
+% Coarse occupancy is an approximation when time is decimated. It is useful
+% for topology and visualization, not final safety certification.
+
+if nargin < 3
+    options = struct();
+end
+validatePackedWorkspace(workspace);
+gridSpec = normalizeGridSpec(gridSpec, workspace);
+options = normalizeOptions(options);
+if isempty(options.FineCellSizeDeg)
+    options.FineCellSizeDeg = options.CoarseCellSizeDeg / 4;
+else
+    options.FineCellSizeDeg = normalizeCellSize( ...
+        options.FineCellSizeDeg, "FineCellSizeDeg");
+end
+if any(options.FineCellSizeDeg >= options.CoarseCellSizeDeg)
+    error("buildAzElTimeWorkspacePyramid:InvalidFineCellSize", ...
+        "FineCellSizeDeg must be smaller than CoarseCellSizeDeg.");
+end
+
+sourceTimes = sourceTimeSamples( ...
+    workspace, gridSpec.TimeLimitsSeconds);
+if isempty(options.CoarseTimeSeconds)
+    coarseTimes = decimateTimes( ...
+        sourceTimes, options.MaximumCoarseTimeSamples);
+else
+    coarseTimes = double(options.CoarseTimeSeconds(:));
+    validateattributes(coarseTimes, {'numeric'}, ...
+        {'vector', 'real', 'finite', 'nonempty'});
+    if any(diff(coarseTimes) <= 0) || ...
+            coarseTimes(1) < gridSpec.TimeLimitsSeconds(1) - 1e-9 || ...
+            coarseTimes(end) > gridSpec.TimeLimitsSeconds(2) + 1e-9
+        error("buildAzElTimeWorkspacePyramid:InvalidCoarseTime", ...
+            "CoarseTimeSeconds must increase within TimeLimitsSeconds.");
+    end
+end
+
+coarseSpec = struct( ...
+    "AzimuthLimitsDeg", gridSpec.AzimuthLimitsDeg, ...
+    "ElevationLimitsDeg", gridSpec.ElevationLimitsDeg, ...
+    "CellSizeDeg", options.CoarseCellSizeDeg, ...
+    "TimeSeconds", coarseTimes);
+coarseOptions = struct( ...
+    "TimeMapping", options.TimeMapping, ...
+    "MarginCells", options.MarginCells, ...
+    "OutOfRangeTime", options.OutOfRangeTime, ...
+    "UseParallel", options.UseParallel);
+coarse = rasterizeAzElTimeWorkspace( ...
+    workspace, coarseSpec, coarseOptions);
+refinementMask = makeRefinementMask( ...
+    coarse.Occupancy, options.RefinementBandCells, ...
+    options.RefinementBandTimeSamples);
+
+fineAzCount = floor(diff(gridSpec.AzimuthLimitsDeg) / ...
+    options.FineCellSizeDeg(1) + 1e-9);
+fineElCount = floor(diff(gridSpec.ElevationLimitsDeg) / ...
+    options.FineCellSizeDeg(2) + 1e-9);
+uniformFineVoxelCount = ...
+    double(fineAzCount) * double(fineElCount) * numel(sourceTimes);
+coarseVoxelCount = numel(coarse.Occupancy);
+
+pyramid = struct();
+pyramid.Format = "AzElTimeWorkspacePyramid";
+pyramid.Version = 1;
+pyramid.GridSpec = gridSpec;
+pyramid.Options = options;
+pyramid.Coarse = coarse;
+pyramid.RefinementCandidateMask = refinementMask;
+pyramid.FineSpec = struct( ...
+    "CellSizeDeg", options.FineCellSizeDeg, ...
+    "MaximumTimeSamples", options.MaximumFineTimeSamples);
+pyramid.FinePatches = repmat(emptyFinePatch(), 0, 1);
+pyramid.Stats = struct( ...
+    "SourceTimeSampleCount", numel(sourceTimes), ...
+    "CoarseTimeSampleCount", numel(coarseTimes), ...
+    "CoarseGridSize", [size(coarse.Occupancy, 1), ...
+    size(coarse.Occupancy, 2), size(coarse.Occupancy, 3)], ...
+    "CoarseVoxelCount", coarseVoxelCount, ...
+    "CoarseOccupiedVoxelCount", nnz(coarse.Occupancy), ...
+    "RefinementCandidateVoxelCount", nnz(refinementMask), ...
+    "UniformFineVoxelCountEstimate", uniformFineVoxelCount, ...
+    "UniformFineToCoarseRatio", ...
+    uniformFineVoxelCount / max(1, coarseVoxelCount), ...
+    "FinePatchCount", 0, ...
+    "FinePatchVoxelCount", 0);
+pyramid.Notes = [ ...
+    "The coarse raster is a decimated topology and visualization layer."; ...
+    "Fine patches are local rasters, not copies of the full workspace."; ...
+    "Validate final trajectories with queryAzElTimeObstacle."];
+end
+
+function validatePackedWorkspace(workspace)
+if ~isstruct(workspace) || ~isscalar(workspace) || ...
+        ~isfield(workspace, "Format") || ...
+        workspace.Format ~= "AzElTimeObstacleWorkspace" || ...
+        ~isfield(workspace, "Obstacles")
+    error("buildAzElTimeWorkspacePyramid:InvalidWorkspace", ...
+        "Use buildAzElTimeObstacleWorkspace to create workspace.");
+end
+end
+
+function gridSpec = normalizeGridSpec(gridSpec, workspace)
+required = ["AzimuthLimitsDeg", "ElevationLimitsDeg"];
+if ~isstruct(gridSpec) || ~isscalar(gridSpec) || ...
+        ~all(isfield(gridSpec, cellstr(required)))
+    error("buildAzElTimeWorkspacePyramid:InvalidGridSpec", ...
+        "gridSpec must define AzimuthLimitsDeg and ElevationLimitsDeg.");
+end
+gridSpec.AzimuthLimitsDeg = normalizeLimits( ...
+    gridSpec.AzimuthLimitsDeg, "AzimuthLimitsDeg");
+gridSpec.ElevationLimitsDeg = normalizeLimits( ...
+    gridSpec.ElevationLimitsDeg, "ElevationLimitsDeg");
+allFirst = arrayfun(@(item) item.TimeSeconds(1), ...
+    workspace.Obstacles);
+allLast = arrayfun(@(item) item.TimeSeconds(end), ...
+    workspace.Obstacles);
+available = [min(allFirst), max(allLast)];
+if ~isfield(gridSpec, "TimeLimitsSeconds") || ...
+        isempty(gridSpec.TimeLimitsSeconds)
+    gridSpec.TimeLimitsSeconds = available;
+else
+    gridSpec.TimeLimitsSeconds = normalizeLimits( ...
+        gridSpec.TimeLimitsSeconds, "TimeLimitsSeconds");
+    if gridSpec.TimeLimitsSeconds(2) < available(1) || ...
+            gridSpec.TimeLimitsSeconds(1) > available(2)
+        error("buildAzElTimeWorkspacePyramid:TimeOutsideWorkspace", ...
+            "TimeLimitsSeconds does not overlap the workspace.");
+    end
+end
+end
+
+function options = normalizeOptions(options)
+defaults = struct( ...
+    "CoarseCellSizeDeg", [2 2], ...
+    "FineCellSizeDeg", [], ...
+    "MaximumCoarseTimeSamples", 200, ...
+    "MaximumFineTimeSamples", 2000, ...
+    "CoarseTimeSeconds", [], ...
+    "TimeMapping", "bracket", ...
+    "OutOfRangeTime", "free", ...
+    "MarginCells", 0, ...
+    "RefinementBandCells", 1, ...
+    "RefinementBandTimeSamples", 1, ...
+    "UseParallel", false);
+options = applyDefaults(options, defaults);
+options.CoarseCellSizeDeg = normalizeCellSize( ...
+    options.CoarseCellSizeDeg, "CoarseCellSizeDeg");
+validateattributes(options.MaximumCoarseTimeSamples, {'numeric'}, ...
+    {'scalar', 'integer', '>=', 2});
+validateattributes(options.MaximumFineTimeSamples, {'numeric'}, ...
+    {'scalar', 'integer', '>=', 2});
+validateattributes(options.MarginCells, {'numeric'}, ...
+    {'scalar', 'integer', 'nonnegative'});
+validateattributes(options.RefinementBandCells, {'numeric'}, ...
+    {'scalar', 'integer', 'nonnegative'});
+validateattributes(options.RefinementBandTimeSamples, {'numeric'}, ...
+    {'scalar', 'integer', 'nonnegative'});
+validateattributes(options.UseParallel, {'logical', 'numeric'}, ...
+    {'scalar'});
+options.UseParallel = logical(options.UseParallel);
+options.TimeMapping = string(validatestring( ...
+    options.TimeMapping, {'nearest', 'bracket'}));
+options.OutOfRangeTime = string(validatestring( ...
+    options.OutOfRangeTime, {'error', 'clamp', 'free'}));
+end
+
+function values = sourceTimeSamples(workspace, limits)
+parts = cell(numel(workspace.Obstacles), 1);
+for k = 1:numel(workspace.Obstacles)
+    values = double(workspace.Obstacles(k).TimeSeconds(:));
+    parts{k} = values(values >= limits(1) & values <= limits(2));
+end
+values = unique([limits(:); vertcat(parts{:})]);
+end
+
+function selected = decimateTimes(values, maximum)
+values = unique(double(values(:)));
+if numel(values) <= maximum
+    selected = values;
+    return;
+end
+target = linspace(values(1), values(end), maximum).';
+index = interp1(values, (1:numel(values)).', target, "nearest");
+index = unique([1; round(index); numel(values)]);
+selected = values(index);
+end
+
+function mask = makeRefinementMask(occupancy, spatialBand, temporalBand)
+mask = false(size(occupancy));
+for k = 1:size(occupancy, 3)
+    page = occupancy(:, :, k);
+    neighborCount = conv2(single(page), ones(3, "single"), "same");
+    mask(:, :, k) = neighborCount > 0 & neighborCount < 9;
+end
+for k = 1:size(occupancy, 3) - 1
+    changed = occupancy(:, :, k) ~= occupancy(:, :, k + 1);
+    mask(:, :, k) = mask(:, :, k) | changed;
+    mask(:, :, k + 1) = mask(:, :, k + 1) | changed;
+end
+if spatialBand > 0
+    kernel = ones(2 * spatialBand + 1, "single");
+    for k = 1:size(mask, 3)
+        mask(:, :, k) = conv2( ...
+            single(mask(:, :, k)), kernel, "same") > 0;
+    end
+end
+if temporalBand > 0
+    original = mask;
+    for offset = 1:temporalBand
+        mask(:, :, 1:end - offset) = ...
+            mask(:, :, 1:end - offset) | original(:, :, 1 + offset:end);
+        mask(:, :, 1 + offset:end) = ...
+            mask(:, :, 1 + offset:end) | original(:, :, 1:end - offset);
+    end
+end
+end
+
+function value = normalizeLimits(value, name)
+validateattributes(value, {'numeric'}, ...
+    {'vector', 'numel', 2, 'real', 'finite'});
+value = reshape(double(value), 1, 2);
+if value(2) <= value(1)
+    error("buildAzElTimeWorkspacePyramid:InvalidLimits", ...
+        "%s must increase.", name);
+end
+end
+
+function value = normalizeCellSize(value, name)
+validateattributes(value, {'numeric'}, ...
+    {'vector', 'real', 'finite', 'positive'});
+if isscalar(value)
+    value = [value value];
+elseif numel(value) ~= 2
+    error("buildAzElTimeWorkspacePyramid:InvalidCellSize", ...
+        "%s must be scalar or have two elements.", name);
+end
+value = reshape(double(value), 1, 2);
+end
+
+function output = applyDefaults(input, defaults)
+output = input;
+names = fieldnames(defaults);
+for k = 1:numel(names)
+    if ~isfield(output, names{k}) || isempty(output.(names{k}))
+        output.(names{k}) = defaults.(names{k});
+    end
+end
+end
+
+function patch = emptyFinePatch()
+patch = struct( ...
+    "Id", 0, ...
+    "Region", struct(), ...
+    "Grid", struct(), ...
+    "SourceTimeSampleCount", 0, ...
+    "UsedTimeSampleCount", 0, ...
+    "TimeWasDecimated", false, ...
+    "CoveredCandidateVoxelCount", 0);
+end

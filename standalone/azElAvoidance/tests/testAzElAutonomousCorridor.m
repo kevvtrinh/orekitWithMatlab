@@ -11,15 +11,15 @@ function teardown(~)
 close all force;
 end
 
-function testFiveTurnSpiralUsesUnifiedFunnelWithoutGuide(testCase)
+function testFiveTurnSpiralUsesUnifiedAdaptiveAStarWithoutGuide(testCase)
 set(0, "DefaultFigureVisible", "off");
 result = example05FiveTurnSpiral();
 
 verifyTrue(testCase, result.plan.success);
 verifyEqual(testCase, ...
-    result.plan.method, "spaceTimeFunnelStaticTopology");
+    result.plan.method, "adaptiveAnyAngleAStar");
 verifyFalse(testCase, isfield(result.plan.options, "GuidePath_deg"));
-verifyEmpty(testCase, result.plan.options.GuideDirectionAngles_deg);
+verifyEmpty(testCase, result.plan.options.DirectionAngles_deg);
 verifyEqual(testCase, result.blockedSampleCount, 0);
 verifyGreaterThanOrEqual(testCase, ...
     result.diagnostics.windingTurns, 4);
@@ -27,7 +27,7 @@ verifyLessThan(testCase, result.plan.angularPathLength_deg, 250);
 verifyLessThan(testCase, ...
     result.diagnostics.motionCompletionTime_s, 200);
 verifyLessThan(testCase, ...
-    result.plan.staticTopologySearch.SearchElapsed_s, 30);
+    result.plan.topologySearch.SearchElapsed_s, 30);
 end
 
 function testAzimuthWrapUsesShortSeamRoute(testCase)

@@ -4,7 +4,7 @@ function result = runAzElGauntletCase( ...
 %RUNAZELGAUNTLETCASE Plan, validate, and animate one gauntlet case.
 
 if nargin < 8 || isempty(planner)
-    planner = @planAzElSpaceTimeFunnel;
+    planner = @planAzElAdaptiveAStar;
 end
 plan = planner( ...
     azElData, startState, stopState, limits, options);

@@ -102,13 +102,13 @@ result. The builder and query functions also accept this compact format
 directly.
 
 To plan directly from that data, use
-`planAzElSpaceTimeFunnel(azElData, startState, stopState, limits, options)`.
+`planAzElAdaptiveAStar(azElData, startState, stopState, limits, options)`.
 It returns time-tagged wrapped and continuous az/el position, velocity,
 acceleration, and waiting samples. It accepts one compact obstacle, a struct
 array, a cell array, or a reusable packed workspace. The unified planner
 first tests a globally shortest direct wait-and-slew certificate. It then
-selects static any-angle topology search or dynamic event-compressed safe
-intervals, with optional widening kinodynamic ARA* refinement.
+selects progressive static any-angle A* or dynamic event-compressed
+safe-interval A*.
 
 The Orekit-independent runtime is packaged in
 `standalone/azElAvoidance`. That folder contains the compact-data validator,
@@ -119,9 +119,9 @@ includes country boundaries, static topology, moving gates, a five-turn
 spiral, stop-go timing, azimuth wrapping, rotating slots, pursued-boresight,
 windmill, and randomized moving-target cases.
 
-The algorithm, mathematical objective, optimality certificate, benchmark,
-and limitations are documented in
-[`docs/az_el_obstacle_avoidance_white_paper.md`](docs/az_el_obstacle_avoidance_white_paper.md).
+The algorithm, mathematical objective, guarantees, and limitations are
+documented in
+[`standalone/azElAvoidance/docs/ADAPTIVE_ASTAR_PLANNER.md`](standalone/azElAvoidance/docs/ADAPTIVE_ASTAR_PLANNER.md).
 The predecessor static-topology component, still used internally by the
 unified planner, is documented separately in
 [`docs/autonomous_az_el_corridor_planner_white_paper.md`](docs/autonomous_az_el_corridor_planner_white_paper.md).
