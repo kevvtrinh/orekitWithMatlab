@@ -303,7 +303,8 @@ view = animateAzElAvoidancePlan( ...
     azElData, plan, struct( ...
     "ViewMode", "combined", ...  % "2d", "3d", or "combined"
     "MaximumAnimationFrames", 180, ...
-    "MaximumDisplayedSlices", 100));
+    "MaximumDisplayedSlices", 100, ...
+    "ShowPlanningSummary", true));
 ```
 
 The 2-D pane shows the selected search lattice, every valid rejected resolution
@@ -311,6 +312,31 @@ route, the selected route, current obstacle boundary, and current boresight.
 The 3-D pane places the same search information beside accumulating obstacle
 slices in azimuth/elevation/time space. Display decimation does not change
 the plan or collision workspace.
+
+`ShowPlanningSummary=true` coordinates those layers into a data-to-command
+playback. The heading reports the input `azElData`, packed workspace growth,
+search-structure growth, valid alternate routes, and final selected method.
+Contenders appear during selection and the final route is emphasized at the
+end. Dijkstra plans reveal their lattice. Plans that contain `forwardTree`
+and `backwardTree` reveal both retained RRT* spanning trees in 2-D and 3-D.
+
+Control the search-space layer independently:
+
+```matlab
+% Never draw the lattice or trees.
+options = struct("DiscretizationMode", "off");
+
+% Reveal only the completed lattice or trees on the final frame.
+options = struct("DiscretizationMode", "final");
+
+% Reveal lattice lines or tree edges progressively during playback.
+options = struct("DiscretizationMode", "build");
+```
+
+The older `ShowDiscretization=false` option remains a master off switch.
+`MaximumDiscretizationLines`, `MaximumDiscretizationTimePlanes`, and
+`MaximumDiscretizationEdges` cap graphics only; they do not alter the search
+or exact collision validation.
 
 ## Plot and export boresight kinematics
 
