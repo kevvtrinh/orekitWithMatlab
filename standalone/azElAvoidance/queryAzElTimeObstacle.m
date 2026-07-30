@@ -16,6 +16,7 @@ function [occupied, obstacleIndex, details] = queryAzElTimeObstacle( ...
 %   BoundsMarginDeg     [azimuth elevation] broad-phase margin (default 0).
 %   SafetyMarginDeg     Euclidean clearance from polygon edges (default 0).
 
+%% Normalize options and workspace
 if nargin < 5
     options = struct();
 end
@@ -23,14 +24,21 @@ if ~isstruct(workspace) || ~isfield(workspace, "Format") || ...
         workspace.Format ~= "AzElTimeObstacleWorkspace"
     workspace = buildAzElTimeObstacleWorkspace(workspace);
 end
-defaults = struct( ...
+defaultOptions = struct( ...
     "CollisionMode", "polygon", ...
     "TimePaddingSamples", 0, ...
     "BoundsMarginDeg", [0 0], ...
     "SafetyMarginDeg", 0);
-options = applyDefaults(options, defaults);
-mode = lower(string(options.CollisionMode));
-if ~any(mode == ["polygon", "bounds"])
+defaultOptionFields = fieldnames(defaultOptions);
+for defaultOptionIndex = 1:numel(defaultOptionFields)
+    defaultOptionField = defaultOptionFields{defaultOptionIndex};
+    if ~isfield(options, defaultOptionField) || ...
+            isempty(options.(defaultOptionField))
+        options.(defaultOptionField) = defaultOptions.(defaultOptionField);
+    end
+end
+collisionMode = lower(string(options.CollisionMode));
+if ~any(collisionMode == ["polygon", "bounds"])
     error("queryAzElTimeObstacle:InvalidMode", ...
         "CollisionMode must be 'polygon' or 'bounds'.");
 end
@@ -40,306 +48,275 @@ validateattributes(options.BoundsMarginDeg, {'numeric'}, ...
     {'vector', 'numel', 2, 'real', 'finite', 'nonnegative'});
 validateattributes(options.SafetyMarginDeg, {'numeric'}, ...
     {'scalar', 'real', 'finite', 'nonnegative'});
-validateWorkspace(workspace);
-
-[azimuthDeg, elevationDeg, timeSeconds, outputSize] = normalizeQueries( ...
-    azimuthDeg, elevationDeg, queryTime, workspace.ReferenceTime);
-queryCount = numel(azimuthDeg);
-occupied = false(queryCount, 1);
-obstacleIndex = zeros(queryCount, 1, "uint32");
-
-for obstacleNumber = 1:numel(workspace.Obstacles)
-    % Once any obstacle claims a query, later obstacles cannot change the
-    % boolean result. Skipping resolved rows keeps multi-obstacle queries fast.
-    unresolved = ~occupied & isfinite(azimuthDeg) & ...
-        isfinite(elevationDeg) & isfinite(timeSeconds);
-    if ~any(unresolved)
-        break;
-    end
-    obstacle = workspace.Obstacles(obstacleNumber);
-    [sampleIndex, validTime] = nearestSamples(obstacle, timeSeconds);
-    valid = unresolved & validTime;
-    % Time padding conservatively checks neighboring source slices without
-    % constructing interpolated polygons between them.
-    for offset = -options.TimePaddingSamples:options.TimePaddingSamples
-        candidateIndex = sampleIndex + offset;
-        candidate = valid & candidateIndex >= 1 & ...
-            candidateIndex <= obstacle.SampleCount & ~occupied;
-        if ~any(candidate)
-            continue;
-        end
-        hit = collideAtSamples(obstacle, candidateIndex, candidate, ...
-            azimuthDeg, elevationDeg, mode, options.BoundsMarginDeg, ...
-            options.SafetyMarginDeg);
-        newHit = hit & ~occupied;
-        occupied(newHit) = true;
-        obstacleIndex(newHit) = uint32(obstacleNumber);
-    end
+workspaceHasRequiredFields = isstruct(workspace) && ...
+    isfield(workspace, "Format") && ...
+    workspace.Format == "AzElTimeObstacleWorkspace" && ...
+    isfield(workspace, "Obstacles") && ...
+    isfield(workspace, "ReferenceTime");
+if ~workspaceHasRequiredFields
+    error("queryAzElTimeObstacle:InvalidWorkspace", ...
+        "Use buildAzElTimeObstacleWorkspace to create the workspace.");
 end
 
-occupied = reshape(occupied, outputSize);
-obstacleIndex = reshape(obstacleIndex, outputSize);
-if nargout >= 3
-    names = strings(queryCount, 1);
-    flatIndex = obstacleIndex(:);
-    for k = 1:numel(workspace.Obstacles)
-        names(flatIndex == k) = workspace.Obstacles(k).Name;
-    end
-    details = struct( ...
-        "ObstacleName", reshape(names, outputSize), ...
-            "QueryTimeSeconds", reshape(timeSeconds, outputSize), ...
-            "CollisionMode", mode, ...
-            "SafetyMarginDeg", options.SafetyMarginDeg);
-end
-end
-
-function [sampleIndex, valid] = nearestSamples(obstacle, querySeconds)
-n = obstacle.SampleCount;
-sampleIndex = zeros(size(querySeconds));
-if n == 0
-    valid = false(size(querySeconds));
-    return;
-end
-time = obstacle.TimeSeconds;
-valid = querySeconds >= time(1) & querySeconds <= time(end);
-if n == 1
-    sampleIndex(valid) = 1;
-elseif obstacle.IsUniformTime
-    sampleIndex(valid) = round((querySeconds(valid) - time(1)) ./ ...
-        obstacle.TimeStepSeconds) + 1;
-else
-    sampleIndex(valid) = interp1(time, (1:n).', querySeconds(valid), ...
-        "nearest");
-end
-sampleIndex = round(sampleIndex);
-end
-
-function hit = collideAtSamples(obstacle, sampleIndex, candidate, ...
-        azimuthDeg, elevationDeg, mode, margin, safetyMargin)
-hit = false(size(candidate));
-rows = find(candidate);
-samples = sampleIndex(rows);
-bounds = double(obstacle.BoundsDeg(samples, :));
-broadMargin = margin + safetyMargin;
-% Bounding boxes reject most points before the more expensive edge query.
-insideBounds = all(isfinite(bounds), 2) & ...
-    azimuthDeg(rows) >= bounds(:, 1) - broadMargin(1) & ...
-    azimuthDeg(rows) <= bounds(:, 2) + broadMargin(1) & ...
-    elevationDeg(rows) >= bounds(:, 3) - broadMargin(2) & ...
-    elevationDeg(rows) <= bounds(:, 4) + broadMargin(2);
-rows = rows(insideBounds);
-samples = samples(insideBounds);
-if isempty(rows)
-    return;
-end
-if mode == "bounds"
-    hit(rows) = true;
-else
-    inside = pointsInPackedEdges(obstacle, samples, ...
-        azimuthDeg(rows), elevationDeg(rows));
-    if safetyMargin > 0
-        inside = inside | pointsNearPackedEdges(obstacle, samples, ...
-            azimuthDeg(rows), elevationDeg(rows), safetyMargin);
-    end
-    hit(rows) = inside;
-end
-end
-
-function near = pointsNearPackedEdges(obstacle, samples, ...
-        queryAzimuth, queryElevation, margin)
-outputSize = size(samples);
-samples = samples(:);
-queryAzimuth = queryAzimuth(:);
-queryElevation = queryElevation(:);
-edgeCount = double(obstacle.EdgeOffsets(samples + 1) - ...
-    obstacle.EdgeOffsets(samples));
-edgeCount = edgeCount(:);
-hasEdges = edgeCount > 0;
-near = false(size(samples));
-if ~any(hasEdges)
-    near = reshape(near, outputSize);
-    return;
-end
-
-activeSamples = samples(hasEdges);
-activeAzimuth = queryAzimuth(hasEdges);
-activeElevation = queryElevation(hasEdges);
-activeEdgeCount = edgeCount(hasEdges);
-edgeStart = double(obstacle.EdgeOffsets(activeSamples));
-groupCount = numel(activeSamples);
-totalEdges = sum(activeEdgeCount);
-% Expand ragged edge ranges into one flat batch. group records which source
-% query owns each edge-distance result.
-group = repelem((1:groupCount).', activeEdgeCount);
-group = group(:);
-groupBase = repelem( ...
-    cumsum([0; activeEdgeCount(1:end - 1)]), activeEdgeCount);
-withinGroup = (0:totalEdges - 1).' - groupBase(:);
-repeatedEdgeStart = repelem(edgeStart(:), activeEdgeCount);
-edgeIndex = repeatedEdgeStart(:) + withinGroup(:);
-
-x1 = double(obstacle.EdgeStartAzimuthDeg(edgeIndex));
-y1 = double(obstacle.EdgeStartElevationDeg(edgeIndex));
-x2 = double(obstacle.EdgeEndAzimuthDeg(edgeIndex));
-y2 = double(obstacle.EdgeEndElevationDeg(edgeIndex));
-x1 = x1(:);
-y1 = y1(:);
-x2 = x2(:);
-y2 = y2(:);
-qx = activeAzimuth(group);
-qy = activeElevation(group);
-qx = qx(:);
-qy = qy(:);
-
-dx = x2 - x1;
-dy = y2 - y1;
-lengthSquared = dx.^2 + dy.^2;
-minimumDistanceSquared = inf(totalEdges, 1);
-% Adjacent azimuth images keep clearance continuous across the wrap seam.
-for azimuthShift = [-360 0 360]
-    shiftedX = qx + azimuthShift;
-    fraction = ((shiftedX - x1) .* dx + (qy - y1) .* dy) ./ ...
-        max(lengthSquared, eps);
-    fraction = min(max(fraction, 0), 1);
-    closestX = x1 + fraction .* dx;
-    closestY = y1 + fraction .* dy;
-    distanceSquared = (shiftedX - closestX).^2 + ...
-        (qy - closestY).^2;
-    minimumDistanceSquared = min(minimumDistanceSquared, distanceSquared);
-end
-edgeNear = minimumDistanceSquared <= margin^2;
-nearCount = accumarray(group, double(edgeNear), ...
-    [groupCount 1], @sum, 0);
-near(hasEdges) = nearCount > 0;
-near = reshape(near, outputSize);
-end
-
-function inside = pointsInPackedEdges(obstacle, samples, ...
-        queryAzimuth, queryElevation)
-edgeCount = double(obstacle.EdgeOffsets(samples + 1) - ...
-    obstacle.EdgeOffsets(samples));
-edgeCount = edgeCount(:);
-hasEdges = edgeCount > 0;
-inside = false(size(samples));
-if ~any(hasEdges)
-    return;
-end
-activeSamples = samples(hasEdges);
-activeAzimuth = queryAzimuth(hasEdges);
-activeElevation = queryElevation(hasEdges);
-edgeCount = edgeCount(hasEdges);
-edgeStart = double(obstacle.EdgeOffsets(activeSamples));
-edgeStart = edgeStart(:);
-groupCount = numel(activeSamples);
-totalEdges = sum(edgeCount);
-% Expand the ragged edge lists so all point-in-polygon tests can use one
-% vectorized ray-crossing operation.
-group = repelem((1:groupCount).', edgeCount);
-groupBase = repelem(cumsum([0; edgeCount(1:end - 1)]), edgeCount);
-group = group(:);
-groupBase = groupBase(:);
-withinGroup = (0:totalEdges - 1).' - groupBase;
-repeatedEdgeStart = repelem(edgeStart, edgeCount);
-edgeIndex = repeatedEdgeStart(:) + withinGroup;
-
-x1 = double(obstacle.EdgeStartAzimuthDeg(edgeIndex));
-y1 = double(obstacle.EdgeStartElevationDeg(edgeIndex));
-x2 = double(obstacle.EdgeEndAzimuthDeg(edgeIndex));
-y2 = double(obstacle.EdgeEndElevationDeg(edgeIndex));
-qx = activeAzimuth(group);
-qy = activeElevation(group);
-x1 = x1(:);
-y1 = y1(:);
-x2 = x2(:);
-y2 = y2(:);
-qx = qx(:);
-qy = qy(:);
-
-% Odd-even ray crossing handles concave rings. An explicit boundary test
-% below classifies points on polygon edges as occupied.
-straddles = (y1 > qy) ~= (y2 > qy);
-crosses = false(totalEdges, 1);
-crosses(straddles) = qx(straddles) < x1(straddles) + ...
-    (qy(straddles) - y1(straddles)) .* ...
-    (x2(straddles) - x1(straddles)) ./ ...
-    (y2(straddles) - y1(straddles));
-crossingCount = accumarray(group, double(crosses), ...
-    [groupCount 1], @sum, 0);
-
-edgeLength = hypot(x2 - x1, y2 - y1);
-crossProduct = (qx - x1) .* (y2 - y1) - ...
-    (qy - y1) .* (x2 - x1);
-tolerance = 1e-7 .* max(1, edgeLength);
-onEdge = abs(crossProduct) <= tolerance & ...
-    qx >= min(x1, x2) - tolerance & ...
-    qx <= max(x1, x2) + tolerance & ...
-    qy >= min(y1, y2) - tolerance & ...
-    qy <= max(y1, y2) + tolerance;
-boundaryCount = accumarray(group, double(onEdge), ...
-    [groupCount 1], @sum, 0);
-activeInside = mod(crossingCount, 2) == 1 | boundaryCount > 0;
-inside(hasEdges) = activeInside;
-end
-
-function [azimuth, elevation, timeSeconds, outputSize] = normalizeQueries( ...
-        azimuth, elevation, queryTime, referenceTime)
+%% Broadcast query coordinates and time to one shape
 if isdatetime(queryTime)
-    timeSeconds = seconds(ensureUtc(queryTime) - referenceTime);
+    queryTime.TimeZone = "UTC";
+    timeSeconds = seconds(queryTime - workspace.ReferenceTime);
 elseif isnumeric(queryTime)
     timeSeconds = double(queryTime);
 else
     error("queryAzElTimeObstacle:InvalidTime", ...
         "queryTime must be datetime or seconds from ReferenceTime.");
 end
-values = {double(azimuth), double(elevation), double(timeSeconds)};
-lengths = cellfun(@numel, values);
-nonScalar = lengths(lengths > 1);
-if isempty(nonScalar)
-    outputSize = size(values{1});
-    if isequal(outputSize, [1 1])
-        outputSize = [1 1];
-    end
-    targetCount = 1;
-elseif any(nonScalar ~= nonScalar(1))
+queryValues = {double(azimuthDeg), double(elevationDeg), ...
+    double(timeSeconds)};
+queryElementCounts = zeros(1, 3);
+for queryValueIndex = 1:3
+    queryElementCounts(queryValueIndex) = numel( ...
+        queryValues{queryValueIndex});
+end
+nonScalarCounts = queryElementCounts(queryElementCounts > 1);
+if isempty(nonScalarCounts)
+    outputSize = size(queryValues{1});
+    targetQueryCount = 1;
+elseif any(nonScalarCounts ~= nonScalarCounts(1))
     error("queryAzElTimeObstacle:SizeMismatch", ...
         "Non-scalar azimuth, elevation, and time inputs must have equal size.");
 else
-    targetCount = nonScalar(1);
-    source = find(lengths == targetCount, 1);
-    outputSize = size(values{source});
+    targetQueryCount = nonScalarCounts(1);
+    shapeSourceIndex = find( ...
+        queryElementCounts == targetQueryCount, 1);
+    outputSize = size(queryValues{shapeSourceIndex});
 end
-for k = 1:3
-    if lengths(k) == 1
-        values{k} = repmat(values{k}, targetCount, 1);
-    elseif ~isequal(size(values{k}), outputSize)
-        values{k} = reshape(values{k}, outputSize);
+for queryValueIndex = 1:3
+    if queryElementCounts(queryValueIndex) == 1
+        queryValues{queryValueIndex} = repmat( ...
+            queryValues{queryValueIndex}, targetQueryCount, 1);
+    elseif ~isequal(size(queryValues{queryValueIndex}), outputSize)
+        queryValues{queryValueIndex} = reshape( ...
+            queryValues{queryValueIndex}, outputSize);
     end
-    values{k} = values{k}(:);
+    queryValues{queryValueIndex} = queryValues{queryValueIndex}(:);
 end
-azimuth = values{1};
-elevation = values{2};
-timeSeconds = values{3};
-end
+azimuthDeg = queryValues{1};
+elevationDeg = queryValues{2};
+timeSeconds = queryValues{3};
+queryCount = numel(azimuthDeg);
+occupied = false(queryCount, 1);
+obstacleIndex = zeros(queryCount, 1, "uint32");
 
-function validateWorkspace(workspace)
-if ~isstruct(workspace) || ~isfield(workspace, "Format") || ...
-        workspace.Format ~= "AzElTimeObstacleWorkspace" || ...
-        ~isfield(workspace, "Obstacles") || ...
-        ~isfield(workspace, "ReferenceTime")
-    error("queryAzElTimeObstacle:InvalidWorkspace", ...
-        "Use buildAzElTimeObstacleWorkspace to create the workspace.");
-end
-end
-
-function times = ensureUtc(times)
-times.TimeZone = "UTC";
-end
-
-function options = applyDefaults(options, defaults)
-names = fieldnames(defaults);
-for k = 1:numel(names)
-    if ~isfield(options, names{k}) || isempty(options.(names{k}))
-        options.(names{k}) = defaults.(names{k});
+%% Test unresolved queries against each packed obstacle
+for obstacleNumber = 1:numel(workspace.Obstacles)
+    % Once one obstacle claims a query, later obstacles cannot change its
+    % boolean result or diagnostic owner.
+    unresolvedQuery = ~occupied & isfinite(azimuthDeg) & ...
+        isfinite(elevationDeg) & isfinite(timeSeconds);
+    if ~any(unresolvedQuery)
+        break;
     end
+    obstacle = workspace.Obstacles(obstacleNumber);
+
+    % Uniform time bases map arithmetically. Irregular time bases use nearest
+    % interpolation, but neither path extrapolates outside the obstacle span.
+    nearestSampleIndex = zeros(size(timeSeconds));
+    validQueryTime = false(size(timeSeconds));
+    if obstacle.SampleCount > 0
+        obstacleTimes = obstacle.TimeSeconds;
+        validQueryTime = timeSeconds >= obstacleTimes(1) & ...
+            timeSeconds <= obstacleTimes(end);
+        if obstacle.SampleCount == 1
+            nearestSampleIndex(validQueryTime) = 1;
+        elseif obstacle.IsUniformTime
+            nearestSampleIndex(validQueryTime) = round(( ...
+                timeSeconds(validQueryTime) - obstacleTimes(1)) ./ ...
+                obstacle.TimeStepSeconds) + 1;
+        else
+            sampleNumbers = (1:obstacle.SampleCount).';
+            nearestSampleIndex(validQueryTime) = interp1( ...
+                obstacleTimes, sampleNumbers, ...
+                timeSeconds(validQueryTime), "nearest");
+        end
+        nearestSampleIndex = round(nearestSampleIndex);
+    end
+    validQuery = unresolvedQuery & validQueryTime;
+
+    % Padding checks neighboring source slices rather than inventing an
+    % interpolated polygon between measured boundaries.
+    for sampleOffset = -options.TimePaddingSamples: ...
+            options.TimePaddingSamples
+        candidateSampleIndex = nearestSampleIndex + sampleOffset;
+        candidateQuery = validQuery & candidateSampleIndex >= 1 & ...
+            candidateSampleIndex <= obstacle.SampleCount & ~occupied;
+        candidateRows = find(candidateQuery);
+        if isempty(candidateRows)
+            continue;
+        end
+
+        %% Reject points outside the conservative slice bounds
+        sampledBounds = double(obstacle.BoundsDeg( ...
+            candidateSampleIndex(candidateRows), :));
+        broadPhaseMargin = options.BoundsMarginDeg + ...
+            options.SafetyMarginDeg;
+        minimumAzimuth = sampledBounds(:, 1) - broadPhaseMargin(1);
+        maximumAzimuth = sampledBounds(:, 2) + broadPhaseMargin(1);
+        minimumElevation = sampledBounds(:, 3) - broadPhaseMargin(2);
+        maximumElevation = sampledBounds(:, 4) + broadPhaseMargin(2);
+        insideBounds = all(isfinite(sampledBounds), 2) & ...
+            azimuthDeg(candidateRows) >= minimumAzimuth & ...
+            azimuthDeg(candidateRows) <= maximumAzimuth & ...
+            elevationDeg(candidateRows) >= minimumElevation & ...
+            elevationDeg(candidateRows) <= maximumElevation;
+        collisionRows = candidateRows(insideBounds);
+        if isempty(collisionRows)
+            continue;
+        end
+        if collisionMode == "bounds"
+            newCollisionRows = collisionRows(~occupied(collisionRows));
+            occupied(newCollisionRows) = true;
+            obstacleIndex(newCollisionRows) = uint32(obstacleNumber);
+            continue;
+        end
+
+        %% Expand ragged edge ranges once for polygon and margin tests
+        collisionSamples = candidateSampleIndex(collisionRows);
+        edgeCounts = double(obstacle.EdgeOffsets(collisionSamples + 1) - ...
+            obstacle.EdgeOffsets(collisionSamples));
+        edgeCounts = edgeCounts(:);
+        queryHasEdges = edgeCounts > 0;
+        if ~any(queryHasEdges)
+            continue;
+        end
+        activeRows = collisionRows(queryHasEdges);
+        activeSamples = collisionSamples(queryHasEdges);
+        activeEdgeCounts = edgeCounts(queryHasEdges);
+        activeQueryCount = numel(activeSamples);
+        totalEdgeCount = sum(activeEdgeCounts);
+        edgeOwner = repelem((1:activeQueryCount).', activeEdgeCounts);
+        % repelem can preserve a row-shaped repetition argument and return
+        % a matrix. Every later edge array is packed as a column, so force
+        % the owner map to the same one-edge-per-row invariant before it is
+        % used for indexing or accumarray grouping.
+        edgeOwner = edgeOwner(:);
+        precedingEdgeCounts = cumsum([0; activeEdgeCounts(1:end - 1)]);
+        ownerBaseOffset = repelem(precedingEdgeCounts, activeEdgeCounts);
+        withinOwnerOffset = (0:totalEdgeCount - 1).' - ...
+            ownerBaseOffset(:);
+        firstEdgeIndex = double(obstacle.EdgeOffsets(activeSamples));
+        repeatedFirstEdgeIndex = repelem( ...
+            firstEdgeIndex(:), activeEdgeCounts);
+        packedEdgeIndex = repeatedFirstEdgeIndex(:) + withinOwnerOffset;
+
+        edgeStartAzimuth = double( ...
+            obstacle.EdgeStartAzimuthDeg(packedEdgeIndex));
+        edgeStartElevation = double( ...
+            obstacle.EdgeStartElevationDeg(packedEdgeIndex));
+        edgeEndAzimuth = double( ...
+            obstacle.EdgeEndAzimuthDeg(packedEdgeIndex));
+        edgeEndElevation = double( ...
+            obstacle.EdgeEndElevationDeg(packedEdgeIndex));
+        queryAzimuth = azimuthDeg(activeRows(edgeOwner));
+        queryElevation = elevationDeg(activeRows(edgeOwner));
+        edgeStartAzimuth = edgeStartAzimuth(:);
+        edgeStartElevation = edgeStartElevation(:);
+        edgeEndAzimuth = edgeEndAzimuth(:);
+        edgeEndElevation = edgeEndElevation(:);
+        queryAzimuth = queryAzimuth(:);
+        queryElevation = queryElevation(:);
+
+        %% Apply odd-even ray crossing with an explicit boundary test
+        edgeStartsAboveQuery = edgeStartElevation > queryElevation;
+        edgeEndsAboveQuery = edgeEndElevation > queryElevation;
+        verticalStraddle = edgeStartsAboveQuery ~= edgeEndsAboveQuery;
+        rayCrossesEdge = false(totalEdgeCount, 1);
+        rayCrossesEdge(verticalStraddle) = queryAzimuth( ...
+            verticalStraddle) < ...
+            edgeStartAzimuth(verticalStraddle) + ( ...
+            queryElevation(verticalStraddle) - ...
+            edgeStartElevation(verticalStraddle)) .* ( ...
+            edgeEndAzimuth(verticalStraddle) - ...
+            edgeStartAzimuth(verticalStraddle)) ./ ( ...
+            edgeEndElevation(verticalStraddle) - ...
+            edgeStartElevation(verticalStraddle));
+        crossingCount = accumarray( ...
+            edgeOwner, double(rayCrossesEdge), ...
+            [activeQueryCount 1], @sum, 0);
+
+        edgeAzimuthDelta = edgeEndAzimuth - edgeStartAzimuth;
+        edgeElevationDelta = edgeEndElevation - edgeStartElevation;
+        edgeLength = hypot(edgeAzimuthDelta, edgeElevationDelta);
+        crossProduct = (queryAzimuth - edgeStartAzimuth) .* ...
+            edgeElevationDelta - ...
+            (queryElevation - edgeStartElevation) .* edgeAzimuthDelta;
+        boundaryTolerance = 1e-7 .* max(1, edgeLength);
+        queryOnEdge = abs(crossProduct) <= boundaryTolerance & ...
+            queryAzimuth >= min( ...
+            edgeStartAzimuth, edgeEndAzimuth) - boundaryTolerance & ...
+            queryAzimuth <= max( ...
+            edgeStartAzimuth, edgeEndAzimuth) + boundaryTolerance & ...
+            queryElevation >= min( ...
+            edgeStartElevation, edgeEndElevation) - boundaryTolerance & ...
+            queryElevation <= max( ...
+            edgeStartElevation, edgeEndElevation) + boundaryTolerance;
+        boundaryCount = accumarray( ...
+            edgeOwner, double(queryOnEdge), ...
+            [activeQueryCount 1], @sum, 0);
+        activeCollision = mod(crossingCount, 2) == 1 | boundaryCount > 0;
+
+        %% Add Euclidean edge clearance when requested
+        if options.SafetyMarginDeg > 0
+            edgeLengthSquared = edgeAzimuthDelta.^2 + ...
+                edgeElevationDelta.^2;
+            minimumDistanceSquared = inf(totalEdgeCount, 1);
+            % Adjacent azimuth images keep clearance continuous at the
+            % conventional -180/180 seam.
+            for azimuthShift = [-360 0 360]
+                shiftedQueryAzimuth = queryAzimuth + azimuthShift;
+                edgeFraction = (( ...
+                    shiftedQueryAzimuth - edgeStartAzimuth) .* ...
+                    edgeAzimuthDelta + ( ...
+                    queryElevation - edgeStartElevation) .* ...
+                    edgeElevationDelta) ./ ...
+                    max(edgeLengthSquared, eps);
+                edgeFraction = min(max(edgeFraction, 0), 1);
+                closestAzimuth = edgeStartAzimuth + ...
+                    edgeFraction .* edgeAzimuthDelta;
+                closestElevation = edgeStartElevation + ...
+                    edgeFraction .* edgeElevationDelta;
+                distanceSquared = ( ...
+                    shiftedQueryAzimuth - closestAzimuth).^2 + ...
+                    (queryElevation - closestElevation).^2;
+                minimumDistanceSquared = min( ...
+                    minimumDistanceSquared, distanceSquared);
+            end
+            squaredSafetyMargin = options.SafetyMarginDeg^2;
+            edgeWithinMargin = minimumDistanceSquared <= squaredSafetyMargin;
+            nearEdgeCount = accumarray( ...
+                edgeOwner, double(edgeWithinMargin), ...
+                [activeQueryCount 1], @sum, 0);
+            activeCollision = activeCollision | nearEdgeCount > 0;
+        end
+
+        newCollisionRows = activeRows(activeCollision & ...
+            ~occupied(activeRows));
+        occupied(newCollisionRows) = true;
+        obstacleIndex(newCollisionRows) = uint32(obstacleNumber);
+    end
+end
+
+%% Restore caller shape and optional diagnostics
+occupied = reshape(occupied, outputSize);
+obstacleIndex = reshape(obstacleIndex, outputSize);
+if nargout >= 3
+    obstacleNames = strings(queryCount, 1);
+    flatObstacleIndex = obstacleIndex(:);
+    for obstacleNumber = 1:numel(workspace.Obstacles)
+        obstacleNames(flatObstacleIndex == obstacleNumber) = workspace.Obstacles( ...
+            obstacleNumber).Name;
+    end
+    details = struct( ...
+        "ObstacleName", reshape(obstacleNames, outputSize), ...
+        "QueryTimeSeconds", reshape(timeSeconds, outputSize), ...
+        "CollisionMode", collisionMode, ...
+        "SafetyMarginDeg", options.SafetyMarginDeg);
 end
 end

@@ -14,43 +14,46 @@ if nargin == 0
         "Provide at least one azElData obstacle.");
 end
 
-items = cell(0, 1);
-% Flatten first, then normalize. This keeps nested input handling separate
-% from schema validation and preserves caller ordering.
-for inputIndex = 1:nargin
-    items = [items; flattenInput(varargin{inputIndex}, inputIndex)]; ...
-        %#ok<AGROW>
+%% Flatten nested inputs in caller order
+% The stack carries each top-level argument number so a malformed nested
+% value still identifies the public input that contained it. Reversing each
+% push makes the next pop match the caller's original order.
+pendingValues = flipud(varargin(:));
+pendingInputIndices = num2cell((nargin:-1:1).');
+obstacleItems = cell(0, 1);
+while ~isempty(pendingValues)
+    currentValue = pendingValues{end};
+    currentInputIndex = pendingInputIndices{end};
+    pendingValues(end) = [];
+    pendingInputIndices(end) = [];
+    if isstruct(currentValue)
+        flattenedStructItems = num2cell(currentValue(:));
+        obstacleItems = [obstacleItems; flattenedStructItems]; %#ok<AGROW>
+    elseif iscell(currentValue)
+        nestedValueCount = numel(currentValue);
+        reversedNestedValues = flipud(currentValue(:));
+        pendingValues = [pendingValues; reversedNestedValues]; %#ok<AGROW>
+        pendingInputIndices = [pendingInputIndices; repmat( ...
+            {currentInputIndex}, nestedValueCount, 1)]; %#ok<AGROW>
+    else
+        error("combineAzElObstacles:InvalidInput", ...
+            ["Input %d must be an azElData struct, struct array, or cell " ...
+            "array containing azElData structs."], currentInputIndex);
+    end
 end
-if isempty(items)
+if isempty(obstacleItems)
     error("combineAzElObstacles:EmptyInput", ...
         "Provide at least one azElData obstacle.");
 end
 
-normalized = cell(size(items));
-for obstacleIndex = 1:numel(items)
-    normalized{obstacleIndex} = ...
-        normalizeAzElTimeObstacleData(items{obstacleIndex});
+%% Normalize every scalar obstacle to the public schema
+% Validation occurs after flattening so all accepted container forms reach
+% one schema gate. A bad obstacle therefore cannot survive merely because
+% it arrived inside a cell or struct array.
+normalizedObstacles = cell(size(obstacleItems));
+for obstacleIndex = 1:numel(obstacleItems)
+    normalizedObstacles{obstacleIndex} = normalizeAzElTimeObstacleData( ...
+        obstacleItems{obstacleIndex});
 end
-obstacles = vertcat(normalized{:});
-end
-
-function items = flattenInput(input, inputIndex)
-if isstruct(input)
-    items = cell(numel(input), 1);
-    for itemIndex = 1:numel(input)
-        items{itemIndex} = input(itemIndex);
-    end
-    return;
-end
-if iscell(input)
-    items = cell(0, 1);
-    for itemIndex = 1:numel(input)
-        nested = flattenInput(input{itemIndex}, inputIndex);
-        items = [items; nested]; %#ok<AGROW>
-    end
-    return;
-end
-error("combineAzElObstacles:InvalidInput", ...
-    ["Input %d must be an azElData struct, struct array, or cell " ...
-    "array containing azElData structs."], inputIndex);
+obstacles = vertcat(normalizedObstacles{:});
 end

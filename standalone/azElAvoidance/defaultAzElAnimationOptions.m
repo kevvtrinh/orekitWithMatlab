@@ -8,7 +8,7 @@ if nargin < 2 || isempty(preferences)
     preferences = struct();
 end
 figureVisible = string(get(groot, "DefaultFigureVisible"));
-defaults = struct( ...
+defaultOptions = struct( ...
     "ViewMode", "combined", ...
     "MaximumAnimationFrames", 180, ...
     "MaximumDisplayedSlices", 100, ...
@@ -17,9 +17,30 @@ defaults = struct( ...
     "ShowObstacleSlices", true, ...
     "ObstacleFaceAlpha", 0.06, ...
     "FigureVisible", figureVisible);
-defaults = applyValues(defaults, preferences);
-options = applyDefaults(input, defaults);
+
+%% Apply caller preferences to defaults
+% Preferences define reusable presentation policy, while input remains the
+% per-call override. Applying them in this order preserves that precedence.
+preferenceFields = fieldnames(preferences);
+for preferenceIndex = 1:numel(preferenceFields)
+    preferenceField = preferenceFields{preferenceIndex};
+    defaultOptions.(preferenceField) = preferences.(preferenceField);
+end
+
+%% Fill only missing per-call values
+options = input;
+defaultFields = fieldnames(defaultOptions);
+for defaultIndex = 1:numel(defaultFields)
+    defaultField = defaultFields{defaultIndex};
+    if ~isfield(options, defaultField) || isempty(options.(defaultField))
+        options.(defaultField) = defaultOptions.(defaultField);
+    end
+end
 if lower(string(options.FigureVisible)) == "off"
+    % Invisible figures are normally created by tests and batch examples.
+    % One final frame exercises every graphics object without spending time
+    % replaying an animation nobody can see. Explicit caller values still
+    % win when a headless test needs multi-frame coverage.
     if ~isfield(input, "MaximumAnimationFrames")
         options.MaximumAnimationFrames = 1;
     end
@@ -27,23 +48,7 @@ if lower(string(options.FigureVisible)) == "off"
         options.PauseSeconds = 0;
     end
 end
+% Example entry points promise a comparable side-by-side diagnostic view.
+% Direct animateAzElAvoidancePlan callers can still request a single pane.
 options.ViewMode = "combined";
-end
-
-function output = applyDefaults(input, defaults)
-output = input;
-names = fieldnames(defaults);
-for k = 1:numel(names)
-    if ~isfield(output, names{k}) || isempty(output.(names{k}))
-        output.(names{k}) = defaults.(names{k});
-    end
-end
-end
-
-function output = applyValues(input, values)
-output = input;
-names = fieldnames(values);
-for k = 1:numel(names)
-    output.(names{k}) = values.(names{k});
-end
 end

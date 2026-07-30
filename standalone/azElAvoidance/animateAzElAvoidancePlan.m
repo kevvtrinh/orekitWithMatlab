@@ -23,31 +23,191 @@ function handles = animateAzElAvoidancePlan(azElData, plan, options)
 %   MovingTarget             Optional struct with time_s and position_deg.
 %   FigureVisible            "on" or "off" (default "on").
 
+%% Normalize display options
 if nargin < 3
     options = struct();
 end
-options = normalizeOptions(options);
-dataList = normalizeDataList(azElData);
-for k = 1:numel(dataList)
-    dataList{k} = normalizeAzElTimeObstacleData(dataList{k});
+% Empty caller fields intentionally mean "use the library default." This
+% lets examples override only the display choices they care about without
+% copying a second configuration contract that can drift from this one.
+defaultOptions = struct( ...
+    "ViewMode", "combined", ...
+    "MaximumAnimationFrames", 180, ...
+    "MaximumDisplayedSlices", 100, ...
+    "PauseSeconds", 0.01, ...
+    "ShowFuturePath", true, ...
+    "ShowObstacleSlices", true, ...
+    "ObstacleFaceAlpha", 0.08, ...
+    "ShowDiscretization", true, ...
+    "ShowCandidateRoutes", true, ...
+    "MaximumObstacleLegendEntries", 6, ...
+    "MaximumDiscretizationLines", 40, ...
+    "MaximumDiscretizationTimePlanes", 6, ...
+    "MovingTarget", [], ...
+    "FigureVisible", "on");
+defaultOptionFields = fieldnames(defaultOptions);
+for defaultOptionIndex = 1:numel(defaultOptionFields)
+    defaultOptionField = defaultOptionFields{defaultOptionIndex};
+    if ~isfield(options, defaultOptionField) || ...
+            isempty(options.(defaultOptionField))
+        options.(defaultOptionField) = defaultOptions.(defaultOptionField);
+    end
 end
-validatePlan(plan);
-workspace = planWorkspace(plan, dataList);
+options.ViewMode = lower(string(options.ViewMode));
+if ~any(options.ViewMode == ["2d", "3d", "combined"])
+    error("animateAzElAvoidancePlan:InvalidViewMode", ...
+        "ViewMode must be 2d, 3d, or combined.");
+end
+validateattributes(options.MaximumAnimationFrames, {'numeric'}, ...
+    {'scalar', 'integer', 'positive'});
+validateattributes(options.MaximumDisplayedSlices, {'numeric'}, ...
+    {'scalar', 'integer', 'nonnegative'});
+validateattributes(options.PauseSeconds, {'numeric'}, ...
+    {'scalar', 'real', 'finite', 'nonnegative'});
+validateattributes(options.ObstacleFaceAlpha, {'numeric'}, ...
+    {'scalar', 'real', 'finite', '>=', 0, '<=', 1});
+validateattributes(options.MaximumDiscretizationLines, {'numeric'}, ...
+    {'scalar', 'integer', 'positive'});
+validateattributes(options.MaximumObstacleLegendEntries, {'numeric'}, ...
+    {'scalar', 'integer', 'nonnegative'});
+validateattributes(options.MaximumDiscretizationTimePlanes, {'numeric'}, ...
+    {'scalar', 'integer', 'positive'});
+options.ShowFuturePath = logicalScalar( ...
+    options.ShowFuturePath, "ShowFuturePath");
+options.ShowObstacleSlices = logicalScalar( ...
+    options.ShowObstacleSlices, "ShowObstacleSlices");
+options.ShowDiscretization = logicalScalar( ...
+    options.ShowDiscretization, "ShowDiscretization");
+options.ShowCandidateRoutes = logicalScalar( ...
+    options.ShowCandidateRoutes, "ShowCandidateRoutes");
+if ~isempty(options.MovingTarget)
+    movingTarget = options.MovingTarget;
+    if ~isstruct(movingTarget) || ~isscalar(movingTarget) || ...
+            ~all(isfield(movingTarget, ["time_s", "position_deg"]))
+        error("animateAzElAvoidancePlan:InvalidMovingTarget", ...
+            "MovingTarget requires time_s and position_deg.");
+    end
+    movingTarget.time_s = double(movingTarget.time_s(:));
+    movingTarget.position_deg = double(movingTarget.position_deg);
+    validateattributes(movingTarget.time_s, {'numeric'}, ...
+        {'vector', 'real', 'finite', 'increasing'});
+    validateattributes(movingTarget.position_deg, {'numeric'}, ...
+        {'2d', 'ncols', 2, 'real', 'finite'});
+    if size(movingTarget.position_deg, 1) ~= numel(movingTarget.time_s)
+        error("animateAzElAvoidancePlan:MovingTargetSizeMismatch", ...
+            "MovingTarget.position_deg must contain one row per time.");
+    end
+    % Keep the normalized samples in options because both views must use
+    % the same interpolation input. Independent normalization could make
+    % their displayed endpoint histories disagree.
+    options.MovingTarget = movingTarget;
+end
+options.FigureVisible = lower(string(options.FigureVisible));
+if ~isscalar(options.FigureVisible) || ...
+        ~any(options.FigureVisible == ["on", "off"])
+    error("animateAzElAvoidancePlan:InvalidFigureVisible", ...
+        "FigureVisible must be on or off.");
+end
 
+%% Normalize obstacle and plan inputs
+% combineAzElObstacles preserves one logical obstacle per element. The cell
+% representation below is deliberate: each obstacle can have a different
+% time base and a different number of vertices per slice.
+combinedData = combineAzElObstacles(azElData);
+dataList = cell(numel(combinedData), 1);
+for obstacleIndex = 1:numel(combinedData)
+    dataList{obstacleIndex} = normalizeAzElTimeObstacleData( ...
+        combinedData(obstacleIndex));
+end
+requiredPlanFields = ["success", "time_s", "position_deg"];
+if ~isstruct(plan) || ~isscalar(plan) || ...
+        ~all(isfield(plan, cellstr(requiredPlanFields))) || ~plan.success
+    error("animateAzElAvoidancePlan:InvalidPlan", ...
+        "plan must be a successful planAzElDijkstra result.");
+end
+validateattributes(plan.time_s, {'numeric'}, ...
+    {'vector', 'real', 'finite', 'increasing'});
+validateattributes(plan.position_deg, {'numeric'}, ...
+    {'2d', 'ncols', 2, 'real', 'finite'});
+if size(plan.position_deg, 1) ~= numel(plan.time_s)
+    error("animateAzElAvoidancePlan:PlanSizeMismatch", ...
+        "plan.position_deg must contain one row per time sample.");
+end
+if isfield(plan, "workspace") && isstruct(plan.workspace) && ...
+        isfield(plan.workspace, "Format") && ...
+        plan.workspace.Format == "AzElTimeObstacleWorkspace"
+    % A planner-owned workspace is already the exact collision model used
+    % to validate the route, so displaying it avoids silently rebuilding a
+    % geometrically different view from lossy or transformed source data.
+    workspace = plan.workspace;
+else
+    workspace = buildAzElTimeObstacleWorkspace(dataList);
+end
+
+%% Create the synchronized figure
 % Frame decimation affects display only. The plan and collision workspace
-% retain all samples for analysis and validation.
-frameIndices = displayIndices( ...
-    numel(plan.time_s), options.MaximumAnimationFrames);
+% retain all samples for analysis and validation. The final sample is always
+% present because linspace includes both ends.
+planSampleCount = numel(plan.time_s);
+if planSampleCount <= options.MaximumAnimationFrames
+    frameIndices = (1:planSampleCount).';
+else
+    frameIndices = unique(round(linspace( ...
+        1, planSampleCount, options.MaximumAnimationFrames))).';
+end
 colors = lines(max(1, numel(dataList)));
 figureHandle = figure( ...
     "Name", "Az/El avoidance-plan playback", ...
     "Color", "w", ...
     "Visible", options.FigureVisible);
 
-[layout, azElAxes, workspaceAxes] = createLayout( ...
-    figureHandle, options.ViewMode);
-twoDimensional = emptyTwoDimensionalView();
-threeDimensional = emptyThreeDimensionalView();
+azElAxes = gobjects(1);
+workspaceAxes = gobjects(1);
+switch options.ViewMode
+    case "2d"
+        layout = tiledlayout(figureHandle, 1, 1, ...
+            "TileSpacing", "compact", "Padding", "compact");
+        azElAxes = nexttile(layout);
+    case "3d"
+        layout = tiledlayout(figureHandle, 1, 1, ...
+            "TileSpacing", "compact", "Padding", "compact");
+        workspaceAxes = nexttile(layout);
+    otherwise
+        layout = tiledlayout(figureHandle, 1, 2, ...
+            "TileSpacing", "compact", "Padding", "compact");
+        azElAxes = nexttile(layout);
+        workspaceAxes = nexttile(layout);
+end
+twoDimensional = struct( ...
+    "Discretization", gobjects(0, 1), ...
+    "CandidateRoutes", gobjects(0, 1), ...
+    "SelectedRoute", gobjects(1), ...
+    "FuturePath", gobjects(1), ...
+    "TraveledPath", gobjects(1), ...
+    "CurrentBoresight", gobjects(1), ...
+    "TargetPath", gobjects(1), ...
+    "TargetTraveled", gobjects(1), ...
+    "CurrentTarget", gobjects(1), ...
+    "Start", gobjects(1), ...
+    "Stop", gobjects(1), ...
+    "ObstacleLegend", gobjects(0, 1), ...
+    "ObstacleBoundaries", gobjects(0, 1));
+threeDimensional = struct( ...
+    "Discretization", gobjects(0, 1), ...
+    "CandidateRoutes", gobjects(0, 1), ...
+    "SelectedRoute", gobjects(1), ...
+    "FuturePath", gobjects(1), ...
+    "TraveledPath", gobjects(1), ...
+    "CurrentBoresight", gobjects(1), ...
+    "TargetPath", gobjects(1), ...
+    "TargetTraveled", gobjects(1), ...
+    "CurrentTarget", gobjects(1), ...
+    "CurrentBoundaries", gobjects(0, 1), ...
+    "ObstacleSlices", gobjects(0, 1), ...
+    "ObstacleSliceTimes_s", zeros(0, 1));
+% Initialization and update remain separate lifecycle boundaries. They are
+% each entered once syntactically, but update runs once per frame and must
+% mutate the stable graphics handles allocated during initialization.
 if isgraphics(azElAxes)
     twoDimensional = initializeTwoDimensionalView( ...
         azElAxes, dataList, plan, colors, options);
@@ -57,6 +217,7 @@ if isgraphics(workspaceAxes)
         workspaceAxes, workspace, dataList, plan, colors, options);
 end
 
+%% Animate display-decimated frames
 completedFrameCount = 0;
 for frameNumber = 1:numel(frameIndices)
     if ~isgraphics(figureHandle)
@@ -97,6 +258,9 @@ handles = struct( ...
     "Options", options);
 end
 
+% The 2-D view owns a distinct set of stable graphics handles. Keeping this
+% lifecycle boundary separate prevents frame updates from creating new
+% line objects, which is the dominant source of animation slowdown.
 function view = initializeTwoDimensionalView( ...
         ax, dataList, plan, colors, options)
 hold(ax, "on");
@@ -171,15 +335,16 @@ applyAngularLimits(ax, plan);
 legend(ax, "Location", "best");
 end
 
+% The 3-D view mirrors the 2-D lifecycle but additionally owns decimated
+% obstacle slices. It stays separate because those patch handles and their
+% reveal times have no 2-D equivalent.
 function viewState = initializeThreeDimensionalView( ...
         ax, workspace, dataList, plan, colors, options)
 hold(ax, "on");
 grid(ax, "on");
 box(ax, "on");
-viewState.Discretization = ...
-    plotDiscretization3D(ax, plan, options);
-viewState.CandidateRoutes = ...
-    plotCandidateRoutes3D(ax, plan, options);
+viewState.Discretization = plotDiscretization3D(ax, plan, options);
+viewState.CandidateRoutes = plotCandidateRoutes3D(ax, plan, options);
 [selectedAz, selectedEl, selectedTime] = segmentedPlan( ...
     plan, 1:numel(plan.time_s));
 viewState.SelectedRoute = plot3(ax, ...
@@ -225,8 +390,8 @@ for obstacleIndex = 1:numel(dataList)
         "Color", colors(obstacleIndex, :), "LineWidth", 1.8, ...
         "HandleVisibility", "off");
 end
-[viewState.ObstacleSlices, viewState.ObstacleSliceTimes_s] = ...
-    createObstacleSlices(ax, workspace, colors, options);
+[viewState.ObstacleSlices, viewState.ObstacleSliceTimes_s] = createObstacleSlices( ...
+    ax, workspace, colors, options);
 xlabel(ax, "Azimuth (deg)");
 ylabel(ax, "Elevation (deg)");
 zlabel(ax, "Time (s)");
@@ -273,8 +438,8 @@ end
 
 function updateThreeDimensionalView( ...
         view, dataList, plan, planIndex, currentTime_s, options)
-[traveledAz, traveledEl, traveledTime] = ...
-    segmentedPlan(plan, 1:planIndex);
+[traveledAz, traveledEl, traveledTime] = segmentedPlan( ...
+    plan, 1:planIndex);
 set(view.TraveledPath, ...
     "XData", traveledAz, ...
     "YData", traveledEl, ...
@@ -336,48 +501,54 @@ maximumPerObstacle = max(1, floor( ...
     options.MaximumDisplayedSlices / max(1, obstacleCount)));
 for obstacleIndex = 1:obstacleCount
     obstacle = workspace.Obstacles(obstacleIndex);
-    available = find(all(isfinite(obstacle.BoundsDeg), 2));
-    selected = selectedSamples(available, maximumPerObstacle);
+    availableSamples = find(all(isfinite(obstacle.BoundsDeg), 2));
+    if numel(availableSamples) <= maximumPerObstacle
+        displayedSamples = availableSamples;
+    else
+        % Uniform index sampling retains the beginning and end of each
+        % obstacle history. It reduces graphics cost only; every packed
+        % sample remains available to collision queries.
+        displayPositions = unique(round(linspace( ...
+            1, numel(availableSamples), maximumPerObstacle)));
+        displayedSamples = availableSamples(displayPositions);
+    end
     color = colors(min(obstacleIndex, size(colors, 1)), :);
-    for sample = reshape(selected, 1, [])
-        [azimuthParts, elevationParts] = sliceRegions(obstacle, sample);
-        for region = 1:numel(azimuthParts)
+    for sampleIndex = reshape(displayedSamples, 1, [])
+        firstVertex = double(obstacle.SliceOffsets(sampleIndex));
+        finalVertex = double(obstacle.SliceOffsets(sampleIndex + 1) - 1);
+        if finalVertex < firstVertex
+            % An empty slice is a legitimate "obstacle absent" sample, not
+            % malformed packing. It should create no patch and no reveal
+            % timestamp.
+            continue;
+        end
+        sliceAzimuth = double( ...
+            obstacle.AzimuthDeg(firstVertex:finalVertex));
+        sliceElevation = double( ...
+            obstacle.ElevationDeg(firstVertex:finalVertex));
+        isRealVertex = isfinite(sliceAzimuth) & isfinite(sliceElevation);
+        regionChanges = diff([false; isRealVertex; false]);
+        regionStarts = find(regionChanges == 1);
+        regionStops = find(regionChanges == -1) - 1;
+        % NaNs delimit independent polygon rings in the packed slice. Each
+        % ring needs its own patch or MATLAB would bridge separate regions
+        % with a false filled face.
+        for regionIndex = 1:numel(regionStarts)
+            vertexIndices = regionStarts(regionIndex):regionStops(regionIndex);
             sliceHandles(end + 1, 1) = patch(ax, ...
-                azimuthParts{region}, elevationParts{region}, ...
-                repmat(obstacle.TimeSeconds(sample), ...
-                size(azimuthParts{region})), color, ...
+                sliceAzimuth(vertexIndices), ...
+                sliceElevation(vertexIndices), ...
+                repmat(obstacle.TimeSeconds(sampleIndex), ...
+                numel(vertexIndices), 1), color, ...
                 "FaceAlpha", options.ObstacleFaceAlpha, ...
                 "EdgeColor", 0.7 .* color, ...
                 "LineWidth", 0.4, ...
                 "Visible", "off", ...
                 "HandleVisibility", "off"); %#ok<AGROW>
-            sliceTimes_s(end + 1, 1) = ...
-                obstacle.TimeSeconds(sample); %#ok<AGROW>
+            sliceTimes_s(end + 1, 1) = obstacle.TimeSeconds( ...
+                sampleIndex); %#ok<AGROW>
         end
     end
-end
-end
-
-function [azimuthParts, elevationParts] = sliceRegions(obstacle, sample)
-first = double(obstacle.SliceOffsets(sample));
-last = double(obstacle.SliceOffsets(sample + 1) - 1);
-if last < first
-    azimuthParts = {};
-    elevationParts = {};
-    return;
-end
-azimuth = double(obstacle.AzimuthDeg(first:last));
-elevation = double(obstacle.ElevationDeg(first:last));
-finite = isfinite(azimuth) & isfinite(elevation);
-changes = diff([false; finite; false]);
-starts = find(changes == 1);
-stops = find(changes == -1) - 1;
-azimuthParts = cell(numel(starts), 1);
-elevationParts = cell(numel(starts), 1);
-for region = 1:numel(starts)
-    index = starts(region):stops(region);
-    azimuthParts{region} = azimuth(index);
-    elevationParts{region} = elevation(index);
 end
 end
 
@@ -417,15 +588,31 @@ end
 if isempty(azimuth)
     return;
 end
-times = discretizationTimes(plan, ...
-    options.MaximumDiscretizationTimePlanes);
-count = numel(azimuth);
-x = repmat(azimuth, numel(times), 1);
-y = repmat(elevation, numel(times), 1);
+planeTimes_s = zeros(0, 1);
+if isfield(plan, "safeIntervalSearch") && ...
+        isstruct(plan.safeIntervalSearch) && ...
+        isfield(plan.safeIntervalSearch, "EventTimes_s")
+    planeTimes_s = double(plan.safeIntervalSearch.EventTimes_s(:));
+end
+if isempty(planeTimes_s)
+    % Plans without safe-interval diagnostics still receive reference
+    % planes. These are visual guides and do not imply search event times.
+    planeTimes_s = linspace(plan.time_s(1), plan.time_s(end), ...
+        min(3, options.MaximumDiscretizationTimePlanes)).';
+elseif numel(planeTimes_s) > options.MaximumDiscretizationTimePlanes
+    selectedPlaneIndices = unique(round(linspace( ...
+        1, numel(planeTimes_s), ...
+        options.MaximumDiscretizationTimePlanes)));
+    planeTimes_s = planeTimes_s(selectedPlaneIndices);
+end
+linePointCount = numel(azimuth);
+x = repmat(azimuth, numel(planeTimes_s), 1);
+y = repmat(elevation, numel(planeTimes_s), 1);
 z = zeros(size(x));
-for k = 1:numel(times)
-    rows = (k - 1) * count + (1:count);
-    z(rows) = times(k);
+for planeIndex = 1:numel(planeTimes_s)
+    planeRows = (planeIndex - 1) * linePointCount + ...
+        (1:linePointCount);
+    z(planeRows) = planeTimes_s(planeIndex);
 end
 handle = plot3(ax, x, y, z, ":", ...
     "Color", [0.76 0.78 0.82], "LineWidth", 0.45, ...
@@ -436,11 +623,11 @@ function handles = plotCandidateRoutes2D(ax, plan, options)
 handles = gobjects(0, 1);
 attempts = candidateAttempts(plan, options);
 % These are successful but unselected resolution attempts, not unsafe paths.
-for k = 1:numel(attempts)
+for attemptIndex = 1:numel(attempts)
     [azimuth, elevation] = segmentedCandidate( ...
-        attempts(k).CandidatePosition_deg, []);
+        attempts(attemptIndex).CandidatePosition_deg, []);
     visibilityValue = "off";
-    if k == 1
+    if attemptIndex == 1
         visibilityValue = "on";
     end
     handles(end + 1, 1) = plot(ax, azimuth, elevation, "--", ...
@@ -453,12 +640,15 @@ end
 function handles = plotCandidateRoutes3D(ax, plan, options)
 handles = gobjects(0, 1);
 attempts = candidateAttempts(plan, options);
-for k = 1:numel(attempts)
+% A contender appears only after exact validation. Missing lines therefore
+% mean no alternate validated resolution existed, not that plotting lost
+% failed search attempts.
+for attemptIndex = 1:numel(attempts)
     [azimuth, elevation, time_s] = segmentedCandidate( ...
-        attempts(k).CandidatePosition_deg, ...
-        attempts(k).CandidateTime_s);
+        attempts(attemptIndex).CandidatePosition_deg, ...
+        attempts(attemptIndex).CandidateTime_s);
     visibilityValue = "off";
-    if k == 1
+    if attemptIndex == 1
         visibilityValue = "on";
     end
     handles(end + 1, 1) = plot3(ax, ...
@@ -477,21 +667,27 @@ if ~options.ShowCandidateRoutes || ...
     return;
 end
 allAttempts = plan.resolutionAttempts;
-required = ["Success", "Selected", ...
+requiredFields = ["Success", "Selected", ...
     "CandidateTime_s", "CandidatePosition_deg"];
-if ~all(isfield(allAttempts, cellstr(required)))
+if ~all(isfield(allAttempts, cellstr(requiredFields)))
+    % Older planner results lack enough metadata to distinguish rejected
+    % valid contenders from ordinary failed searches, so drawing nothing
+    % is safer than mislabeling an unsafe route.
     return;
 end
-success = reshape([allAttempts.Success], [], 1);
-selected = reshape([allAttempts.Selected], [], 1);
-hasPosition = reshape(arrayfun( ...
-    @(item) ~isempty(item.CandidatePosition_deg), allAttempts), [], 1);
-keep = success & ~selected & hasPosition;
-attempts = allAttempts(keep);
+wasSuccessful = reshape([allAttempts.Success], [], 1);
+wasSelected = reshape([allAttempts.Selected], [], 1);
+hasCandidatePosition = false(numel(allAttempts), 1);
+for attemptIndex = 1:numel(allAttempts)
+    candidatePosition = allAttempts(attemptIndex).CandidatePosition_deg;
+    hasCandidatePosition(attemptIndex) = ~isempty(candidatePosition);
+end
+keepAttempt = wasSuccessful & ~wasSelected & hasCandidatePosition;
+attempts = allAttempts(keepAttempt);
 end
 
-function [azimuth, elevation, time_s] = ...
-        segmentedCandidate(position, time_s)
+function [azimuth, elevation, time_s] = segmentedCandidate( ...
+        position, time_s)
 azimuth = position(:, 1);
 elevation = position(:, 2);
 if isempty(time_s)
@@ -505,8 +701,7 @@ elevation(wrapBreak) = NaN;
 time_s(wrapBreak) = NaN;
 end
 
-function [azimuth, elevation, step] = ...
-        latticeLineData(plan, options)
+function [azimuth, elevation, step] = latticeLineData(plan, options)
 azimuth = zeros(0, 1);
 elevation = zeros(0, 1);
 step = NaN;
@@ -558,24 +753,11 @@ end
 values = double(values);
 end
 
-function times = discretizationTimes(plan, maximumCount)
-times = zeros(0, 1);
-if isfield(plan, "safeIntervalSearch") && ...
-        isstruct(plan.safeIntervalSearch) && ...
-        isfield(plan.safeIntervalSearch, "EventTimes_s")
-    times = double(plan.safeIntervalSearch.EventTimes_s(:));
-end
-if isempty(times)
-    times = linspace(plan.time_s(1), plan.time_s(end), ...
-        min(3, maximumCount)).';
-elseif numel(times) > maximumCount
-    selected = unique(round(linspace(1, numel(times), maximumCount)));
-    times = times(selected);
-end
-end
-
-function sample = nearestSample(time_s, queryTime_s)
-[~, sample] = min(abs(time_s - queryTime_s));
+function sampleIndex = nearestSample(time_s, queryTime_s)
+% Nearest-neighbor selection matches the piecewise-constant obstacle
+% semantics used by the packed workspace. Interpolating polygon vertices
+% here would display geometry that collision checking never evaluated.
+[~, sampleIndex] = min(abs(time_s - queryTime_s));
 end
 
 function [position, past, pastTime] = movingTargetAtTime( ...
@@ -585,45 +767,6 @@ position = interp1(target.time_s, target.position_deg, ...
 pastIndex = target.time_s <= queryTime_s;
 pastTime = [target.time_s(pastIndex); queryTime_s];
 past = [target.position_deg(pastIndex, :); position];
-end
-
-function selected = selectedSamples(available, maximumCount)
-if isempty(available)
-    selected = zeros(0, 1);
-elseif numel(available) <= maximumCount
-    selected = available;
-else
-    position = unique(round(linspace(1, numel(available), maximumCount)));
-    selected = available(position);
-end
-end
-
-function indices = displayIndices(sampleCount, maximumCount)
-if sampleCount <= maximumCount
-    indices = (1:sampleCount).';
-else
-    indices = unique(round(linspace(1, sampleCount, maximumCount))).';
-end
-end
-
-function [layout, azElAxes, workspaceAxes] = createLayout(figureHandle, mode)
-azElAxes = gobjects(1);
-workspaceAxes = gobjects(1);
-switch mode
-    case "2d"
-        layout = tiledlayout(figureHandle, 1, 1, ...
-            "TileSpacing", "compact", "Padding", "compact");
-        azElAxes = nexttile(layout);
-    case "3d"
-        layout = tiledlayout(figureHandle, 1, 1, ...
-            "TileSpacing", "compact", "Padding", "compact");
-        workspaceAxes = nexttile(layout);
-    otherwise
-        layout = tiledlayout(figureHandle, 1, 2, ...
-            "TileSpacing", "compact", "Padding", "compact");
-        azElAxes = nexttile(layout);
-        workspaceAxes = nexttile(layout);
-end
 end
 
 function applyAngularLimits(ax, plan)
@@ -652,148 +795,9 @@ else
 end
 end
 
-function workspace = planWorkspace(plan, dataList)
-if isfield(plan, "workspace") && isstruct(plan.workspace) && ...
-        isfield(plan.workspace, "Format") && ...
-        plan.workspace.Format == "AzElTimeObstacleWorkspace"
-    workspace = plan.workspace;
-else
-    workspace = buildAzElTimeObstacleWorkspace(dataList);
-end
-end
-
-function validatePlan(plan)
-required = ["success", "time_s", "position_deg"];
-if ~isstruct(plan) || ~isscalar(plan) || ...
-        ~all(isfield(plan, cellstr(required))) || ~plan.success
-    error("animateAzElAvoidancePlan:InvalidPlan", ...
-        "plan must be a successful planAzElDijkstra result.");
-end
-validateattributes(plan.time_s, {'numeric'}, ...
-    {'vector', 'real', 'finite', 'increasing'});
-validateattributes(plan.position_deg, {'numeric'}, ...
-    {'2d', 'ncols', 2, 'real', 'finite'});
-if size(plan.position_deg, 1) ~= numel(plan.time_s)
-    error("animateAzElAvoidancePlan:PlanSizeMismatch", ...
-        "plan.position_deg must contain one row per time sample.");
-end
-end
-
-function dataList = normalizeDataList(input)
-combined = combineAzElObstacles(input);
-dataList = arrayfun(@(item) item, combined(:), ...
-    "UniformOutput", false);
-end
-
-function view = emptyTwoDimensionalView()
-view = struct( ...
-    "Discretization", gobjects(0, 1), ...
-    "CandidateRoutes", gobjects(0, 1), ...
-    "SelectedRoute", gobjects(1), ...
-    "FuturePath", gobjects(1), ...
-    "TraveledPath", gobjects(1), ...
-    "CurrentBoresight", gobjects(1), ...
-    "TargetPath", gobjects(1), ...
-    "TargetTraveled", gobjects(1), ...
-    "CurrentTarget", gobjects(1), ...
-    "Start", gobjects(1), ...
-    "Stop", gobjects(1), ...
-    "ObstacleLegend", gobjects(0, 1), ...
-    "ObstacleBoundaries", gobjects(0, 1));
-end
-
-function view = emptyThreeDimensionalView()
-view = struct( ...
-    "Discretization", gobjects(0, 1), ...
-    "CandidateRoutes", gobjects(0, 1), ...
-    "SelectedRoute", gobjects(1), ...
-    "FuturePath", gobjects(1), ...
-    "TraveledPath", gobjects(1), ...
-    "CurrentBoresight", gobjects(1), ...
-    "TargetPath", gobjects(1), ...
-    "TargetTraveled", gobjects(1), ...
-    "CurrentTarget", gobjects(1), ...
-    "CurrentBoundaries", gobjects(0, 1), ...
-    "ObstacleSlices", gobjects(0, 1), ...
-    "ObstacleSliceTimes_s", zeros(0, 1));
-end
-
-function options = normalizeOptions(input)
-defaults = struct( ...
-    "ViewMode", "combined", ...
-    "MaximumAnimationFrames", 180, ...
-    "MaximumDisplayedSlices", 100, ...
-    "PauseSeconds", 0.01, ...
-    "ShowFuturePath", true, ...
-    "ShowObstacleSlices", true, ...
-    "ObstacleFaceAlpha", 0.08, ...
-    "ShowDiscretization", true, ...
-    "ShowCandidateRoutes", true, ...
-    "MaximumObstacleLegendEntries", 6, ...
-    "MaximumDiscretizationLines", 40, ...
-    "MaximumDiscretizationTimePlanes", 6, ...
-    "MovingTarget", [], ...
-    "FigureVisible", "on");
-options = applyDefaults(input, defaults);
-options.ViewMode = lower(string(options.ViewMode));
-if ~any(options.ViewMode == ["2d", "3d", "combined"])
-    error("animateAzElAvoidancePlan:InvalidViewMode", ...
-        "ViewMode must be 2d, 3d, or combined.");
-end
-validateattributes(options.MaximumAnimationFrames, {'numeric'}, ...
-    {'scalar', 'integer', 'positive'});
-validateattributes(options.MaximumDisplayedSlices, {'numeric'}, ...
-    {'scalar', 'integer', 'nonnegative'});
-validateattributes(options.PauseSeconds, {'numeric'}, ...
-    {'scalar', 'real', 'finite', 'nonnegative'});
-validateattributes(options.ObstacleFaceAlpha, {'numeric'}, ...
-    {'scalar', 'real', 'finite', '>=', 0, '<=', 1});
-validateattributes(options.MaximumDiscretizationLines, {'numeric'}, ...
-    {'scalar', 'integer', 'positive'});
-validateattributes(options.MaximumObstacleLegendEntries, {'numeric'}, ...
-    {'scalar', 'integer', 'nonnegative'});
-validateattributes(options.MaximumDiscretizationTimePlanes, {'numeric'}, ...
-    {'scalar', 'integer', 'positive'});
-options.ShowFuturePath = logicalScalar( ...
-    options.ShowFuturePath, "ShowFuturePath");
-options.ShowObstacleSlices = logicalScalar( ...
-    options.ShowObstacleSlices, "ShowObstacleSlices");
-options.ShowDiscretization = logicalScalar( ...
-    options.ShowDiscretization, "ShowDiscretization");
-options.ShowCandidateRoutes = logicalScalar( ...
-    options.ShowCandidateRoutes, "ShowCandidateRoutes");
-options.MovingTarget = normalizeMovingTarget(options.MovingTarget);
-options.FigureVisible = lower(string(options.FigureVisible));
-if ~isscalar(options.FigureVisible) || ...
-        ~any(options.FigureVisible == ["on", "off"])
-    error("animateAzElAvoidancePlan:InvalidFigureVisible", ...
-        "FigureVisible must be on or off.");
-end
-end
-
-function target = normalizeMovingTarget(target)
-if isempty(target)
-    target = [];
-    return;
-end
-if ~isstruct(target) || ~isscalar(target) || ...
-        ~all(isfield(target, ["time_s", "position_deg"]))
-    error("animateAzElAvoidancePlan:InvalidMovingTarget", ...
-        "MovingTarget requires time_s and position_deg.");
-end
-target.time_s = double(target.time_s(:));
-target.position_deg = double(target.position_deg);
-validateattributes(target.time_s, {'numeric'}, ...
-    {'vector', 'real', 'finite', 'increasing'});
-validateattributes(target.position_deg, {'numeric'}, ...
-    {'2d', 'ncols', 2, 'real', 'finite'});
-if size(target.position_deg, 1) ~= numel(target.time_s)
-    error("animateAzElAvoidancePlan:MovingTargetSizeMismatch", ...
-        "MovingTarget.position_deg must contain one row per time.");
-end
-end
-
 function value = logicalScalar(value, name)
+% Shared by four flags so they all reject ambiguous truthy values such as
+% 2 or NaN instead of silently producing inconsistent display behavior.
 validateattributes(value, {'logical', 'numeric'}, {'scalar'});
 if value ~= 0 && value ~= 1
     error("animateAzElAvoidancePlan:InvalidOption", ...
@@ -803,19 +807,11 @@ value = logical(value);
 end
 
 function value = visibility(isVisible)
+% MATLAB graphics properties require on/off text even though the public
+% options use logical scalars.
 if isVisible
     value = "on";
 else
     value = "off";
-end
-end
-
-function output = applyDefaults(input, defaults)
-output = input;
-names = fieldnames(defaults);
-for k = 1:numel(names)
-    if ~isfield(output, names{k}) || isempty(output.(names{k}))
-        output.(names{k}) = defaults.(names{k});
-    end
 end
 end
