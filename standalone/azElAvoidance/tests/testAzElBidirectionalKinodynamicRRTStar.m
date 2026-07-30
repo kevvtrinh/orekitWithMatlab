@@ -23,6 +23,7 @@ plan = planAzElBidirectionalKinodynamicRRTStar( ...
 
 verifyTrue(testCase, plan.success);
 verifyTrue(testCase, plan.optimalGlobally);
+verifyFalse(testCase, isfield(plan.options, "GoalBias"));
 verifyEqual(testCase, plan.angularPathLength_deg, hypot(5, 3), ...
     "AbsTol", 1e-9);
 verifyEqual(testCase, plan.blockedValidationSampleCount, 0);
@@ -65,6 +66,22 @@ blocked = queryAzElTimeObstacle(plan.workspace, ...
     struct("SafetyMarginDeg", options.SafetyMargin_deg, ...
     "TimePaddingSamples", plan.options.TimePaddingSamples));
 verifyFalse(testCase, any(blocked));
+end
+
+function testRrtDoesNotDelegateOrAcceptRouteGuidance(testCase)
+root = fileparts(fileparts(mfilename("fullpath")));
+rrtSource = string(fileread(fullfile( ...
+    root, "planAzElBidirectionalKinodynamicRRTStar.m")));
+dijkstraSource = string(fileread(fullfile(root, "planAzElDijkstra.m")));
+
+verifyFalse(testCase, contains(rrtSource, "planAzElDijkstra"));
+verifyFalse(testCase, contains( ...
+    dijkstraSource, "planAzElBidirectionalKinodynamicRRTStar"));
+for forbiddenInput = [ ...
+        """GuidePath_deg""", """StateCorridor""", ...
+        """DirectionAngles_deg""", """GoalBias"""]
+    verifyFalse(testCase, contains(rrtSource, forbiddenInput));
+end
 end
 
 function state = restState(time_s, position_deg)

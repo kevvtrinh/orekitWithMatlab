@@ -150,6 +150,9 @@ Tree growth uses configurable coarse collision sampling. A complete
 start-to-goal candidate cannot become the incumbent until the full command
 passes the authoritative `ValidationStep_s` polygon check. The returned
 forward and backward trees expose every sampled contender for diagnosis.
+Space and time samples are uniform over the complete allowed domain. There
+is no goal-bias option, supplied waypoint route, preferred direction, or
+scenario-specific search corridor.
 
 RRT* is stochastic: a finite run has no success or global-optimum guarantee.
 Use multiple seeds when measuring reliability. Run the repeatable
