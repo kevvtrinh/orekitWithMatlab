@@ -25,6 +25,8 @@ and an algorithm-by-algorithm breakdown.
 The mathematical design, pseudocode, guarantees, complexity, and maintenance
 boundaries for the planner used by every numbered example are documented in
 [`ADAPTIVE_ASTAR_PLANNER.md`](docs/ADAPTIVE_ASTAR_PLANNER.md).
+The all-Dijkstra branch comparison and measured runtime tradeoffs are in
+[`ALL_DIJKSTRA_EXPERIMENT.md`](docs/ALL_DIJKSTRA_EXPERIMENT.md).
 
 ## Input data
 
@@ -120,14 +122,14 @@ The steering command is in `plan.time_s` and `plan.position_deg`.
 and the packed obstacle workspace are also returned.
 
 Static obstacle volumes use progressive goal-rooted Dijkstra. Moving volumes
-use progressive event-compressed safe-interval A*. Both modes use analytic
-rest-to-rest slews and validate the command against the original packed
-polygons.
+use progressive event-compressed safe-interval Dijkstra. Both modes use
+analytic rest-to-rest slews and validate the command against the original
+packed polygons.
 
 ### Moving rendezvous and trailing
 
 `planAzElMovingTargetIntercept` can match a moving target's position,
-velocity, and acceleration at capture without adding velocity to every A*
+velocity, and acceleration at capture without adding velocity to every graph
 state. Internal edges remain rest-to-rest; only the final edge uses a
 quintic boundary profile:
 
@@ -154,7 +156,7 @@ obstacle-free kinematic lower bound. The same diagnosis prints once in the
 Command Window. Set `options.PrintFailureSuggestions=false` for quiet batch
 runs; the structured assessment remains available in the returned plan.
 
-## Dynamic safe-interval A*
+## Dynamic safe-interval Dijkstra
 
 Run the moving two-obstacle example:
 
@@ -309,8 +311,9 @@ The workspace packs all time slices into contiguous arrays. Display
 decimation never affects collision queries.
 
 The continuous waypoint result reports a certified bound derived from the
-straight angular lower bound. A `minimumTime` A* result reports whether it is
-optimal on its configured finite lattice.
+straight angular lower bound. Dynamic Dijkstra minimizes earliest arrival
+labels on its configured safe-interval graph; exact polygon validation still
+governs whether a returned trajectory is accepted.
 
 ## Generated-data gauntlet
 

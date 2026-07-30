@@ -49,6 +49,9 @@ plan = planAzElAdaptiveAStar( ...
 verifyTrue(testCase, plan.success);
 verifyGreaterThan(testCase, plan.angularPathLength_deg, 8);
 verifyGreaterThan(testCase, plan.expandedNodeCount, 0);
+verifyEqual(testCase, plan.method, "progressiveSafeIntervalDijkstra");
+verifyEqual(testCase, ...
+    plan.safeIntervalSearch.Method, "adaptiveSafeIntervalDijkstra");
 verifyPlan(testCase, plan);
 end
 
@@ -67,7 +70,7 @@ plan = planAzElAdaptiveAStar(data, initialState, goalState, ...
     "GridStepSchedule_deg", [2 1], "MaxSearchTime_s", 8));
 
 verifyTrue(testCase, plan.success);
-verifyEqual(testCase, plan.method, "progressiveSafeIntervalAStar");
+verifyEqual(testCase, plan.method, "progressiveSafeIntervalDijkstra");
 verifyTrue(testCase, plan.optimalGlobally);
 verifyEqual(testCase, plan.angularPathLength_deg, 8, "AbsTol", 1e-9);
 verifyPlan(testCase, plan);

@@ -44,7 +44,7 @@ for k = 1:numel(examples)
 end
 end
 
-function testEveryExampleUsesUnifiedAdaptiveAStar(testCase)
+function testEveryExampleUsesUnifiedDijkstraPlanner(testCase)
 root = fileparts(fileparts(mfilename("fullpath")));
 folder = fullfile(root, "examples");
 examples = dir(fullfile(folder, "example*.m"));
@@ -57,7 +57,7 @@ for k = 1:numel(examples)
         contains(source, "planAzElMovingTargetIntercept");
     verifyTrue(testCase, ...
         usesPlanner || usesRunner || usesInterceptWrapper, ...
-        sprintf('%s bypasses unified adaptive A*.', examples(k).name));
+        sprintf('%s bypasses the unified Dijkstra planner.', examples(k).name));
 end
 end
 
@@ -71,7 +71,7 @@ privatePlannerFiles = dir(fullfile(root, "private", "*.m"));
 verifyEqual(testCase, sort(string({privatePlannerFiles.name})), ...
     sort(["finalizeAzElPlanFailure.m", ...
     "isAzElTimeObstacleWorkspaceStatic.m", ...
-    "searchAzElSafeIntervalAStar.m"]));
+    "searchAzElSafeIntervalDijkstra.m"]));
 end
 
 function testDefaultOptionsForceCombinedView(testCase)

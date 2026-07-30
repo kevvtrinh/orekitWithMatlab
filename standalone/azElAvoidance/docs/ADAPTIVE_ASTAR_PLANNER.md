@@ -1,4 +1,4 @@
-# Plan Az/El Adaptive A*: Technical Guide
+# Plan Az/El Dijkstra: Technical Guide
 
 ## Purpose and audience
 
@@ -15,7 +15,7 @@ The planner answers this question:
 > the boresight point at every time so that it avoids all obstacles?
 
 The implementation keeps one public fixed-goal planner. It uses goal-rooted
-Dijkstra for static geometry, safe-interval A* for moving geometry, analytic
+Dijkstra for static geometry, safe-interval Dijkstra for moving geometry, analytic
 rest-to-rest slew profiles, and the original obstacle polygons as the final
 collision authority.
 
@@ -40,7 +40,7 @@ flowchart LR
     A["azElData polygon slices"] --> B["Packed polygon workspace"]
     B --> C{"Geometry static?"}
     C -->|Yes| D["Progressive goal-rooted Dijkstra"]
-    C -->|No| E["Progressive safe-interval A*"]
+    C -->|No| E["Progressive safe-interval Dijkstra"]
     D --> F["Analytic rest-to-rest retiming"]
     E --> F
     F --> G["Exact polygon queries at validation samples"]
@@ -84,7 +84,6 @@ options = struct( ...
     "GridStepSchedule_deg", [2 1 0.5], ...
     "SafetyMargin_deg", 0.2, ...
     "AllowAzimuthWrap", true, ...
-    "HeuristicWeight", 1);
 ```
 
 The planner requires a rest initial state. Ordinary fixed-target plans also
@@ -198,7 +197,7 @@ Each scheduled value of $h$ applies to the complete configured az/el domain.
 The static implementation rebuilds the full grid at that spacing and does
 not refine only near a previous route. In dynamic mode, $h$ still defines a
 global lattice, but nodes and safe intervals are generated lazily only where
-A* explores.
+Dijkstra explores.
 
 ![Progressive static search](figures/02_progressive_static_search.png)
 
@@ -335,7 +334,7 @@ is run-length compressed into maximal safe intervals:
 [first time after blockage, last time]
 ```
 
-One A* node represents arrival anywhere inside one interval. Waiting changes
+One Dijkstra node represents arrival anywhere inside one interval. Waiting changes
 the departure time within that node; it does not create a chain of duplicate
 states at consecutive time samples.
 
@@ -380,21 +379,19 @@ Candidate departures are tested in batches. The complete continuous-time
 motion profile is sampled at `CollisionCheckStep_s`, `ValidationStep_s`, and
 aligned event times. The first valid departure defines the edge.
 
-### 5.4 Dynamic A* priority
+### 5.4 Dynamic Dijkstra priority
 
-The dynamic search orders nodes by:
+The dynamic search orders nodes by accumulated arrival time:
 
 $$
-f(s)=t_{\mathrm{arrival}}(s)+
-w\,\hat{\tau}(s,\mathrm{goal}),
+g(s)=t_{\mathrm{arrival}}(s).
 $$
 
-where $\hat{\tau}$ is the minimum obstacle-free slew time to the goal under
-the actuator limits.
-
-This is an earliest-arrival search ordering. When the public objective is
+The minimum obstacle-free slew time to the goal is retained only for
+deadline pruning and equal-cost tie breaking. It never changes the primary
+uniform-cost queue order. When the public objective is
 `minimumAngularDistance`, the public planner compares successful resolution
-candidates using their angular lengths, but the internal dynamic A* search
+candidates using their angular lengths, but the internal dynamic Dijkstra
 does not exhaustively optimize angular length. This is why a successful
 dynamic route should not be described as a globally shortest continuous
 path.
@@ -407,7 +404,7 @@ start intervals = safeIntervals(start position)
 open = {(start position, containing start interval)}
 
 while open is not empty:
-    current = state with smallest arrival + weighted time heuristic
+    current = state with smallest arrival time
 
     if current is the required goal interval:
         reconstruct route
@@ -578,7 +575,6 @@ Wrapped limits must span exactly 360 degrees.
 | `SafetyMargin_deg` | `0` | Conservative angular obstacle expansion |
 | `PrimitiveRadiusMultipliers` | `[1 2 4 8]` | Dynamic edge lengths in grid-step units |
 | `DirectionStep_deg` | `45` | Dynamic edge direction spacing |
-| `HeuristicWeight` | `1` | Dynamic safe-interval A* heuristic multiplier |
 | `MaximumSafeIntervalSamples` | `10000` | Cap on event times used for intervals |
 | `MaximumDepartureTrials` | `64` | Candidate departures tested per edge |
 | `MaxExpansions` | `100000` | Search expansion budget |
@@ -620,7 +616,6 @@ options = struct( ...
     "SafetyMargin_deg", 0.25, ...
     "PrimitiveRadiusMultipliers", [1 2 4 8], ...
     "DirectionStep_deg", 45, ...
-    "HeuristicWeight", 1, ...
     "MaxSearchTime_s", 30);
 ```
 
@@ -700,7 +695,7 @@ jerk limit.
 The most accurate description is:
 
 > A progressively refined planner using goal-rooted Dijkstra for static
-> geometry, safe-interval A* for dynamic geometry, analytic rest-to-rest
+> geometry, safe-interval Dijkstra for dynamic geometry, analytic rest-to-rest
 > internal edges, and an optional velocity-matched terminal edge.
 
 ## 13. Computational cost
@@ -747,7 +742,7 @@ The dominant dynamic costs are usually:
 | `planAzElAdaptiveAStar.m` | Public API, progressive schedule, inline static Dijkstra, shortening, and retiming |
 | `buildAzElTimeObstacleWorkspace.m` | Packs original polygon slices |
 | `queryAzElTimeObstacle.m` | Authoritative point/time collision query |
-| `private/searchAzElSafeIntervalAStar.m` | Dynamic safe-interval A* |
+| `private/searchAzElSafeIntervalDijkstra.m` | Dynamic safe-interval Dijkstra |
 | `animateAzElAvoidancePlan.m` | 2-D and 3-D route animation |
 | `plotAzElPlanKinematics.m` | Position/rate/acceleration/jerk plots and optional Excel export |
 | `docs/generateAdaptiveAStarDocumentationFigures.m` | Rebuilds this guide's figures |

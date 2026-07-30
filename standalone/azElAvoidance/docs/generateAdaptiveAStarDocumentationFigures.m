@@ -299,7 +299,7 @@ zlim(ax, [time_s(1) time_s(end)]);
 xlabel(ax, "Azimuth (deg)");
 ylabel(ax, "Elevation (deg)");
 zlabel(ax, "Time (s)");
-title(ax, "(b) A* route through safe space-time intervals");
+title(ax, "(b) Dijkstra route through safe space-time intervals");
 legend(ax, "Location", "southoutside", "Orientation", "horizontal");
 
 title(layout, ...

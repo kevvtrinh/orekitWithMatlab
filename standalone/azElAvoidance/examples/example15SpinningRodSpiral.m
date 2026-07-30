@@ -6,7 +6,7 @@ function result = example15SpinningRodSpiral(viewOptions)
 %
 % A fast sector-shaped rod repeatedly sweeps a two-turn spiral. Three
 % recessed, rod-protected notches let the boresight stop safely until the
-% rod passes. The adaptive A* planner receives no guide path or corridor.
+% rod passes. The Dijkstra planner receives no guide path or corridor.
 
 if nargin < 1
     viewOptions = struct();
@@ -56,7 +56,7 @@ hasDirectionHint = ...
     ~isempty(plan.options.DirectionAngles_deg);
 if isfield(plan.options, "GuidePath_deg") || hasDirectionHint
     error("example15SpinningRodSpiral:ExternalGuideUsed", ...
-        "The spinning-rod spiral must use unguided adaptive A*.");
+        "The spinning-rod spiral must use unguided Dijkstra.");
 end
 view = animateAzElAvoidancePlan( ...
     problem.azElData, plan, viewOptions);

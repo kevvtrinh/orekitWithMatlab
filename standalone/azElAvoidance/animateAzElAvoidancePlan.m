@@ -16,7 +16,7 @@ function handles = animateAzElAvoidancePlan(azElData, plan, options)
 %   ShowFuturePath           Show the remaining path (default true).
 %   ShowObstacleSlices       Reveal accumulated 3-D slices (default true).
 %   ObstacleFaceAlpha        3-D slice opacity (default 0.08).
-%   ShowDiscretization       Show the selected A* lattice (default true).
+%   ShowDiscretization       Show the selected Dijkstra lattice (default true).
 %   ShowCandidateRoutes      Show rejected valid routes (default true).
 %   MaximumDiscretizationLines  Per-axis lattice-line cap (default 40).
 %   MaximumDiscretizationTimePlanes  3-D time-plane cap (default 6).
@@ -429,7 +429,7 @@ for k = 1:numel(times)
 end
 handle = plot3(ax, x, y, z, ":", ...
     "Color", [0.76 0.78 0.82], "LineWidth", 0.45, ...
-    "DisplayName", sprintf("A* lattice planes (%.3g deg)", step));
+    "DisplayName", sprintf("Dijkstra lattice planes (%.3g deg)", step));
 end
 
 function handles = plotCandidateRoutes2D(ax, plan, options)
