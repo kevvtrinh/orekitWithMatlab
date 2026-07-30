@@ -2,6 +2,7 @@
 
 This folder is self-contained. It starts with `azElData` and does not use
 Orekit, a satellite scenario, or any repository startup function.
+Library edits follow the inline-first conventions in [`STYLE.md`](STYLE.md).
 
 Every numbered entry point in `examples` opens the synchronized combined animation:
 the current 2-D azimuth/elevation geometry is shown beside the accumulating
