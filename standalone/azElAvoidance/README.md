@@ -124,6 +124,27 @@ use progressive event-compressed safe-interval A*. Both modes use analytic
 rest-to-rest slews and validate the command against the original packed
 polygons.
 
+### Unified single-algorithm alternative
+
+`planAzElSafeIntervalAStar` accepts the same inputs and returns the same
+plan fields, but runs one safe-interval A* for static and moving volumes
+alike (static geometry degenerates to a single interval per lattice
+point). Its design, guarantees, and measured comparison against
+`planAzElAdaptiveAStar` are documented in
+[`docs/SAFE_INTERVAL_PLANNER.md`](docs/SAFE_INTERVAL_PLANNER.md).
+Reproduce the comparison on every documented gauntlet with:
+
+```matlab
+report = runPlannerComparisonBenchmark();
+```
+
+The benchmark reuses the same `examples/support/make*Gauntlet` scenario
+builders the numbered examples call, hands byte-identical inputs to both
+planners, re-validates every returned trajectory against the original
+packed polygons, and writes MAT and CSV results.
+`planAzElMovingTargetIntercept` accepts `options.PlannerFcn` to run its
+interception attempts through either planner.
+
 ### Moving rendezvous and trailing
 
 `planAzElMovingTargetIntercept` can match a moving target's position,
