@@ -1,0 +1,6 @@
+Family,ScenarioCount,ReferenceSuccessCount,AgentSuccessCount,ConditionalSuccessRate,MedianRuntimeRatio,MedianPathRatio,PathRatio95
+wall,20,19,20,1,1.11437145677517,1,1.00036297740403
+slalom,20,20,20,1,1.04009345778673,1,1.0368613090582
+trap,20,20,20,1,1.04357326851717,1,1
+movingGates,20,20,20,1,1.00763298446191,1,1
+rotatingRods,20,20,20,1,1.09819720504399,1,1

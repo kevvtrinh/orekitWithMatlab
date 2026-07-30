@@ -155,6 +155,20 @@ complete decision trail in `plan.agent`. Run
 final-path animation, or `benchmarkPlannerAgentExamples()` for the
 12-scenario fixed-goal acceptance suite.
 
+The bundled artifact trains on 36 randomized, exact-labeled wall cases and
+scores 100% on 18 separately seeded holdouts. Run the broader no-rejection
+family campaign with:
+
+```matlab
+report = benchmarkRandomizedPlannerAgent( ...
+    100, 20260802, struct("AssertAcceptance", true));
+```
+
+The frozen campaign covers 20 walls, slaloms, U-traps, moving-gate fields,
+and rotating-rod fields each. It produced 100/100 exact-valid agent
+successes, zero unsafe acceptances, and a 1.000 p95 path ratio. Detailed
+seeds and results are stored under `benchmarks/results`.
+
 ### Moving rendezvous and trailing
 
 `planAzElMovingTargetIntercept` can match a moving target's position,
