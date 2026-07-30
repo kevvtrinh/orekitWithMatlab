@@ -113,3 +113,32 @@ before fallback. It cannot turn an invalid candidate into a successful
 route. This architecture is appropriate for accelerating configuration
 selection, but it does not certify vehicle hardware, environment modeling,
 or real-time execution.
+
+## Numbered-Example Benchmark
+
+Run the fixed-goal comparison with:
+
+```matlab
+report = benchmarkPlannerAgentExamples(20);
+```
+
+Examples 02-12 and 15 are directly comparable. Example 01 requires caller
+data, examples 13-14 use the moving-target interception workflow, and
+example 16 is the calibration demonstration.
+
+The first complete run on 2026-07-30 produced:
+
+- 9 of 12 exact-validated agent successes (75%).
+- 0.124 median agent/baseline runtime ratio on mutual successes.
+- 1.012 median agent/baseline angular-path ratio on mutual successes.
+- Failures on rotating slots, synchronized windmills, and the spinning-rod
+  spiral.
+
+Those failures make the current artifact a research prototype. Its training
+curriculum contains static narrow passages and does not represent difficult
+dynamic topology. Exact validation prevents unsafe acceptance, but it does
+not recover a route when all ranked profiles exhaust their budgets.
+
+Future artifacts should not be accepted on resubstitution accuracy. They
+must pass held-out scenario-family validation and retain ordinary progressive
+Dijkstra as an abstention/failure fallback.

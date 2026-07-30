@@ -259,6 +259,17 @@ Run the default 86,401-slice long-horizon benchmark:
 benchmark = benchmarkDijkstraLongHorizon();
 ```
 
+Benchmark the trained selector against every directly comparable numbered
+fixed-goal example:
+
+```matlab
+report = benchmarkPlannerAgentExamples(20);
+```
+
+The benchmark reports success, search time, angular path length, completion
+time, predicted/selected profile, and fallback attempts. Moving-target
+examples 13-14 require a separate interception-aware agent integration.
+
 The design summary is in
 [`DIJKSTRA_PLANNER.md`](docs/DIJKSTRA_PLANNER.md).
 
