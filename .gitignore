@@ -1,6 +1,7 @@
 vendor/orekit/
 *.asv
 *.mat
+!standalone/azElAvoidance/models/azElPlannerAgent.mat
 
 # STK vendor interface: experimental, not yet run against a real STK
 # install (no license on this machine), kept out of the repo for now.

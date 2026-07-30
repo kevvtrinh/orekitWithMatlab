@@ -30,6 +30,7 @@ azimuth/elevation/time workspace.
 | 13 | `example13RandomBlinkingIntercept` | Moving-target Dijkstra | Interception-time search where every candidate uses the same dynamic Dijkstra kernel. |
 | 14 | `example14MovingRendezvousAndTrail` | Velocity-matched Dijkstra | Crossy Road-style capture through twelve nonoverlapping four-vehicle rows in a narrow central corridor; rows 9-12 sweep the center slot as timed gates. |
 | 15 | `example15SpinningRodSpiral` | Safe-interval Dijkstra | Unguided traversal of a two-turn spiral while a faster rotating rod forces planner-selected waits in three protected wall notches. |
+| 16 | `example16TrainedPlannerAgent` | Trained profile selector + Dijkstra | A saved classification tree ranks search profiles for a narrow passage; ranked fallback and exact polygon validation remain authoritative. |
 
 Examples 05-09 can be run as a set:
 
@@ -54,3 +55,7 @@ The static search, exact shortcutter, and retimer are local functions inside
 the unified planner. The dynamic safe-interval search remains a separate
 private kernel because it is an independently complex algorithm. Scenario
 construction and diagnostics remain under `support`.
+
+Example 16 calls `planAzElWithAgent`. The agent chooses only the order in
+which the same exact planner tries its search profiles; it does not provide
+a guide path, candidate route, or collision verdict.

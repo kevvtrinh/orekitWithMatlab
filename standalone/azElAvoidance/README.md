@@ -28,6 +28,9 @@ boundaries for the planner used by every numbered example are documented in
 [`DIJKSTRA_PLANNER.md`](docs/DIJKSTRA_PLANNER.md).
 The all-Dijkstra branch comparison and measured runtime tradeoffs are in
 [`ALL_DIJKSTRA_EXPERIMENT.md`](docs/ALL_DIJKSTRA_EXPERIMENT.md).
+The trained search-profile selector, saved artifact contract, deployment
+fallback, and exact-validation boundary are documented in
+[`TRAINED_PLANNER_AGENT.md`](docs/TRAINED_PLANNER_AGENT.md).
 
 ## Input data
 
@@ -126,6 +129,27 @@ Static obstacle volumes use progressive goal-rooted Dijkstra. Moving volumes
 use progressive event-compressed safe-interval Dijkstra. Both modes use
 analytic rest-to-rest slews and validate the command against the original
 packed polygons.
+
+## Trained profile selection
+
+Train and save the bundled planner-selection agent:
+
+```matlab
+agent = trainAzElPlannerAgent();
+```
+
+Deploy it through the same problem interface:
+
+```matlab
+plan = planAzElWithAgent( ...
+    azElData, initialState, goalState, limits, options);
+```
+
+The compact classification tree ranks `fast`, `balanced`, and `precise`
+Dijkstra profiles. It does not generate steering commands. Ranked fallback
+and exact packed-polygon validation remain active, and `plan.agent` records
+the complete decision trail. Run `example16TrainedPlannerAgent` for the
+combined planning-summary and final-path animation.
 
 ### Moving rendezvous and trailing
 
