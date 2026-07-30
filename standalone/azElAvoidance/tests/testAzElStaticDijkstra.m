@@ -22,7 +22,8 @@ verifyEqual(testCase, ...
     result.plan.topologySearch.Method, "goalRootedDijkstra");
 verifyTrue(testCase, result.plan.topologyOptimalOnLattice);
 verifyFalse(testCase, isfield(result.plan.options, "GuidePath_deg"));
-verifyEmpty(testCase, result.plan.options.DirectionAngles_deg);
+verifyFalse(testCase, ...
+    isfield(result.plan.options, "DirectionAngles_deg"));
 verifyEqual(testCase, result.blockedSampleCount, 0);
 verifyGreaterThanOrEqual(testCase, ...
     result.diagnostics.windingTurns, 4);

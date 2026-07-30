@@ -345,13 +345,13 @@ regions do not pay the safe-interval query cost.
 
 The dynamic graph generates symmetric motion candidates from:
 
-- direction angles separated by `DirectionStep_deg`, or explicit
-  `DirectionAngles_deg`;
+- uniformly spaced direction angles separated by `DirectionStep_deg`;
 - radii from `PrimitiveRadii_deg`, or
   `GridStep_deg .* PrimitiveRadiusMultipliers`;
 - the exact goal position when useful.
 
-There is no preferred travel direction and no scenario-specific route hint.
+There is no API for a preferred travel direction, supplied waypoint route,
+or scenario-specific search corridor.
 
 ### 5.3 Scheduling a transition
 
@@ -742,7 +742,7 @@ The dominant dynamic costs are usually:
 | `planAzElDijkstra.m` | Public API, progressive schedule, inline static Dijkstra, shortening, and retiming |
 | `buildAzElTimeObstacleWorkspace.m` | Packs original polygon slices |
 | `queryAzElTimeObstacle.m` | Authoritative point/time collision query |
-| `private/searchAzElSafeIntervalDijkstra.m` | Dynamic safe-interval Dijkstra |
+| `planAzElDijkstra.m` local dynamic core | Dynamic safe-interval Dijkstra |
 | `animateAzElAvoidancePlan.m` | 2-D and 3-D route animation |
 | `plotAzElPlanKinematics.m` | Position/rate/acceleration/jerk plots and optional Excel export |
 | `docs/generateDijkstraDocumentationFigures.m` | Rebuilds this guide's figures |
