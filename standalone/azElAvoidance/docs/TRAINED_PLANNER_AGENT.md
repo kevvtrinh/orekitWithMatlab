@@ -3,14 +3,23 @@
 ## Purpose
 
 The saved agent improves search configuration selection without replacing
-the maintainable Dijkstra planner. It learns which of three graph profiles
-to try first:
+the maintainable Dijkstra planner. It is intentionally hybrid:
+
+- A small classification tree ranks three static graph profiles.
+- Observable dynamic topology selects one of four moving-scene profiles.
+- A deterministic guard selects a fine topology profile for traps/slaloms.
+- Ordinary Dijkstra receives a reserved fallback budget.
 
 | Profile | Spatial lattice | Intended use |
 |---|---:|---|
 | `fast` | 2 deg | Open scenes and wide passages |
-| `balanced` | 1 deg | Ordinary clutter |
+| `balanced` | 2 then 1 deg | Ordinary clutter |
 | `precise` | 0.5 deg | Narrow passages |
+| `topologyFine` | 1, 0.5, then 0.25 deg | Traps and slaloms |
+| `dynamicTiming` | 0.5 deg | Gates and rotating slots |
+| `dynamicPursuit` | 1 deg | Highly occupied moving scenes |
+| `dynamicDense` | 1 deg | Many rapidly changing obstacles |
+| `dynamicLongHorizon` | 2 deg | Long event-heavy missions |
 
 This is deliberately not an end-to-end neural steering controller. A
 classifier-generated trajectory would be difficult to audit and could
@@ -25,16 +34,16 @@ packed source polygons.
 azElData + boundary states + limits
                 |
                 v
- fixed-cost 10-feature probe
+ fixed-cost 14-feature probe
                 |
                 v
- saved classification tree
+ static classifier or dynamic mode policy
                 |
                 v
- ranked profiles: fast / balanced / precise
+ ranked mode-compatible profiles
                 |
                 v
- exact kinodynamic Dijkstra, with ranked fallback
+ exact kinodynamic Dijkstra, with reserved ordinary fallback
                 |
                 v
  accepted only when exactCollisionValidated == true
@@ -47,7 +56,9 @@ grow with an 86,400-sample source history.
 
 Features describe obstacle count, mission duration, endpoint separation,
 kinematic slack, sampled occupancy, direct-path obstruction, polygon area,
-centroid motion, boundary complexity, and temporal occupancy change.
+centroid motion, boundary complexity, temporal occupancy change, exact
+static/dynamic status, source sample density, rotating-boundary motion, and
+the fraction of obstacles that change.
 The artifact stores the ordered feature names. Deployment refuses an
 artifact if its feature order differs from the installed extractor.
 
@@ -61,10 +72,16 @@ agent = trainAzElPlannerAgent();
 ```
 
 The deterministic curriculum contains walls with wide, one-degree, and
-half-degree passages. Each case is offered to profiles from cheapest to most
-expressive. The first profile whose route passes exact polygon validation
-becomes the supervised label. Thus labels come from planner evidence, not
-from a manually declared answer.
+half-degree passages. Every static profile runs. A profile is eligible only
+when its route passes exact polygon validation and is within 5% of the
+shortest curriculum route; the cheapest eligible resolution becomes the
+label. Thus a coarse but unnecessarily long detour is not rewarded.
+
+Dynamic mode selection is deterministic rather than falsely learned from
+the static curriculum. Obstacle count, occupied fraction, temporal change,
+mission horizon, and boundary motion select the profile family. This keeps
+the policy inspectable until enough independent dynamic mission data exists
+for held-out training.
 
 The resulting artifact is saved at:
 
@@ -84,7 +101,8 @@ benchmarks and retain an unseen validation set.
 ```matlab
 plan = planAzElWithAgent( ...
     azElData, initialState, goalState, limits, struct( ...
-        "AgentMaxSearchTime_s", 45, ...
+        "AgentMaxSearchTime_s", 180, ...
+        "AgentFallbackReserve_s", 45, ...
         "AgentFallback", true));
 ```
 
@@ -95,10 +113,13 @@ controls are:
 - `AgentFile`: load a different saved artifact.
 - `AgentMaxSearchTime_s`: total budget across ranked attempts.
 - `AgentFallback`: try lower-ranked profiles after failure.
+- `AgentFallbackReserve_s`: time preserved for ordinary Dijkstra.
+- `AgentMaximumProfiles`: profile attempts before ordinary fallback.
 - `AgentPrintDiagnostics`: print ranking and selection.
 
-The returned `plan.agent` records feature values, classifier scores, ranked
-profiles, every attempted profile, fallback use, and deployment time.
+The returned `plan.agent` records problem mode, selection source/reason,
+feature values, static classifier scores, nearest-training distance,
+abstention status, ranked profiles, every attempt, and deployment time.
 
 ## Safety Boundary
 
@@ -119,26 +140,27 @@ or real-time execution.
 Run the fixed-goal comparison with:
 
 ```matlab
-report = benchmarkPlannerAgentExamples(20);
+report = benchmarkPlannerAgentExamples();
 ```
 
 Examples 02-12 and 15 are directly comparable. Example 01 requires caller
 data, examples 13-14 use the moving-target interception workflow, and
 example 16 is the calibration demonstration.
 
-The first complete run on 2026-07-30 produced:
+The version-2 acceptance run on 2026-07-30 produced:
 
-- 9 of 12 exact-validated agent successes (75%).
-- 0.124 median agent/baseline runtime ratio on mutual successes.
-- 1.012 median agent/baseline angular-path ratio on mutual successes.
-- Failures on rotating slots, synchronized windmills, and the spinning-rod
-  spiral.
+- 12 of 12 exact-validated successes.
+- 0.964 median agent/baseline runtime ratio.
+- 1.000 median and 1.040 maximum angular-path ratio.
+- One selected profile attempt for every case.
 
-Those failures make the current artifact a research prototype. Its training
-curriculum contains static narrow passages and does not represent difficult
-dynamic topology. Exact validation prevents unsafe acceptance, but it does
-not recover a route when all ranked profiles exhaust their budgets.
+In the rotating-slot case, denser departure events reduced the route from
+20.061 to 18.717 degrees and completion from 85.2 to 63.8 seconds. The
+benchmark reports route ratios and completion delay alongside runtime;
+training accuracy alone is not an acceptance criterion.
 
-Future artifacts should not be accepted on resubstitution accuracy. They
-must pass held-out scenario-family validation and retain ordinary progressive
-Dijkstra as an abstention/failure fallback.
+No finite curriculum proves success on every possible continuous problem.
+Artifacts should be accepted only when held-out scenario families pass,
+route inflation stays bounded, and ordinary progressive Dijkstra remains an
+abstention/failure fallback. An exact-valid failure is preferable to an
+unsafe accepted trajectory.

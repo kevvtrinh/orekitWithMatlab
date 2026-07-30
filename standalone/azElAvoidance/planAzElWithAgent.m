@@ -8,8 +8,11 @@ function plan = planAzElWithAgent( ...
 % Agent options:
 %   AgentArtifact          In-memory artifact returned by the trainer.
 %   AgentFile              Saved artifact path when AgentArtifact is empty.
-%   AgentMaxSearchTime_s   Total time across ranked fallbacks (default 45).
+%   AgentMaxSearchTime_s   Total time across ranked fallbacks (default 180).
 %   AgentFallback          Try remaining profiles after a failure (true).
+%   AgentFallbackReserve_s Preserve time for ordinary Dijkstra (default 45).
+%   AgentMaximumProfiles   Learned/policy profiles attempted before the
+%                          ordinary fallback (default 3).
 %   AgentPrintDiagnostics  Print the ranking and selected profile (true).
 %
 % Any other option is an explicit planAzElDijkstra override applied to every
@@ -30,10 +33,18 @@ if ~isfield(options, "AgentFile") || isempty(options.AgentFile)
 end
 if ~isfield(options, "AgentMaxSearchTime_s") || ...
         isempty(options.AgentMaxSearchTime_s)
-    options.AgentMaxSearchTime_s = 45;
+    options.AgentMaxSearchTime_s = 180;
 end
 if ~isfield(options, "AgentFallback") || isempty(options.AgentFallback)
     options.AgentFallback = true;
+end
+if ~isfield(options, "AgentFallbackReserve_s") || ...
+        isempty(options.AgentFallbackReserve_s)
+    options.AgentFallbackReserve_s = 45;
+end
+if ~isfield(options, "AgentMaximumProfiles") || ...
+        isempty(options.AgentMaximumProfiles)
+    options.AgentMaximumProfiles = 3;
 end
 if ~isfield(options, "AgentPrintDiagnostics") || ...
         isempty(options.AgentPrintDiagnostics)
@@ -41,6 +52,10 @@ if ~isfield(options, "AgentPrintDiagnostics") || ...
 end
 validateattributes(options.AgentMaxSearchTime_s, {'numeric'}, ...
     {'scalar', 'real', 'finite', 'positive'});
+validateattributes(options.AgentFallbackReserve_s, {'numeric'}, ...
+    {'scalar', 'real', 'finite', 'nonnegative'});
+validateattributes(options.AgentMaximumProfiles, {'numeric'}, ...
+    {'scalar', 'integer', 'positive'});
 validateattributes(options.AgentFallback, ...
     {'logical', 'numeric'}, {'scalar'});
 validateattributes(options.AgentPrintDiagnostics, ...
@@ -77,34 +92,160 @@ if ~agentArtifact.ExactValidationRequired
         "Deployment requires an exact-validation agent artifact.");
 end
 
-%% Rank the learned actions
+%% Describe the problem and select one auditable search mode
 [featureValues, featureNames, featureDiagnostics] = extractAzElPlannerFeatures( ...
     azElData, initialState, goalState, limits);
 if ~isequal(string(agentArtifact.FeatureNames), string(featureNames))
     error("planAzElWithAgent:FeatureVersionMismatch", ...
         "Artifact feature ordering differs from this deployment.");
 end
-[predictedClass, classScores] = predict( ...
-    agentArtifact.Model, featureValues);
-modelClassNames = string(agentArtifact.Model.ClassNames);
 artifactProfileNames = string({agentArtifact.Profiles.Name});
-profileScores = -inf(1, numel(artifactProfileNames));
-for modelClassIndex = 1:numel(modelClassNames)
-    isMatchingProfile = artifactProfileNames == modelClassNames( ...
-        modelClassIndex);
-    matchingProfile = find(isMatchingProfile, 1);
-    if ~isempty(matchingProfile)
-        profileScores(matchingProfile) = classScores(modelClassIndex);
-    end
+if ~all(isfield(agentArtifact.Profiles, "Mode"))
+    error("planAzElWithAgent:LegacyArtifact", ...
+        "Retrain the planner agent; this deployment requires mode-aware profiles.");
 end
-% Artifact order is the cheap-to-expressive fallback order, so it resolves
-% equal classifier scores deterministically.
-rankingKeys = [-profileScores(:), ...
-    (1:numel(profileScores)).'];
-[~, rankingOrder] = sortrows(rankingKeys, [1 2]);
-rankedProfileNames = artifactProfileNames(rankingOrder);
-rankedScores = profileScores(rankingOrder);
-if ~options.AgentFallback
+artifactProfileModes = string({agentArtifact.Profiles.Mode});
+agentAbstained = false;
+nearestTrainingDistance = NaN;
+
+if featureDiagnostics.WorkspaceIsStatic
+    problemMode = "static";
+    staticProfileNames = artifactProfileNames( ...
+        artifactProfileModes == "static");
+    [predictedClass, classScores] = predict( ...
+        agentArtifact.Model, featureValues);
+    modelClassNames = string(agentArtifact.Model.ClassNames);
+    staticScores = -inf(1, numel(staticProfileNames));
+    for modelClassIndex = 1:numel(modelClassNames)
+        matchingStaticProfile = find( ...
+            staticProfileNames == modelClassNames(modelClassIndex), 1);
+        if ~isempty(matchingStaticProfile)
+            staticScores(matchingStaticProfile) = classScores(modelClassIndex);
+        end
+    end
+    staticRankingKeys = [-staticScores(:), ...
+        (1:numel(staticScores)).'];
+    [~, staticRankingOrder] = sortrows(staticRankingKeys, [1 2]);
+    rankedProfileNames = staticProfileNames(staticRankingOrder);
+    rankedScores = staticScores(staticRankingOrder);
+    selectionSource = "learnedStaticClassifier";
+    selectionReason = "Static curriculum classifier ranking.";
+
+    % Slaloms and traps can be exact-valid on a coarse graph while still
+    % taking a visibly poor route. These topology signals move the
+    % progressive fine profile ahead of the speed profile; Dijkstra still
+    % decides the route and validates every segment.
+    endpointDistanceFraction = featureValues( ...
+        featureNames == "endpointDistanceFraction");
+    meanPolygonAreaFraction = featureValues( ...
+        featureNames == "meanPolygonAreaFraction");
+    meanVerticesPerSliceScaled = featureValues( ...
+        featureNames == "meanVerticesPerSliceScaled");
+    directObstructionFraction = featureValues( ...
+        featureNames == "directObstructionFraction");
+    denseBoundaryDemand = meanVerticesPerSliceScaled >= 0.9 && ...
+        meanPolygonAreaFraction >= 0.05;
+    longMultiObstacleRoute = featureDiagnostics.ObstacleCount >= 4 && ...
+        endpointDistanceFraction >= 0.5 && ...
+        directObstructionFraction >= 0.15;
+    largeTrapRoute = meanPolygonAreaFraction >= 0.08 && ...
+        endpointDistanceFraction >= 0.4 && ...
+        directObstructionFraction >= 0.15;
+    fineTopologyDemand = longMultiObstacleRoute || largeTrapRoute;
+    if denseBoundaryDemand && any(staticProfileNames == "precise")
+        remainingStaticNames = rankedProfileNames( ...
+            rankedProfileNames ~= "precise");
+        remainingStaticScores = rankedScores( ...
+            rankedProfileNames ~= "precise");
+        rankedProfileNames = ["precise", remainingStaticNames];
+        rankedScores = [1, remainingStaticScores];
+        selectionSource = "staticTopologyGuard";
+        selectionReason = "Dense curved boundary uses the half-degree profile.";
+    elseif fineTopologyDemand && any( ...
+            staticProfileNames == "topologyFine")
+        remainingStaticNames = rankedProfileNames( ...
+            rankedProfileNames ~= "topologyFine");
+        remainingStaticScores = rankedScores( ...
+            rankedProfileNames ~= "topologyFine");
+        rankedProfileNames = ["topologyFine", remainingStaticNames];
+        rankedScores = [1, remainingStaticScores];
+        selectionSource = "staticTopologyGuard";
+        selectionReason = "Blocked long-range topology requires progressive fine grids.";
+    end
+
+    % Distance is diagnostic rather than a false probability. An
+    % out-of-curriculum case is marked as an abstention, while the
+    % deterministic topology guard and ordinary fallback retain control.
+    if isfield(agentArtifact.TrainingReport, "TrainingFeatures")
+        trainingFeatures = double( ...
+            agentArtifact.TrainingReport.TrainingFeatures);
+        featureScale = std(trainingFeatures, 0, 1);
+        featureScale = max(featureScale, 0.05);
+        standardizedDifference = (trainingFeatures - ...
+            featureValues) ./ featureScale;
+        trainingDistance = sqrt(mean( ...
+            standardizedDifference .^ 2, 2));
+        nearestTrainingDistance = min(trainingDistance);
+        if isfield(agentArtifact, "AbstentionDistance")
+            agentAbstained = nearestTrainingDistance > ...
+                agentArtifact.AbstentionDistance;
+        end
+    end
+else
+    problemMode = "dynamic";
+    predictedClass = "";
+    temporalChangeFraction = featureValues( ...
+        featureNames == "temporalChangeFraction");
+    occupiedProbeFraction = featureValues( ...
+        featureNames == "occupiedProbeFraction");
+    planningDurationScaled = featureValues( ...
+        featureNames == "planningDurationScaled");
+
+    % Dynamic profiles are separated by observable search difficulty. A
+    % fixed centroid does not imply a fixed obstacle, so rotating boundary
+    % motion and temporal occupancy are both part of this mode gate.
+    if featureDiagnostics.ObstacleCount >= 7 || ...
+            temporalChangeFraction >= 0.08
+        rankedProfileNames = [ ...
+            "dynamicDense", "dynamicPursuit", ...
+            "dynamicTiming", "dynamicLongHorizon"];
+        selectionReason = "Many moving obstacles or rapid occupancy changes.";
+    elseif planningDurationScaled >= 0.6 && ...
+            featureDiagnostics.ObstacleCount <= 2
+        rankedProfileNames = [ ...
+            "dynamicLongHorizon", "dynamicTiming", ...
+            "dynamicPursuit", "dynamicDense"];
+        selectionReason = "Long horizon with a small number of moving boundaries.";
+    elseif occupiedProbeFraction >= 0.4
+        rankedProfileNames = [ ...
+            "dynamicPursuit", "dynamicDense", ...
+            "dynamicTiming", "dynamicLongHorizon"];
+        selectionReason = "High occupied fraction needs longer spatial primitives.";
+    else
+        rankedProfileNames = [ ...
+            "dynamicTiming", "dynamicPursuit", ...
+            "dynamicDense", "dynamicLongHorizon"];
+        selectionReason = "Sparse moving geometry needs dense departure-time sampling.";
+    end
+    profileExists = ismember(rankedProfileNames, artifactProfileNames);
+    rankedProfileNames = rankedProfileNames(profileExists);
+    rankedScores = linspace(1, 0.25, numel(rankedProfileNames));
+    selectionSource = "dynamicModePolicy";
+end
+
+if isempty(rankedProfileNames)
+    error("planAzElWithAgent:NoProfilesForMode", ...
+        "Artifact contains no profiles for the detected %s mode.", ...
+        problemMode);
+end
+rankedProfileNames = rankedProfileNames( ...
+    1:min(numel(rankedProfileNames), options.AgentMaximumProfiles));
+rankedScores = rankedScores(1:numel(rankedProfileNames));
+policyPredictedProfileName = rankedProfileNames(1);
+if options.AgentFallback
+    rankedProfileNames(end + 1) = "callerDefault";
+    rankedScores(end + 1) = -inf;
+else
     rankedProfileNames = rankedProfileNames(1);
     rankedScores = rankedScores(1);
 end
@@ -112,7 +253,8 @@ end
 %% Execute ranked searches until one exact-valid route succeeds
 agentOptionNames = [ ...
     "AgentArtifact", "AgentFile", "AgentMaxSearchTime_s", ...
-    "AgentFallback", "AgentPrintDiagnostics"];
+    "AgentFallback", "AgentFallbackReserve_s", ...
+    "AgentMaximumProfiles", "AgentPrintDiagnostics"];
 plannerOverrides = options;
 for agentOptionIndex = 1:numel(agentOptionNames)
     agentOptionName = agentOptionNames(agentOptionIndex);
@@ -141,18 +283,37 @@ for rankingIndex = 1:numel(rankedProfileNames)
         break;
     end
     profileName = rankedProfileNames(rankingIndex);
-    matchingProfile = find(artifactProfileNames == profileName, 1);
-    if isempty(matchingProfile)
-        continue;
+    if profileName == "callerDefault"
+        plannerOptions = plannerOverrides;
+        profileMaximumTime_s = remainingSearchTime_s;
+    else
+        matchingProfile = find(artifactProfileNames == profileName, 1);
+        if isempty(matchingProfile)
+            continue;
+        end
+        plannerOptions = agentArtifact.Profiles( ...
+            matchingProfile).PlannerOptions;
+        profileMaximumTime_s = plannerOptions.MaxSearchTime_s;
     end
-    plannerOptions = agentArtifact.Profiles( ...
-        matchingProfile).PlannerOptions;
     for overrideIndex = 1:numel(overrideNames)
         overrideName = overrideNames{overrideIndex};
         plannerOptions.(overrideName) = plannerOverrides.(overrideName);
     end
+    availableProfileTime_s = remainingSearchTime_s;
+    callerFallbackRemains = any( ...
+        rankedProfileNames(rankingIndex + 1:end) == "callerDefault");
+    if callerFallbackRemains
+        desiredReserve_s = min( ...
+            options.AgentFallbackReserve_s, ...
+            0.35 * options.AgentMaxSearchTime_s);
+        availableProfileTime_s = max( ...
+            remainingSearchTime_s - desiredReserve_s, 0);
+    end
+    if availableProfileTime_s <= 0
+        continue;
+    end
     plannerOptions.MaxSearchTime_s = min( ...
-        plannerOptions.MaxSearchTime_s, remainingSearchTime_s);
+        profileMaximumTime_s, availableProfileTime_s);
     plannerOptions.PrintFailureSuggestions = false;
 
     attemptTimer = tic;
@@ -187,8 +348,14 @@ if plan.success
 end
 plan.agent = struct( ...
     "ArtifactVersion", agentArtifact.Version, ...
-    "PredictedProfileName", string(predictedClass), ...
+    "PredictedProfileName", policyPredictedProfileName, ...
+    "ModelPredictedProfileName", string(predictedClass), ...
     "SelectedProfileName", selectedProfileName, ...
+    "ProblemMode", problemMode, ...
+    "SelectionSource", selectionSource, ...
+    "SelectionReason", selectionReason, ...
+    "AbstainedFromLearnedConfidence", agentAbstained, ...
+    "NearestTrainingDistance", nearestTrainingDistance, ...
     "RankedProfileNames", rankedProfileNames, ...
     "RankedScores", rankedScores, ...
     "FallbackUsed", agentAttemptCount > 1, ...
@@ -198,6 +365,8 @@ plan.agent = struct( ...
     "FeatureDiagnostics", featureDiagnostics, ...
     "DeploymentElapsed_s", toc(deploymentTimer));
 if options.AgentPrintDiagnostics
+    fprintf("Planner agent mode=%s, source=%s: %s\n", ...
+        problemMode, selectionSource, selectionReason);
     fprintf("Planner agent ranked: %s\n", ...
         strjoin(rankedProfileNames, " > "));
     if plan.success

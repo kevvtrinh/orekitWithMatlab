@@ -145,11 +145,15 @@ plan = planAzElWithAgent( ...
     azElData, initialState, goalState, limits, options);
 ```
 
-The compact classification tree ranks `fast`, `balanced`, and `precise`
-Dijkstra profiles. It does not generate steering commands. Ranked fallback
-and exact packed-polygon validation remain active, and `plan.agent` records
-the complete decision trail. Run `example16TrainedPlannerAgent` for the
-combined planning-summary and final-path animation.
+The compact classification tree ranks static `fast`, `balanced`, and
+`precise` profiles. Inspectable mode rules handle fine static topology and
+moving-scene timing, pursuit, dense-clutter, and long-horizon profiles. The
+agent does not generate steering commands. It reserves time for ordinary
+Dijkstra fallback, requires exact packed-polygon validation, and records the
+complete decision trail in `plan.agent`. Run
+`example16TrainedPlannerAgent` for the combined planning-summary and
+final-path animation, or `benchmarkPlannerAgentExamples()` for the
+12-scenario fixed-goal acceptance suite.
 
 ### Moving rendezvous and trailing
 
