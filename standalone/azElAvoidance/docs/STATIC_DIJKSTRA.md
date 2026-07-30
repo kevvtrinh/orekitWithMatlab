@@ -4,7 +4,7 @@
 
 When every obstacle polygon is unchanged throughout a maneuver, time does
 not change which azimuth/elevation positions connect. The unified
-`planAzElAdaptiveAStar` entry point therefore solves topology in two
+`planAzElDijkstra` entry point therefore solves topology in two
 dimensions before applying actuator timing.
 
 The implementation uses one maintainable static algorithm:
@@ -151,4 +151,3 @@ The five-turn spiral uses no hints. On the current test geometry, the
 than four turns around the center. Runtime varies by machine; the Dijkstra
 heap itself is normally much cheaper than occupancy rasterization and exact
 shortcut validation.
-

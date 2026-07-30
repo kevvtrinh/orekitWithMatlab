@@ -1,8 +1,8 @@
-function benchmark = benchmarkAdaptiveAStarLongHorizon(sampleCount)
+function benchmark = benchmarkDijkstraLongHorizon(sampleCount)
 %BENCHMARKADAPTIVEASTARLONGHORIZON Exercise a day-scale moving volume.
 %
-% benchmark = benchmarkAdaptiveAStarLongHorizon()
-% benchmark = benchmarkAdaptiveAStarLongHorizon(sampleCount)
+% benchmark = benchmarkDijkstraLongHorizon()
+% benchmark = benchmarkDijkstraLongHorizon(sampleCount)
 %
 % The default uses 86,401 one-second obstacle slices. A gate blocks the
 % direct chord for half the day, then moves away. The planner should return
@@ -40,15 +40,15 @@ options = struct( ...
     "MaxSearchTime_s", 30);
 
 timer = tic;
-plan = planAzElAdaptiveAStar( ...
+plan = planAzElDijkstra( ...
     data, startState, stopState, limits, options);
 wallTime = toc(timer);
 if ~plan.success
-    error("benchmarkAdaptiveAStarLongHorizon:NoPath", ...
+    error("benchmarkDijkstraLongHorizon:NoPath", ...
         "Planner failed: %s", plan.message);
 end
 if ~plan.optimalGlobally
-    error("benchmarkAdaptiveAStarLongHorizon:NoCertificate", ...
+    error("benchmarkDijkstraLongHorizon:NoCertificate", ...
         "Expected the direct angular optimum certificate.");
 end
 

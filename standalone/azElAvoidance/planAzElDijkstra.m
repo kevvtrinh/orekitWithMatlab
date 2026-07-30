@@ -1,8 +1,8 @@
-function plan = planAzElAdaptiveAStar( ...
+function plan = planAzElDijkstra( ...
         azElData, initialState, goalState, limits, options)
-%PLANAZELADAPTIVEASTAR Plan one exact-checked az/el/time trajectory.
+%PLANAZELDIJKSTRA Plan one exact-checked az/el/time trajectory.
 %
-% plan = planAzElAdaptiveAStar( ...
+% plan = planAzElDijkstra( ...
 %     azElData, initialState, goalState, limits, options)
 %
 % The planner uses one public workflow at progressively finer spatial
@@ -22,19 +22,18 @@ timer = tic;
 if nargin < 5
     options = struct();
 end
-[initialState, goalState, limits, options] = ...
-    normalizeAdaptiveAStarInputs( ...
-        initialState, goalState, limits, options);
+[initialState, goalState, limits, options] = normalizeDijkstraInputs( ...
+    initialState, goalState, limits, options);
 
 if any(abs([initialState.velocity_deg_s, ...
         initialState.acceleration_deg_s2]) > 1e-12)
-    error("planAzElAdaptiveAStar:NonzeroBoundaryDynamics", ...
+    error("planAzElDijkstra:NonzeroBoundaryDynamics", ...
         "The maintainable planner requires a rest initial state.");
 end
 hasTerminalDynamics = any(abs([goalState.velocity_deg_s, ...
     goalState.acceleration_deg_s2]) > 1e-12);
 if hasTerminalDynamics && ~options.AllowNonzeroTerminalState
-    error("planAzElAdaptiveAStar:NonzeroTerminalStateDisabled", ...
+    error("planAzElDijkstra:NonzeroTerminalStateDisabled", ...
         "Set AllowNonzeroTerminalState to true for terminal capture.");
 end
 
@@ -114,8 +113,19 @@ for level = 1:numel(schedule)
 
     candidate = searchAzElSafeIntervalDijkstra(workspace, ...
         initialState, goalState, limits, levelOptions);
-    [candidateTime, candidatePosition, candidateCost] = ...
-        dynamicCandidateTrace(candidate, options);
+    if candidate.Success
+        candidateTime = candidate.Profile.time_s;
+        candidatePosition = candidate.Profile.position_deg;
+        if options.Objective == "minimumAngularDistance"
+            candidateCost = candidate.Route.angularPathLength_deg;
+        else
+            candidateCost = candidate.Route.arrivalTime_s(end);
+        end
+    else
+        candidateTime = zeros(0, 1);
+        candidatePosition = zeros(0, 2);
+        candidateCost = Inf;
+    end
     attemptCount = attemptCount + 1;
     attempts(attemptCount, 1) = struct( ...
         "GridStep_deg", schedule(level), ...
@@ -140,11 +150,9 @@ for level = 1:numel(schedule)
             search = candidate;
         end
         if options.Objective == "minimumAngularDistance"
-            candidateObjective = ...
-                candidate.Route.angularPathLength_deg;
+            candidateObjective = candidate.Route.angularPathLength_deg;
         else
-            candidateObjective = ...
-                candidate.Route.arrivalTime_s(end);
+            candidateObjective = candidate.Route.arrivalTime_s(end);
         end
         if candidateObjective < bestObjective
             bestSearch = candidate;
@@ -448,8 +456,8 @@ plan = struct( ...
     "retiming", retimed);
 end
 
-function [azimuthGrid_deg, elevationGrid_deg] = ...
-        staticGrid(axisLimits, options)
+function [azimuthGrid_deg, elevationGrid_deg] = staticGrid( ...
+        axisLimits, options)
 if options.AllowAzimuthWrap
     azimuthSpan_deg = diff(axisLimits.azimuth_deg);
     azimuthBinCount = ceil(azimuthSpan_deg / options.GridStep_deg);
@@ -498,7 +506,13 @@ nextNodeTowardGoal = zeros(gridStateCount, 1, "uint32");
 settled = false(gridStateCount, 1);
 costToGoal_deg(goalNode) = 0;
 nextNodeTowardGoal(goalNode) = uint32(goalNode);
-frontier = makeDijkstraFrontier(options.InitialNodeCapacity);
+frontierCapacity = options.InitialNodeCapacity;
+frontier = struct( ...
+    "Node", zeros(frontierCapacity, 1, "uint32"), ...
+    "Cost_deg", inf(frontierCapacity, 1), ...
+    "Serial", zeros(frontierCapacity, 1, "uint64"), ...
+    "Count", 0, ...
+    "NextSerial", uint64(0));
 frontier = pushDijkstraFrontier(frontier, goalNode, 0);
 expandedNodeCount = 0;
 generatedNodeCount = 1;
@@ -516,8 +530,7 @@ while frontier.Count > 0
         terminationReason = "expansionLimit";
         break;
     end
-    [frontier, currentNode, queuedCost_deg] = ...
-        popDijkstraFrontier(frontier);
+    [frontier, currentNode, queuedCost_deg] = popDijkstraFrontier(frontier);
     if settled(currentNode) || ...
             queuedCost_deg > costToGoal_deg(currentNode) + 1e-12
         continue;
@@ -698,7 +711,7 @@ gridNodePath(pathStateCount) = currentNode;
 while currentNode ~= goalNode
     nextNode = nextNodeTowardGoal(currentNode);
     if nextNode == 0
-        error("planAzElAdaptiveAStar:BrokenDijkstraSuccessor", ...
+        error("planAzElDijkstra:BrokenDijkstraSuccessor", ...
             "Dijkstra produced an incomplete goal-directed successor chain.");
     end
     pathStateCount = pathStateCount + 1;
@@ -726,8 +739,8 @@ if allowAzimuthWrap
         azimuthStep_deg = mod(gridPath_deg(pathIndex, 1) - ...
             gridPath_deg(pathIndex - 1, 1) + azimuthSpan_deg / 2, ...
             azimuthSpan_deg) - azimuthSpan_deg / 2;
-        gridPath_deg(pathIndex, 1) = ...
-            gridPath_deg(pathIndex - 1, 1) + azimuthStep_deg;
+        gridPath_deg(pathIndex, 1) = gridPath_deg(pathIndex - 1, 1) + ...
+            azimuthStep_deg;
     end
 end
 end
@@ -740,8 +753,8 @@ if options.AllowAzimuthWrap
         azimuthStep_deg = mod(routePositions_deg(waypointIndex, 1) - ...
             routePositions_deg(waypointIndex - 1, 1) + ...
             azimuthSpan_deg / 2, azimuthSpan_deg) - azimuthSpan_deg / 2;
-        routePositions_deg(waypointIndex, 1) = ...
-            routePositions_deg(waypointIndex - 1, 1) + azimuthStep_deg;
+        routePositions_deg(waypointIndex, 1) = routePositions_deg( ...
+            waypointIndex - 1, 1) + azimuthStep_deg;
     end
 end
 keepWaypoint = true(size(routePositions_deg, 1), 1);
@@ -794,8 +807,8 @@ while currentWaypointIndex < inputWaypointCount
         return;
     end
     retainedWaypointCount = retainedWaypointCount + 1;
-    retainedRoute_deg(retainedWaypointCount, :) = ...
-        routePositions_deg(farthestVisibleIndex, :);
+    retainedRoute_deg(retainedWaypointCount, :) = routePositions_deg( ...
+        farthestVisibleIndex, :);
     currentWaypointIndex = farthestVisibleIndex;
 end
 retainedRoute_deg = retainedRoute_deg(1:retainedWaypointCount, :);
@@ -848,8 +861,8 @@ function retimed = retimeStaticRoute( ...
         axisLimits, options)
 retimingTimer = tic;
 segmentDisplacement_deg = diff(routePositions_deg, 1, 1);
-[segmentDuration_s, normalizedPeakRate, normalizedAcceleration] = ...
-    segmentMotionParameters(segmentDisplacement_deg.', axisLimits);
+[segmentDuration_s, normalizedPeakRate, normalizedAcceleration] = segmentMotionParameters( ...
+    segmentDisplacement_deg.', axisLimits);
 minimumManeuverTime_s = sum(segmentDuration_s);
 availableManeuverTime_s = goalState.time_s - initialState.time_s;
 if minimumManeuverTime_s > availableManeuverTime_s + 1e-9
@@ -910,14 +923,13 @@ time_s = (initialTime_s:sampleTime_s:goalTime_s).';
 if time_s(end) < goalTime_s
     time_s(end + 1, 1) = goalTime_s;
 end
-[segmentProgress, segmentRate, segmentAcceleration] = ...
-    evaluateSegmentMotion(time_s, segmentInitialTime_s, ...
+[segmentProgress, segmentRate, segmentAcceleration] = evaluateSegmentMotion( ...
+    time_s, segmentInitialTime_s, ...
     segmentDuration_s, normalizedPeakRate, normalizedAcceleration);
 positionUnwrapped_deg = routePositions_deg(1, :) + ...
     segmentProgress * segmentDisplacement_deg;
 velocity_deg_s = segmentRate * segmentDisplacement_deg;
-acceleration_deg_s2 = ...
-    segmentAcceleration * segmentDisplacement_deg;
+acceleration_deg_s2 = segmentAcceleration * segmentDisplacement_deg;
 position_deg = positionUnwrapped_deg;
 if options.AllowAzimuthWrap
     azimuthSpan_deg = diff(axisLimits.azimuth_deg);
@@ -936,12 +948,11 @@ profile = struct( ...
         all(abs(acceleration_deg_s2) <= 1e-10, 2));
 end
 
-function [segmentProgress, segmentRate, segmentAcceleration] = ...
-        evaluateSegmentMotion(time_s, segmentInitialTime_s, ...
+function [segmentProgress, segmentRate, segmentAcceleration] = evaluateSegmentMotion( ...
+        time_s, segmentInitialTime_s, ...
         segmentDuration_s, normalizedPeakRate, normalizedAcceleration)
 elapsedSegmentTime_s = time_s - segmentInitialTime_s;
-accelerationDuration_s = ...
-    normalizedPeakRate ./ normalizedAcceleration;
+accelerationDuration_s = normalizedPeakRate ./ normalizedAcceleration;
 accelerationDistance = 0.5 .* normalizedAcceleration .* ...
     accelerationDuration_s.^2;
 cruiseDuration_s = max(0, ...
@@ -977,11 +988,10 @@ segmentProgress(cruising) = accelerationDistanceMatrix(cruising) + ...
     accelerationDurationMatrix_s(cruising));
 segmentRate(cruising) = peakRateMatrix(cruising);
 
-decelerating = elapsedSegmentTime_s >= ...
-    accelerationDuration_s + cruiseDuration_s & ...
+decelerating = elapsedSegmentTime_s >= accelerationDuration_s + ...
+    cruiseDuration_s & ...
     elapsedSegmentTime_s < segmentDuration_s;
-remainingSegmentTime_s = ...
-    segmentDurationMatrix_s - elapsedSegmentTime_s;
+remainingSegmentTime_s = segmentDurationMatrix_s - elapsedSegmentTime_s;
 segmentProgress(decelerating) = 1 - 0.5 .* ...
     accelerationMatrix(decelerating) .* ...
     remainingSegmentTime_s(decelerating).^2;
@@ -991,9 +1001,8 @@ segmentAcceleration(decelerating) = -accelerationMatrix(decelerating);
 segmentProgress(elapsedSegmentTime_s >= segmentDuration_s) = 1;
 end
 
-function [segmentDuration_s, normalizedPeakRate, ...
-        normalizedAcceleration] = ...
-        segmentMotionParameters(segmentDisplacement_deg, axisLimits)
+function [segmentDuration_s, normalizedPeakRate, normalizedAcceleration] = segmentMotionParameters( ...
+        segmentDisplacement_deg, axisLimits)
 absoluteDisplacement_deg = abs(segmentDisplacement_deg);
 rateScaleCandidate = inf(size(segmentDisplacement_deg));
 accelerationScaleCandidate = inf(size(segmentDisplacement_deg));
@@ -1002,11 +1011,11 @@ rateLimit_deg_s = axisLimits.maxVelocity_deg_s(:);
 accelerationLimit_deg_s2 = axisLimits.maxAcceleration_deg_s2(:);
 for axisIndex = 1:2
     activeSegment = movingAxis(axisIndex, :);
-    rateScaleCandidate(axisIndex, activeSegment) = ...
-        rateLimit_deg_s(axisIndex) ./ ...
+    rateScaleCandidate(axisIndex, activeSegment) = rateLimit_deg_s( ...
+        axisIndex) ./ ...
         absoluteDisplacement_deg(axisIndex, activeSegment);
-    accelerationScaleCandidate(axisIndex, activeSegment) = ...
-        accelerationLimit_deg_s2(axisIndex) ./ ...
+    accelerationScaleCandidate(axisIndex, activeSegment) = accelerationLimit_deg_s2( ...
+        axisIndex) ./ ...
         absoluteDisplacement_deg(axisIndex, activeSegment);
 end
 normalizedRateLimit = min(rateScaleCandidate, [], 1);
@@ -1015,19 +1024,16 @@ stationarySegment = ~isfinite(normalizedRateLimit);
 normalizedRateLimit(stationarySegment) = 0;
 normalizedAcceleration(stationarySegment) = 1;
 
-triangularProfile = ...
-    normalizedRateLimit.^2 ./ normalizedAcceleration >= 1;
-accelerationDuration_s = ...
-    normalizedRateLimit ./ normalizedAcceleration;
-accelerationDuration_s(triangularProfile) = ...
-    sqrt(1 ./ normalizedAcceleration(triangularProfile));
+triangularProfile = normalizedRateLimit.^2 ./ normalizedAcceleration >= 1;
+accelerationDuration_s = normalizedRateLimit ./ normalizedAcceleration;
+accelerationDuration_s(triangularProfile) = sqrt( ...
+    1 ./ normalizedAcceleration(triangularProfile));
 normalizedPeakRate = normalizedAcceleration .* accelerationDuration_s;
-accelerationDistance = ...
-    normalizedAcceleration .* accelerationDuration_s.^2;
+accelerationDistance = normalizedAcceleration .* accelerationDuration_s.^2;
 cruiseDuration_s = zeros(size(normalizedRateLimit));
 cruisingProfile = ~triangularProfile & ~stationarySegment;
-cruiseDuration_s(cruisingProfile) = ...
-    (1 - accelerationDistance(cruisingProfile)) ./ ...
+cruiseDuration_s(cruisingProfile) = (1 - ...
+    accelerationDistance(cruisingProfile)) ./ ...
     normalizedPeakRate(cruisingProfile);
 segmentDuration_s = 2 .* accelerationDuration_s + cruiseDuration_s;
 segmentDuration_s(stationarySegment) = 0;
@@ -1104,15 +1110,6 @@ result = struct( ...
     "Options", options);
 end
 
-function frontier = makeDijkstraFrontier(initialCapacity)
-frontier = struct( ...
-    "Node", zeros(initialCapacity, 1, "uint32"), ...
-    "Cost_deg", inf(initialCapacity, 1), ...
-    "Serial", zeros(initialCapacity, 1, "uint64"), ...
-    "Count", 0, ...
-    "NextSerial", uint64(0));
-end
-
 function frontier = pushDijkstraFrontier(frontier, node, cost_deg)
 if frontier.Count >= numel(frontier.Node)
     previousCapacity = numel(frontier.Node);
@@ -1123,19 +1120,19 @@ if frontier.Count >= numel(frontier.Node)
 end
 frontier.Count = frontier.Count + 1;
 frontier.NextSerial = frontier.NextSerial + 1;
-heapIndex = frontier.Count;
-frontier.Node(heapIndex) = uint32(node);
-frontier.Cost_deg(heapIndex) = cost_deg;
-frontier.Serial(heapIndex) = frontier.NextSerial;
-while heapIndex > 1
-    parentIndex = floor(heapIndex / 2);
+frontierIndex = frontier.Count;
+frontier.Node(frontierIndex) = uint32(node);
+frontier.Cost_deg(frontierIndex) = cost_deg;
+frontier.Serial(frontierIndex) = frontier.NextSerial;
+while frontierIndex > 1
+    parentIndex = floor(frontierIndex / 2);
     if ~dijkstraFrontierEntryIsLess( ...
-            frontier, heapIndex, parentIndex)
+            frontier, frontierIndex, parentIndex)
         break;
     end
     frontier = swapDijkstraFrontierEntries( ...
-        frontier, heapIndex, parentIndex);
-    heapIndex = parentIndex;
+        frontier, frontierIndex, parentIndex);
+    frontierIndex = parentIndex;
 end
 end
 
@@ -1146,9 +1143,9 @@ frontier.Node(1) = frontier.Node(frontier.Count);
 frontier.Cost_deg(1) = frontier.Cost_deg(frontier.Count);
 frontier.Serial(1) = frontier.Serial(frontier.Count);
 frontier.Count = frontier.Count - 1;
-heapIndex = 1;
+frontierIndex = 1;
 while true
-    leftChildIndex = 2 * heapIndex;
+    leftChildIndex = 2 * frontierIndex;
     rightChildIndex = leftChildIndex + 1;
     if leftChildIndex > frontier.Count
         break;
@@ -1160,12 +1157,12 @@ while true
         smallerChildIndex = rightChildIndex;
     end
     if ~dijkstraFrontierEntryIsLess( ...
-            frontier, smallerChildIndex, heapIndex)
+            frontier, smallerChildIndex, frontierIndex)
         break;
     end
     frontier = swapDijkstraFrontierEntries( ...
-        frontier, smallerChildIndex, heapIndex);
-    heapIndex = smallerChildIndex;
+        frontier, smallerChildIndex, frontierIndex);
+    frontierIndex = smallerChildIndex;
 end
 end
 
@@ -1185,29 +1182,11 @@ end
 
 function frontier = swapDijkstraFrontierEntries( ...
         frontier, firstIndex, secondIndex)
-fields = ["Node", "Cost_deg", "Serial"];
-for fieldName = fields
+fieldNames = ["Node", "Cost_deg", "Serial"];
+for fieldName = fieldNames
     temporaryValue = frontier.(fieldName)(firstIndex);
-    frontier.(fieldName)(firstIndex) = ...
-        frontier.(fieldName)(secondIndex);
+    frontier.(fieldName)(firstIndex) = frontier.(fieldName)(secondIndex);
     frontier.(fieldName)(secondIndex) = temporaryValue;
-end
-end
-
-function [time_s, position_deg, cost] = ...
-        dynamicCandidateTrace(candidate, options)
-if ~candidate.Success
-    time_s = zeros(0, 1);
-    position_deg = zeros(0, 2);
-    cost = Inf;
-    return;
-end
-time_s = candidate.Profile.time_s;
-position_deg = candidate.Profile.position_deg;
-if options.Objective == "minimumAngularDistance"
-    cost = candidate.Route.angularPathLength_deg;
-else
-    cost = candidate.Route.arrivalTime_s(end);
 end
 end
 
@@ -1246,16 +1225,15 @@ plan = struct( ...
     "safeIntervalSearch", search);
 end
 
-function delta = wrappedDelta(first, second, limits, options)
-delta = second - first;
+function delta = wrappedDelta(fromPosition, toPosition, limits, options)
+delta = toPosition - fromPosition;
 if options.AllowAzimuthWrap
     span = diff(limits.azimuth_deg);
     delta(1) = mod(delta(1) + span / 2, span) - span / 2;
 end
 end
 
-function [initialState, goalState, limits, options] = ...
-        normalizeAdaptiveAStarInputs( ...
+function [initialState, goalState, limits, options] = normalizeDijkstraInputs( ...
         initialState, goalState, limits, options)
 explicitGraph = isstruct(options) && ...
     isfield(options, "GridStep_deg") && ...
@@ -1268,7 +1246,7 @@ initialState = normalizeState( ...
     initialState, "initialState", requiredState);
 goalState = normalizeState(goalState, "goalState", requiredState);
 if goalState.time_s <= initialState.time_s
-    error("planAzElAdaptiveAStar:InvalidTime", ...
+    error("planAzElDijkstra:InvalidTime", ...
         "goalState.time_s must follow initialState.time_s.");
 end
 
@@ -1276,7 +1254,7 @@ requiredLimits = ["azimuth_deg", "elevation_deg", ...
     "maxVelocity_deg_s", "maxAcceleration_deg_s2"];
 if ~isstruct(limits) || ~isscalar(limits) || ...
         ~all(isfield(limits, cellstr(requiredLimits)))
-    error("planAzElAdaptiveAStar:InvalidLimits", ...
+    error("planAzElDijkstra:InvalidLimits", ...
         "limits is missing a required field.");
 end
 for name = requiredLimits
@@ -1288,7 +1266,7 @@ if any(diff(limits.azimuth_deg) <= 0) || ...
         any(diff(limits.elevation_deg) <= 0) || ...
         any(limits.maxVelocity_deg_s <= 0) || ...
         any(limits.maxAcceleration_deg_s2 <= 0)
-    error("planAzElAdaptiveAStar:InvalidLimits", ...
+    error("planAzElDijkstra:InvalidLimits", ...
         "Limit ranges must increase and dynamic limits must be positive.");
 end
 
@@ -1316,24 +1294,34 @@ defaults = struct( ...
     "Objective", "minimumAngularDistance", ...
     "RouteShortcutStep_deg", 0.1, ...
     "MaximumVerticesPerRegion", 500);
-options = applyDefaults(options, defaults);
-
-finest = options.GridStep_deg;
-if isempty(options.GridStepSchedule_deg)
-    if explicitGraph
-        options.GridStepSchedule_deg = finest;
-    else
-        options.GridStepSchedule_deg = unique( ...
-            [4 * finest, 2 * finest, finest], "stable");
+if ~isstruct(options) || ~isscalar(options)
+    error("planAzElDijkstra:InvalidOptions", ...
+        "options must be a scalar struct.");
+end
+defaultNames = fieldnames(defaults);
+for defaultIndex = 1:numel(defaultNames)
+    defaultName = defaultNames{defaultIndex};
+    if ~isfield(options, defaultName) || isempty(options.(defaultName))
+        options.(defaultName) = defaults.(defaultName);
     end
 end
-options.GridStepSchedule_deg = ...
-    unique(double(options.GridStepSchedule_deg(:).'), "stable");
-options.GridStepSchedule_deg = ...
-    sort(options.GridStepSchedule_deg, "descend");
+
+finestGridStep_deg = options.GridStep_deg;
+if isempty(options.GridStepSchedule_deg)
+    if explicitGraph
+        options.GridStepSchedule_deg = finestGridStep_deg;
+    else
+        options.GridStepSchedule_deg = unique( ...
+            [4, 2, 1] * finestGridStep_deg, "stable");
+    end
+end
+options.GridStepSchedule_deg = unique( ...
+    double(options.GridStepSchedule_deg(:).'), "stable");
+options.GridStepSchedule_deg = sort( ...
+    options.GridStepSchedule_deg, "descend");
 if isempty(options.ValidationStep_s)
     options.ValidationStep_s = min( ...
-        options.SampleTime_s, finest / ...
+        options.SampleTime_s, finestGridStep_deg / ...
         max(limits.maxVelocity_deg_s) / 8);
 end
 if isempty(options.CollisionCheckStep_s)
@@ -1355,8 +1343,8 @@ validateattributes(options.PrimitiveRadiusMultipliers, {'numeric'}, ...
 if ~isempty(options.PrimitiveRadii_deg)
     validateattributes(options.PrimitiveRadii_deg, {'numeric'}, ...
         {'vector', 'real', 'finite', 'positive'});
-    options.PrimitiveRadii_deg = ...
-        unique(double(options.PrimitiveRadii_deg(:).'));
+    options.PrimitiveRadii_deg = unique( ...
+        double(options.PrimitiveRadii_deg(:).'));
 end
 integerPositive = ["MaximumSafeIntervalSamples", ...
     "MaximumDepartureTrials", "DepartureBatchSize", ...
@@ -1378,15 +1366,14 @@ validateattributes(options.AllowAzimuthWrap, ...
 options.AllowAzimuthWrap = logical(options.AllowAzimuthWrap);
 validateattributes(options.AllowNonzeroTerminalState, ...
     {'logical', 'numeric'}, {'scalar'});
-options.AllowNonzeroTerminalState = ...
-    logical(options.AllowNonzeroTerminalState);
+options.AllowNonzeroTerminalState = logical( ...
+    options.AllowNonzeroTerminalState);
 validateattributes(options.PrintFailureSuggestions, ...
     {'logical', 'numeric'}, {'scalar'});
-options.PrintFailureSuggestions = ...
-    logical(options.PrintFailureSuggestions);
+options.PrintFailureSuggestions = logical(options.PrintFailureSuggestions);
 if options.AllowAzimuthWrap && ...
         abs(diff(limits.azimuth_deg) - 360) > 1e-6
-    error("planAzElAdaptiveAStar:InvalidWrapLimits", ...
+    error("planAzElDijkstra:InvalidWrapLimits", ...
         "Wrapped azimuth limits must span exactly 360 degrees.");
 end
 
@@ -1397,7 +1384,7 @@ if any(objective == ["minimumangulardistance", ...
 elseif any(objective == ["minimumtime", "time"])
     options.Objective = "minimumTime";
 else
-    error("planAzElAdaptiveAStar:InvalidObjective", ...
+    error("planAzElDijkstra:InvalidObjective", ...
         "Objective must be minimumAngularDistance or minimumTime.");
 end
 end
@@ -1405,7 +1392,7 @@ end
 function state = normalizeState(state, label, requiredState)
 if ~isstruct(state) || ~isscalar(state) || ...
         ~all(isfield(state, cellstr(requiredState)))
-    error("planAzElAdaptiveAStar:InvalidState", ...
+    error("planAzElDijkstra:InvalidState", ...
         "%s is missing a required field.", label);
 end
 validateattributes(state.time_s, {'numeric'}, ...
@@ -1416,18 +1403,4 @@ for name = requiredState(2:end)
     state.(name) = reshape(double(state.(name)), 1, 2);
 end
 state.time_s = double(state.time_s);
-end
-
-function output = applyDefaults(input, defaults)
-if ~isstruct(input) || ~isscalar(input)
-    error("planAzElAdaptiveAStar:InvalidOptions", ...
-        "options must be a scalar struct.");
-end
-output = input;
-names = fieldnames(defaults);
-for k = 1:numel(names)
-    if ~isfield(output, names{k}) || isempty(output.(names{k}))
-        output.(names{k}) = defaults.(names{k});
-    end
-end
 end

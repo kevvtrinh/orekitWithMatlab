@@ -76,6 +76,11 @@ expansion toward that goal. Crossy Road did not show that penalty in this
 run, illustrating that heuristic guidance is not uniformly beneficial and
 that process-level timing noise remains material.
 
+After the Dijkstra-native naming and inlining cleanup, another complete run
+passed 33/33 tests in `167.931 s`; its spinning-rod search took `55.68 s`.
+That full-suite total is verification, not evidence of a planner speedup:
+the randomized cases used fresh seeds and MATLAB process state differed.
+
 ## Conclusion
 
 The all-Dijkstra design is valid and notably simpler:

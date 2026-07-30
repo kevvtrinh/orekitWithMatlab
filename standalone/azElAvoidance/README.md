@@ -24,7 +24,7 @@ and an algorithm-by-algorithm breakdown.
 
 The mathematical design, pseudocode, guarantees, complexity, and maintenance
 boundaries for the planner used by every numbered example are documented in
-[`ADAPTIVE_ASTAR_PLANNER.md`](docs/ADAPTIVE_ASTAR_PLANNER.md).
+[`DIJKSTRA_PLANNER.md`](docs/DIJKSTRA_PLANNER.md).
 The all-Dijkstra branch comparison and measured runtime tradeoffs are in
 [`ALL_DIJKSTRA_EXPERIMENT.md`](docs/ALL_DIJKSTRA_EXPERIMENT.md).
 
@@ -112,7 +112,7 @@ options = struct( ...
     "Objective", "minimumAngularDistance", ...
     "MaxSearchTime_s", 30);
 
-plan = planAzElAdaptiveAStar( ...
+plan = planAzElDijkstra( ...
     azElData, initialState, goalState, limits, options);
 ```
 
@@ -231,11 +231,11 @@ real multi-cell traversal, and endpoint motion through closed cells.
 Run the default 86,401-slice long-horizon benchmark:
 
 ```matlab
-benchmark = benchmarkAdaptiveAStarLongHorizon();
+benchmark = benchmarkDijkstraLongHorizon();
 ```
 
 The design summary is in
-[`ADAPTIVE_ASTAR_PLANNER.md`](docs/ADAPTIVE_ASTAR_PLANNER.md).
+[`DIJKSTRA_PLANNER.md`](docs/DIJKSTRA_PLANNER.md).
 
 ## Static topology component
 
@@ -327,7 +327,7 @@ No Orekit or scenario object is used:
 5. `example09UTrapEscape`
 
 The five-turn spiral is intentionally beyond the practical search range of
-the raw kinodynamic lattice. It calls `planAzElAdaptiveAStar`, supplies no
+the raw kinodynamic lattice. It calls `planAzElDijkstra`, supplies no
 guide path or direction, and asserts that static goal-rooted Dijkstra autonomously
 winds through the spiral before reaching its center. The
 discovered polyline is dynamically retimed and densely collision-checked.

@@ -39,7 +39,7 @@ results = runStaticGauntletExamples();
 
 ## Unified Planner
 
-Every fixed-goal example calls `planAzElAdaptiveAStar`, either directly or
+Every fixed-goal example calls `planAzElDijkstra`, either directly or
 through `runAzElGauntletCase`. Example 13 uses
 `planAzElMovingTargetIntercept`, which tests interception times by calling
 the same Dijkstra planner.

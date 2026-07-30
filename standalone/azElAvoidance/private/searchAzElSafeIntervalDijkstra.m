@@ -78,27 +78,36 @@ end
 offsets = guideOffsets(options);
 % One node represents (spatial grid point, safe-interval index). Arrival time
 % is the label optimized within that state; waiting remains continuous.
-nodes = initializeNodes(options.InitialNodeCapacity);
+nodeCapacity = options.InitialNodeCapacity;
+nodes = struct( ...
+    "PositionDeg", zeros(nodeCapacity, 2), ...
+    "IntervalIndex", zeros(nodeCapacity, 1), ...
+    "ArrivalTime_s", inf(nodeCapacity, 1), ...
+    "ParentIndex", zeros(nodeCapacity, 1, "uint32"), ...
+    "DepartureTime_s", nan(nodeCapacity, 1), ...
+    "MotionDuration_s", zeros(nodeCapacity, 1), ...
+    "Count", 0);
 startKey = stateKey( ...
     startState.position_deg, startInterval, limits, options);
-startHeuristic = remainingTimeHeuristic( ...
-    wrappedDelta(startState.position_deg, ...
-    stopState.position_deg, limits, options), limits, ...
-    hasTerminalDynamics);
 [nodes, startIndex] = appendNode(nodes, ...
     startState.position_deg, startInterval, startState.time_s, ...
-    0, NaN, 0, startHeuristic);
+    0, NaN, 0);
 bestNode = containers.Map( ...
     'KeyType', 'char', 'ValueType', 'double');
 bestNode(startKey) = startIndex;
-heap = emptyHeap(options.InitialNodeCapacity);
-heap = heapPush(heap, startIndex, ...
-    startState.time_s, startHeuristic);
+arrivalFrontier = struct( ...
+    "Node", zeros(nodeCapacity, 1, "uint32"), ...
+    "ArrivalTime_s", inf(nodeCapacity, 1), ...
+    "Serial", zeros(nodeCapacity, 1, "uint64"), ...
+    "Count", 0, ...
+    "NextSerial", uint64(0));
+arrivalFrontier = pushArrivalFrontier( ...
+    arrivalFrontier, startIndex, startState.time_s);
 
 expanded = 0;
 generated = 1;
 goalIndex = 0;
-while heap.Count > 0
+while arrivalFrontier.Count > 0
     if toc(timer) >= options.MaxSearchTime_s
         result = failedResult( ...
             "Safe-interval Dijkstra reached its wall-time limit.", ...
@@ -118,13 +127,13 @@ while heap.Count > 0
         return;
     end
 
-    [heap, currentIndex] = heapPop(heap);
+    [arrivalFrontier, currentIndex] = popArrivalFrontier(arrivalFrontier);
     currentPosition = nodes.PositionDeg(currentIndex, :);
     currentIntervalIndex = nodes.IntervalIndex(currentIndex);
     currentKey = stateKey( ...
         currentPosition, currentIntervalIndex, limits, options);
-    % Better labels are appended instead of decreasing heap keys. Ignore
-    % superseded entries when they eventually rise to the heap root.
+    % Better labels are appended instead of mutating queued entries. Ignore
+    % superseded labels when they eventually reach the frontier root.
     if ~isKey(bestNode, currentKey) || ...
             bestNode(currentKey) ~= currentIndex
         continue;
@@ -163,8 +172,8 @@ while heap.Count > 0
                 continue;
             end
         end
-        [candidateIntervals, safeCache, safeQueryCount] = ...
-            safeIntervalsAt(candidatePosition, workspace, ...
+        [candidateIntervals, safeCache, safeQueryCount] = safeIntervalsAt( ...
+            candidatePosition, workspace, ...
             eventTimes, limits, options, safeCache, safeQueryCount);
         if isempty(candidateIntervals)
             continue;
@@ -178,14 +187,12 @@ while heap.Count > 0
                 continue;
             end
             if terminalCandidate
-                [scheduled, departureTime, arrivalTime, motionDuration] = ...
-                    scheduleTerminalTransition( ...
+                [scheduled, departureTime, arrivalTime, motionDuration] = scheduleTerminalTransition( ...
                     workspace, currentPosition, ...
                     nodes.ArrivalTime_s(currentIndex), currentSafe, ...
                     candidateSafe, stopState, eventTimes, limits, options);
             else
-                [scheduled, departureTime, arrivalTime] = ...
-                    scheduleTransition( ...
+                [scheduled, departureTime, arrivalTime] = scheduleTransition( ...
                     workspace, currentPosition, delta, ...
                     nodes.ArrivalTime_s(currentIndex), currentSafe, ...
                     candidateSafe, motionDuration, motion, eventTimes, ...
@@ -200,29 +207,34 @@ while heap.Count > 0
             candidateKey = stateKey( ...
                 candidatePosition, intervalIndex, limits, options);
             if isKey(bestNode, candidateKey)
-                oldIndex = bestNode(candidateKey);
+                previousBestNodeIndex = bestNode(candidateKey);
                 if arrivalTime >= ...
-                        nodes.ArrivalTime_s(oldIndex) - 1e-9
+                        nodes.ArrivalTime_s(previousBestNodeIndex) - 1e-9
                     continue;
                 end
             end
-            heuristic = remainingTimeHeuristic( ...
-                wrappedDelta(candidatePosition, ...
-                stopState.position_deg, limits, options), limits, ...
-                hasTerminalDynamics);
-            if arrivalTime + heuristic > stopState.time_s + 1e-9
+            remainingDelta_deg = wrappedDelta( ...
+                candidatePosition, stopState.position_deg, limits, options);
+            if hasTerminalDynamics
+                minimumRemainingTravelTime_s = max( ...
+                    abs(remainingDelta_deg) ./ limits.maxVelocity_deg_s);
+            else
+                [minimumRemainingTravelTime_s, ~] = segmentMotion( ...
+                    remainingDelta_deg, limits);
+            end
+            if arrivalTime + minimumRemainingTravelTime_s > ...
+                    stopState.time_s + 1e-9
                 continue;
             end
             [nodes, nextIndex] = appendNode(nodes, ...
                 candidatePosition, intervalIndex, arrivalTime, ...
-                currentIndex, departureTime, motionDuration, heuristic);
+                currentIndex, departureTime, motionDuration);
             bestNode(candidateKey) = nextIndex;
             generated = generated + 1;
             % Arrival time is the complete queue cost. The lower bound only
-            % breaks equal-cost ties and prunes labels that cannot meet the
-            % deadline; it never guides the uniform-cost expansion order.
-            priority = arrivalTime;
-            heap = heapPush(heap, nextIndex, priority, heuristic);
+            % rejects labels that cannot meet the deadline.
+            arrivalFrontier = pushArrivalFrontier( ...
+                arrivalFrontier, nextIndex, arrivalTime);
         end
     end
 end
@@ -237,7 +249,18 @@ if goalIndex == 0
     return;
 end
 
-nodePath = reconstructNodePath(nodes, goalIndex);
+nodePath = zeros(128, 1, "uint32");
+nodePathCount = 0;
+pathNodeIndex = uint32(goalIndex);
+while pathNodeIndex ~= 0
+    nodePathCount = nodePathCount + 1;
+    if nodePathCount > numel(nodePath)
+        nodePath(2 * numel(nodePath), 1) = 0;
+    end
+    nodePath(nodePathCount) = pathNodeIndex;
+    pathNodeIndex = nodes.ParentIndex(pathNodeIndex);
+end
+nodePath = double(flipud(nodePath(1:nodePathCount)));
 route = makeRoute(nodes, nodePath, startState, stopState, limits, options);
 profile = makeRouteProfile( ...
     route, startState.time_s, stopState.time_s, ...
@@ -343,48 +366,50 @@ end
 function [scheduled, departure, arrival] = scheduleTransition( ...
         workspace, startPosition, delta, currentArrival, currentSafe, ...
         candidateSafe, duration, motion, eventTimes, limits, options)
-lower = max(currentArrival, candidateSafe(1) - duration);
-upper = min(currentSafe(2), candidateSafe(2) - duration);
-% [lower, upper] is exactly the departure window that keeps both endpoint
-% occupancy constraints valid.
-if upper < lower - 1e-9
+earliestDeparture_s = max(currentArrival, candidateSafe(1) - duration);
+latestDeparture_s = min(currentSafe(2), candidateSafe(2) - duration);
+% This window keeps both endpoint occupancy constraints valid.
+if latestDeparture_s < earliestDeparture_s - 1e-9
     scheduled = false;
     departure = NaN;
     arrival = NaN;
     return;
 end
 
-candidateTimes = eventTimes(eventTimes >= lower & eventTimes <= upper);
+departureCandidates_s = eventTimes( ...
+    eventTimes >= earliestDeparture_s & eventTimes <= latestDeparture_s);
 % Test interval boundaries and obstacle event times first; those are where
 % feasibility changes. The trial cap controls worst-case edge cost.
-candidateTimes = unique([lower; candidateTimes; upper]);
-if numel(candidateTimes) > options.MaximumDepartureTrials
-    keep = unique(round(linspace( ...
-        1, numel(candidateTimes), options.MaximumDepartureTrials)));
-    candidateTimes = candidateTimes(keep);
+departureCandidates_s = unique( ...
+    [earliestDeparture_s; departureCandidates_s; latestDeparture_s]);
+if numel(departureCandidates_s) > options.MaximumDepartureTrials
+    retainedCandidateIndices = unique(round(linspace( ...
+        1, numel(departureCandidates_s), options.MaximumDepartureTrials)));
+    departureCandidates_s = departureCandidates_s(retainedCandidateIndices);
 end
 scheduled = false;
 departure = NaN;
 arrival = NaN;
 batchSize = options.DepartureBatchSize;
-for batchStart = 1:batchSize:numel(candidateTimes)
-    batch = batchStart:min( ...
-        batchStart + batchSize - 1, numel(candidateTimes));
-    free = transitionFree(workspace, startPosition, delta, ...
-        candidateTimes(batch), duration, motion, eventTimes(1), ...
+for batchStartIndex = 1:batchSize:numel(departureCandidates_s)
+    candidateIndices = batchStartIndex:min( ...
+        batchStartIndex + batchSize - 1, numel(departureCandidates_s));
+    collisionFreeCandidate = transitionFree( ...
+        workspace, startPosition, delta, ...
+        departureCandidates_s(candidateIndices), duration, motion, eventTimes(1), ...
         limits, options);
-    first = find(free, 1);
-    if ~isempty(first)
+    firstFreeCandidateInBatch = find(collisionFreeCandidate, 1);
+    if ~isempty(firstFreeCandidateInBatch)
         scheduled = true;
-        departure = candidateTimes(batch(first));
+        departure = departureCandidates_s( ...
+            candidateIndices(firstFreeCandidateInBatch));
         arrival = departure + duration;
         return;
     end
 end
 end
 
-function [scheduled, departure, arrival, duration] = ...
-        scheduleTerminalTransition( ...
+function [scheduled, departure, arrival, duration] = scheduleTerminalTransition( ...
         workspace, startPosition, currentArrival, currentSafe, ...
         candidateSafe, stopState, eventTimes, limits, options)
 scheduled = false;
@@ -503,11 +528,9 @@ for candidate = 1:departureCount
     unwrappedAzimuth = startPosition(1) + progress * delta(1);
     queryAzimuth{candidate} = canonicalAzimuth( ...
         unwrappedAzimuth, limits, options);
-    queryElevation{candidate} = ...
-        startPosition(2) + progress * delta(2);
+    queryElevation{candidate} = startPosition(2) + progress * delta(2);
     queryTime{candidate} = departure + tau;
-    queryOwner{candidate} = ...
-        repmat(candidate, numel(tau), 1);
+    queryOwner{candidate} = repmat(candidate, numel(tau), 1);
 end
 queryAzimuth = vertcat(queryAzimuth{:});
 queryElevation = vertcat(queryElevation{:});
@@ -521,13 +544,13 @@ free = true(departureCount, 1);
 free(unique(queryOwner(blocked))) = false;
 end
 
-function times = alignedTimes(first, last, step, origin)
-firstIndex = ceil((first - origin) / step - 1e-10);
-lastIndex = floor((last - origin) / step + 1e-10);
+function times = alignedTimes(firstTime_s, lastTime_s, step_s, originTime_s)
+firstIndex = ceil((firstTime_s - originTime_s) / step_s - 1e-10);
+lastIndex = floor((lastTime_s - originTime_s) / step_s + 1e-10);
 if lastIndex < firstIndex
     times = zeros(0, 1);
 else
-    times = origin + (firstIndex:lastIndex).' * step;
+    times = originTime_s + (firstIndex:lastIndex).' * step_s;
 end
 end
 
@@ -697,10 +720,10 @@ for edge = 1:size(route.positionUnwrapped_deg, 1) - 1
         delta = route.positionUnwrapped_deg(edge + 1, :) - ...
             route.positionUnwrapped_deg(edge, :);
         [~, motion] = segmentMotion(delta, limits);
-        [progress, rate, accelerationValue] = ...
-            segmentProgress(tau, duration, motion);
-        unwrapped(moving, :) = ...
-            route.positionUnwrapped_deg(edge, :) + progress * delta;
+        [progress, rate, accelerationValue] = segmentProgress( ...
+            tau, duration, motion);
+        unwrapped(moving, :) = route.positionUnwrapped_deg(edge, :) + ...
+            progress * delta;
         velocity(moving, :) = rate * delta;
         acceleration(moving, :) = accelerationValue * delta;
     end
@@ -752,21 +775,8 @@ motion = struct( ...
     "CruiseTime", cruiseTime);
 end
 
-function duration = minimumSegmentDuration(delta, limits)
-[duration, ~] = segmentMotion(delta, limits);
-end
-
-function duration = remainingTimeHeuristic( ...
-        delta, limits, hasTerminalDynamics)
-if hasTerminalDynamics
-    duration = max(abs(delta) ./ limits.maxVelocity_deg_s);
-else
-    duration = minimumSegmentDuration(delta, limits);
-end
-end
-
-function [progress, rate, acceleration] = ...
-        segmentProgress(tau, duration, motion)
+function [progress, rate, acceleration] = segmentProgress( ...
+        tau, duration, motion)
 progress = zeros(size(tau));
 rate = zeros(size(tau));
 acceleration = zeros(size(tau));
@@ -831,15 +841,15 @@ offsets = zeros(numel(radii) * numel(angle), 2);
 cursor = 1;
 for radius = reshape(radii, 1, [])
     count = numel(angle);
-    offsets(cursor:cursor + count - 1, :) = ...
-        radius * [cos(angle), sin(angle)];
+    offsets(cursor:cursor + count - 1, :) = radius * ...
+        [cos(angle), sin(angle)];
     cursor = cursor + count;
 end
 offsets = unique(round(offsets * 1e9) / 1e9, "rows", "stable");
 end
 
-function delta = wrappedDelta(first, second, limits, options)
-delta = second - first;
+function delta = wrappedDelta(fromPosition, toPosition, limits, options)
+delta = toPosition - fromPosition;
 if options.AllowAzimuthWrap
     span = diff(limits.azimuth_deg);
     delta(1) = mod(delta(1) + span / 2, span) - span / 2;
@@ -851,8 +861,8 @@ goal = previous + wrappedDelta(previous, requested, limits, options);
 goal(2) = requested(2);
 end
 
-function yes = samePosition(first, second, limits, options)
-delta = wrappedDelta(first, second, limits, options);
+function yes = samePosition(firstPosition, secondPosition, limits, options)
+delta = wrappedDelta(firstPosition, secondPosition, limits, options);
 yes = hypot(delta(1), delta(2)) <= 1e-9;
 end
 
@@ -881,29 +891,24 @@ azimuth = canonicalAzimuth(position(1), limits, options);
 key = sprintf('%.9f|%.9f', azimuth, position(2));
 end
 
-function value = collisionOptions(options)
-value = struct( ...
+function queryOptions = collisionOptions(options)
+queryOptions = struct( ...
     "CollisionMode", "polygon", ...
     "TimePaddingSamples", options.TimePaddingSamples, ...
     "SafetyMarginDeg", options.SafetyMargin_deg);
 end
 
-function nodes = initializeNodes(capacity)
-nodes = struct( ...
-    "PositionDeg", zeros(capacity, 2), ...
-    "IntervalIndex", zeros(capacity, 1), ...
-    "ArrivalTime_s", inf(capacity, 1), ...
-    "ParentIndex", zeros(capacity, 1, "uint32"), ...
-    "DepartureTime_s", nan(capacity, 1), ...
-    "MotionDuration_s", zeros(capacity, 1), ...
-    "Heuristic_s", inf(capacity, 1), ...
-    "Count", 0);
-end
-
 function [nodes, index] = appendNode(nodes, position, interval, arrival, ...
-        parent, departure, duration, heuristic)
+        parent, departure, duration)
 if nodes.Count >= size(nodes.PositionDeg, 1)
-    nodes = growNodes(nodes);
+    previousCapacity = size(nodes.PositionDeg, 1);
+    newCapacity = max(2 * previousCapacity, 1);
+    nodes.PositionDeg(newCapacity, 2) = 0;
+    nodes.IntervalIndex(newCapacity, 1) = 0;
+    nodes.ArrivalTime_s(newCapacity, 1) = Inf;
+    nodes.ParentIndex(newCapacity, 1) = 0;
+    nodes.DepartureTime_s(newCapacity, 1) = NaN;
+    nodes.MotionDuration_s(newCapacity, 1) = 0;
 end
 nodes.Count = nodes.Count + 1;
 index = nodes.Count;
@@ -913,34 +918,6 @@ nodes.ArrivalTime_s(index) = arrival;
 nodes.ParentIndex(index) = uint32(parent);
 nodes.DepartureTime_s(index) = departure;
 nodes.MotionDuration_s(index) = duration;
-nodes.Heuristic_s(index) = heuristic;
-end
-
-function nodes = growNodes(nodes)
-old = size(nodes.PositionDeg, 1);
-new = max(2 * old, 1);
-nodes.PositionDeg(new, 2) = 0;
-nodes.IntervalIndex(new, 1) = 0;
-nodes.ArrivalTime_s(new, 1) = Inf;
-nodes.ParentIndex(new, 1) = 0;
-nodes.DepartureTime_s(new, 1) = NaN;
-nodes.MotionDuration_s(new, 1) = 0;
-nodes.Heuristic_s(new, 1) = Inf;
-end
-
-function path = reconstructNodePath(nodes, goalIndex)
-path = zeros(128, 1, "uint32");
-count = 0;
-node = uint32(goalIndex);
-while node ~= 0
-    count = count + 1;
-    if count > numel(path)
-        path(2 * numel(path), 1) = 0;
-    end
-    path(count) = node;
-    node = nodes.ParentIndex(node);
-end
-path = double(flipud(path(1:count)));
 end
 
 function result = failedResult( ...
@@ -964,86 +941,74 @@ result = struct( ...
     "Options", options);
 end
 
-function heap = emptyHeap(capacity)
-heap = struct( ...
-    "Node", zeros(capacity, 1, "uint32"), ...
-    "F", inf(capacity, 1), ...
-    "H", inf(capacity, 1), ...
-    "Serial", zeros(capacity, 1, "uint64"), ...
-    "Count", 0, ...
-    "NextSerial", uint64(0));
+function frontier = pushArrivalFrontier(frontier, node, arrivalTime_s)
+if frontier.Count >= numel(frontier.Node)
+    previousCapacity = numel(frontier.Node);
+    newCapacity = max(2 * previousCapacity, 1);
+    frontier.Node(newCapacity, 1) = 0;
+    frontier.ArrivalTime_s(newCapacity, 1) = Inf;
+    frontier.Serial(newCapacity, 1) = 0;
 end
-
-function heap = heapPush(heap, node, f, h)
-if heap.Count >= numel(heap.Node)
-    old = numel(heap.Node);
-    new = max(2 * old, 1);
-    heap.Node(new, 1) = 0;
-    heap.F(new, 1) = Inf;
-    heap.H(new, 1) = Inf;
-    heap.Serial(new, 1) = 0;
-end
-heap.Count = heap.Count + 1;
-heap.NextSerial = heap.NextSerial + 1;
-index = heap.Count;
-heap.Node(index) = uint32(node);
-heap.F(index) = f;
-heap.H(index) = h;
-heap.Serial(index) = heap.NextSerial;
+frontier.Count = frontier.Count + 1;
+frontier.NextSerial = frontier.NextSerial + 1;
+index = frontier.Count;
+frontier.Node(index) = uint32(node);
+frontier.ArrivalTime_s(index) = arrivalTime_s;
+frontier.Serial(index) = frontier.NextSerial;
 while index > 1
     parent = floor(index / 2);
-    if ~heapLess(heap, index, parent)
+    if ~arrivalFrontierEntryIsLess(frontier, index, parent)
         break;
     end
-    heap = heapSwap(heap, index, parent);
+    frontier = swapArrivalFrontierEntries(frontier, index, parent);
     index = parent;
 end
 end
 
-function [heap, node] = heapPop(heap)
-node = double(heap.Node(1));
-heap.Node(1) = heap.Node(heap.Count);
-heap.F(1) = heap.F(heap.Count);
-heap.H(1) = heap.H(heap.Count);
-heap.Serial(1) = heap.Serial(heap.Count);
-heap.Count = heap.Count - 1;
+function [frontier, node] = popArrivalFrontier(frontier)
+node = double(frontier.Node(1));
+frontier.Node(1) = frontier.Node(frontier.Count);
+frontier.ArrivalTime_s(1) = frontier.ArrivalTime_s(frontier.Count);
+frontier.Serial(1) = frontier.Serial(frontier.Count);
+frontier.Count = frontier.Count - 1;
 index = 1;
 while true
     left = 2 * index;
     right = left + 1;
-    if left > heap.Count
+    if left > frontier.Count
         break;
     end
     child = left;
-    if right <= heap.Count && heapLess(heap, right, left)
+    if right <= frontier.Count && ...
+            arrivalFrontierEntryIsLess(frontier, right, left)
         child = right;
     end
-    if ~heapLess(heap, child, index)
+    if ~arrivalFrontierEntryIsLess(frontier, child, index)
         break;
     end
-    heap = heapSwap(heap, index, child);
+    frontier = swapArrivalFrontierEntries(frontier, index, child);
     index = child;
 end
 end
 
-function yes = heapLess(heap, first, second)
-if heap.F(first) ~= heap.F(second)
-    yes = heap.F(first) < heap.F(second);
-elseif heap.H(first) ~= heap.H(second)
-    yes = heap.H(first) < heap.H(second);
+function isLess = arrivalFrontierEntryIsLess( ...
+        frontier, firstIndex, secondIndex)
+if frontier.ArrivalTime_s(firstIndex) ~= ...
+        frontier.ArrivalTime_s(secondIndex)
+    isLess = frontier.ArrivalTime_s(firstIndex) < ...
+        frontier.ArrivalTime_s(secondIndex);
 else
-    yes = heap.Serial(first) < heap.Serial(second);
+    isLess = frontier.Serial(firstIndex) < frontier.Serial(secondIndex);
 end
 end
 
-function heap = heapSwap(heap, first, second)
-fields = ["Node", "F", "H", "Serial"];
-for field = fields
-    value = heap.(field);
-    temporary = value(first);
-    value(first) = value(second);
-    value(second) = temporary;
-    heap.(field) = value;
+function frontier = swapArrivalFrontierEntries( ...
+        frontier, firstIndex, secondIndex)
+fields = ["Node", "ArrivalTime_s", "Serial"];
+for fieldName = fields
+    temporaryValue = frontier.(fieldName)(firstIndex);
+    frontier.(fieldName)(firstIndex) = frontier.(fieldName)(secondIndex);
+    frontier.(fieldName)(secondIndex) = temporaryValue;
 end
 end
 
@@ -1081,8 +1046,7 @@ remainingBoundaryConditions = [ ...
         coefficient(2, :) - 2 * coefficient(3, :); ...
     duration_s^2 * goalAcceleration - 2 * coefficient(3, :)];
 boundaryMatrix = [1 1 1; 3 4 5; 6 12 20];
-coefficient(4:6, :) = ...
-    boundaryMatrix \ remainingBoundaryConditions;
+coefficient(4:6, :) = boundaryMatrix \ remainingBoundaryConditions;
 
 normalizedTime = tau_s / duration_s;
 positionBasis = [ones(size(normalizedTime)), normalizedTime, ...

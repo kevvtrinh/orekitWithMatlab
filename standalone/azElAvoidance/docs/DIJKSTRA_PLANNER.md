@@ -2,7 +2,7 @@
 
 ## Purpose and audience
 
-This guide explains how `planAzElAdaptiveAStar` converts moving forbidden
+This guide explains how `planAzElDijkstra` converts moving forbidden
 regions in azimuth/elevation coordinates into a route for a rate- and
 acceleration-limited boresight. It is written for readers who know basic
 programming and introductory mechanics but may not have studied motion
@@ -53,7 +53,7 @@ flowchart LR
 The public call is:
 
 ```matlab
-plan = planAzElAdaptiveAStar( ...
+plan = planAzElDijkstra( ...
     azElData, initialState, goalState, limits, options);
 ```
 
@@ -739,13 +739,13 @@ The dominant dynamic costs are usually:
 
 | File | Responsibility |
 | --- | --- |
-| `planAzElAdaptiveAStar.m` | Public API, progressive schedule, inline static Dijkstra, shortening, and retiming |
+| `planAzElDijkstra.m` | Public API, progressive schedule, inline static Dijkstra, shortening, and retiming |
 | `buildAzElTimeObstacleWorkspace.m` | Packs original polygon slices |
 | `queryAzElTimeObstacle.m` | Authoritative point/time collision query |
 | `private/searchAzElSafeIntervalDijkstra.m` | Dynamic safe-interval Dijkstra |
 | `animateAzElAvoidancePlan.m` | 2-D and 3-D route animation |
 | `plotAzElPlanKinematics.m` | Position/rate/acceleration/jerk plots and optional Excel export |
-| `docs/generateAdaptiveAStarDocumentationFigures.m` | Rebuilds this guide's figures |
+| `docs/generateDijkstraDocumentationFigures.m` | Rebuilds this guide's figures |
 
 Scenario generation belongs under `examples`. Example files may choose
 planner settings, but they do not inject routes, one-way edges, preferred
@@ -757,7 +757,7 @@ From the repository root:
 
 ```matlab
 addpath(genpath(fullfile(pwd, "standalone", "azElAvoidance")));
-files = generateAdaptiveAStarDocumentationFigures();
+files = generateDijkstraDocumentationFigures();
 disp(files);
 ```
 
