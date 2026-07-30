@@ -126,6 +126,42 @@ use progressive event-compressed safe-interval Dijkstra. Both modes use
 analytic rest-to-rest slews and validate the command against the original
 packed polygons.
 
+## Experimental bidirectional kinodynamic RRT*
+
+`planAzElBidirectionalKinodynamicRRTStar` is a separate comparison planner;
+it does not replace or modify `planAzElDijkstra`. A forward space-time RRT*
+tree grows from the initial state while a backward tree grows from the
+fixed-time goal. Nodes are zero-rate states at sampled times. Every edge
+waits at its source and then executes a synchronized quintic slew that
+respects the azimuth/elevation rate and acceleration limits.
+
+```matlab
+rrtOptions = struct( ...
+    "SafetyMargin_deg", 0.5, ...
+    "RandomSeed", 7, ...
+    "MaxSearchTime_s", 45, ...
+    "IterationsAfterFirstSolution", 0);
+
+rrtPlan = planAzElBidirectionalKinodynamicRRTStar( ...
+    azElData, initialState, goalState, limits, rrtOptions);
+```
+
+Tree growth uses configurable coarse collision sampling. A complete
+start-to-goal candidate cannot become the incumbent until the full command
+passes the authoritative `ValidationStep_s` polygon check. The returned
+forward and backward trees expose every sampled contender for diagnosis.
+
+RRT* is stochastic: a finite run has no success or global-optimum guarantee.
+Use multiple seeds when measuring reliability. Run the repeatable
+rotating-slot comparison with:
+
+```matlab
+report = benchmarkBidirectionalRRTStar([7 19 31]);
+```
+
+The benchmark runs deterministic Dijkstra once and RRT* once per seed using
+the same packed workspace, dynamics, safety margin, and final validation.
+
 ### Moving rendezvous and trailing
 
 `planAzElMovingTargetIntercept` can match a moving target's position,
