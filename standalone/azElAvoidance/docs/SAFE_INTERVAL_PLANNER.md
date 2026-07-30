@@ -257,8 +257,97 @@ chessboard seed-to-board mapping under the Octave shim differs from
 MATLAB's `RandStream`, so seeds reproduce boards within this environment.
 Re-run the same entry point under MATLAB R2024b for native numbers.
 
-RESULTS_TABLE_PLACEHOLDER
+Success and validity: **both planners solved all 15 scenarios** (five
+static gauntlets, rotating slots, chased boresight, synchronized
+windmills, spinning-rod spiral, Crossy Road rendezvous with matched
+terminal velocity/acceleration, and five declared blinking-chessboard
+seeds — 20260701..20260705, all reported, 5/5 successes each). Every
+returned trajectory was collision-free against the authoritative packed
+polygons, every endpoint/catch error was 0.0000 deg (catch velocity error
+0.00000 deg/s on the rendezvous), and no command exceeded a velocity or
+acceleration limit (worst margin exactly 0). "wall s" includes planning
+plus the harness's validation and clearance bisection; "search s" is the
+planner-reported time; expanded/generated counts for the baseline sum all
+of its resolution levels.
+
+| scenario | planner | ok | free | wall s | search s | expanded | generated | length deg | end err deg | max v | max a | clear deg |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| fiveTurnSpiral | baseline | 1 | 1 | 123.2 | 123.2 | 1273 | 1289 | 241.44 | 0 | 3 | 3 | 0.50 |
+| fiveTurnSpiral | candidate | 1 | 1 | 311.2 | 311.2 | 4323 | 5220 | 251.32 | 0 | 3 | 3 | 0.50 |
+| stopGoGates | baseline | 1 | 1 | 31.9 | 31.9 | 81 | 121 | 24.00 | 0 | 2 | 2 | 0.25 |
+| stopGoGates | candidate | 1 | 1 | 20.7 | 20.7 | 195 | 279 | 24.00 | 0 | 2 | 2 | 0.49 |
+| wrappedAzimuthSeam | baseline | 1 | 1 | 98.7 | 98.7 | 6705 | 6935 | 26.49 | 0 | 2 | 2 | 0.53 |
+| wrappedAzimuthSeam | candidate | 1 | 1 | 6.8 | 6.8 | 1050 | 2829 | 28.15 | 0 | 2 | 2 | 0.78 |
+| alternatingSlalom | baseline | 1 | 1 | 49.9 | 49.9 | 5199 | 5271 | 33.64 | 0 | 3 | 3 | 0.29 |
+| alternatingSlalom | candidate | 1 | 1 | 16.0 | 16.0 | 3913 | 5066 | 34.71 | 0 | 3 | 3 | 0.49 |
+| uTrapEscape | baseline | 1 | 1 | 240.1 | 240.1 | 7644 | 7695 | 33.02 | 0 | 3 | 3 | 0.27 |
+| uTrapEscape | candidate | 1 | 1 | 63.8 | 63.8 | 13877 | 15139 | 35.17 | 0 | 3 | 3 | 0.33 |
+| rotatingSlots | baseline | 1 | 1 | 13.6 | 13.6 | 10 | 146 | 17.97 | 0 | 1.50 | 0.75 | 0.50 |
+| rotatingSlots | candidate | 1 | 1 | 8.5 | 8.5 | 15 | 188 | 15.85 | 0 | 1.50 | 0.75 | 0.54 |
+| chasedBoresight | baseline | 1 | 1 | 109.8 | 109.8 | 348 | 557 | 155.84 | 0 | 4 | 4 | 0.11 |
+| chasedBoresight | candidate | 1 | 1 | 55.7 | 55.7 | 362 | 569 | 144.52 | 0 | 4 | 4 | 0.11 |
+| synchronizedWindmills | baseline | 1 | 1 | 153.7 | 153.7 | 287 | 395 | 67.66 | 0 | 2 | 2 | 0.15 |
+| synchronizedWindmills | candidate | 1 | 1 | 69.3 | 69.3 | 287 | 395 | 67.15 | 0 | 2 | 2 | 0.15 |
+| spinningRodSpiral | baseline | 1 | 1 | 70.1 | 70.1 | 111 | 201 | 104.30 | 0 | 0.80 | 1.20 | 0.29 |
+| spinningRodSpiral | candidate | 1 | 1 | 137.0 | 137.0 | 111 | 201 | 101.92 | 0 | 0.80 | 1.20 | 0.22 |
+| crossyRoadRendezvous | baseline | 1 | 1 | 205.0 | 199.5 | 76 | 90 | 13.14 | 0 | 1.08 | 0.20 | 0.12 |
+| crossyRoadRendezvous | candidate | 1 | 1 | 174.7 | 169.0 | 76 | 92 | 13.14 | 0 | 1.08 | 0.20 | 0.12 |
+| blinkingChessboard_20260701 | baseline | 1 | 1 | 26.9 | 5.0 | 11 | 25 | 9.68 | 0 | 2.66 | 4 | 0.13 |
+| blinkingChessboard_20260701 | candidate | 1 | 1 | 2.6 | 1.2 | 6 | 10 | 10.60 | 0 | 3 | 4 | 0.13 |
+| blinkingChessboard_20260702 | baseline | 1 | 1 | 35.7 | 6.8 | 16 | 32 | 12.00 | 0 | 2.66 | 4 | 0.13 |
+| blinkingChessboard_20260702 | candidate | 1 | 1 | 13.8 | 2.9 | 16 | 32 | 12.00 | 0 | 2.66 | 4 | 0.13 |
+| blinkingChessboard_20260703 | baseline | 1 | 1 | 4.2 | 2.7 | 6 | 13 | 8.02 | 0 | 2.66 | 4 | 0.13 |
+| blinkingChessboard_20260703 | candidate | 1 | 1 | 2.7 | 1.3 | 6 | 14 | 8.02 | 0 | 2.66 | 4 | 0.13 |
+| blinkingChessboard_20260704 | baseline | 1 | 1 | 8.5 | 2.2 | 5 | 14 | 5.45 | 0 | 2.66 | 4 | 0.05 |
+| blinkingChessboard_20260704 | candidate | 1 | 1 | 2.5 | 1.2 | 6 | 14 | 5.82 | 0 | 2.66 | 4 | 0.13 |
+| blinkingChessboard_20260705 | baseline | 1 | 1 | 26.7 | 4.9 | 11 | 33 | 9.38 | 0 | 2.66 | 4 | 0.13 |
+| blinkingChessboard_20260705 | candidate | 1 | 1 | 11.0 | 2.5 | 11 | 33 | 9.38 | 0 | 2.66 | 4 | 0.13 |
+
+Aggregates over the sweep:
+
+- Total wall time: baseline 1198.0 s, candidate 896.3 s (candidate faster
+  on 13 of 15 scenarios; slower only on the two spiral-family mazes:
+  fiveTurnSpiral 2.5x slower, spinningRodSpiral 2.0x slower).
+- Angular length: equal on 6 scenarios, candidate shorter on 4 (rotating
+  slots -11.8%, chased boresight -7.3%, windmills -0.8%, rod spiral
+  -2.3%), candidate longer on 5 (up to +6.5% on the U-trap and +9.5% on
+  one chessboard seed).
+- On scenarios whose options pin one explicit graph (windmills, rod
+  spiral, chessboard seeds 02/03/05) the two planners expand identical or
+  near-identical node counts — consistent with both being safe-interval
+  searches once the baseline's progressive scheduling is out of the
+  picture.
+- The baseline's uTrapEscape length measured 33.02 deg here versus the
+  sub-33 value its example asserts with unscaled budgets: its
+  coarse-to-fine level selection splits the wall-clock budget across
+  levels, so scaled budgets can change which level's route wins. The
+  candidate has no such time-dependent selection.
+- Workspace sizes ranged from 33 kB (chessboard) to 1.7 MB (Crossy Road);
+  the candidate's peak graph was 15,139 generated states (U-trap), well
+  under the shared 100k-1M expansion caps.
 
 ## Recommendation
 
-RECOMMENDATION_PLACEHOLDER
+**Replace, with one condition.** On this sweep the unified planner
+matches the baseline's success record exactly (15/15, all exact-validated,
+including every declared random seed), is faster on 13 of 15 scenarios in
+this environment, and does it with one algorithm and one code path
+(~1,700 lines replacing the baseline's ~2,550-line two-branch pair plus
+its progressive scheduling). That is the Occam outcome this exercise was
+looking for.
+
+It does not beat the baseline everywhere, plainly: goal-rooted Dijkstra
+is 2.5x faster on the five-turn spiral (the case that motivated the
+static branch), 2x faster on the spinning-rod spiral, and produces
+3-6.5% shorter static-maze paths; if static angular optimality or
+spiral-class latency is a hard requirement, keep planAzElAdaptiveAStar.
+
+The condition: these numbers come from Octave 8.4 with compatibility
+shims because MATLAB was unavailable in the benchmarking environment.
+Both planners ran under identical conditions, so the comparison is fair,
+but absolute times and the exact win/loss margins should be confirmed by
+rerunning `runPlannerComparisonBenchmark()` (SearchTimeScale = 1) under
+MATLAB R2024b before switching callers or retiring the baseline. Until
+then both planners coexist behind the same interface, and
+`planAzElMovingTargetIntercept` accepts either through
+`options.PlannerFcn`.
