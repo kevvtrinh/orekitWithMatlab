@@ -17,17 +17,113 @@ function output = plotAzElPlanKinematics(plan, options)
 %   FigureVisible Visibility for a new figure (default MATLAB setting).
 %   Title         Figure title.
 
+%% Normalize options
 if nargin < 2
     options = struct();
 end
-options = normalizeOptions(options);
-[time_s, wrapped, unwrapped, velocity, acceleration] = ...
-    normalizePlan(plan);
+if ~isstruct(options) || ~isscalar(options)
+    error("plotAzElPlanKinematics:InvalidOptions", ...
+        "options must be a scalar struct.");
+end
+defaultOptions = struct( ...
+    "ExportExcel", false, ...
+    "ExcelFile", "", ...
+    "PositionMode", "unwrapped", ...
+    "Figure", [], ...
+    "FigureVisible", string(get(groot, "DefaultFigureVisible")), ...
+    "Title", "Boresight az/el kinematics");
+defaultOptionFields = fieldnames(defaultOptions);
+for defaultOptionIndex = 1:numel(defaultOptionFields)
+    defaultOptionField = defaultOptionFields{defaultOptionIndex};
+    if ~isfield(options, defaultOptionField) || ...
+            isempty(options.(defaultOptionField))
+        options.(defaultOptionField) = defaultOptions.(defaultOptionField);
+    end
+end
+validateattributes(options.ExportExcel, ...
+    {'logical', 'numeric'}, {'scalar'});
+options.ExportExcel = logical(options.ExportExcel);
+options.PositionMode = lower(strtrim(string(options.PositionMode)));
+if ~any(options.PositionMode == ["wrapped" "unwrapped"])
+    error("plotAzElPlanKinematics:InvalidPositionMode", ...
+        "PositionMode must be wrapped or unwrapped.");
+end
+options.FigureVisible = lower(strtrim(string(options.FigureVisible)));
+if ~any(options.FigureVisible == ["on" "off"])
+    error("plotAzElPlanKinematics:InvalidFigureVisible", ...
+        "FigureVisible must be on or off.");
+end
+options.Title = string(options.Title);
+if ~isscalar(options.Title)
+    error("plotAzElPlanKinematics:InvalidTitle", ...
+        "Title must be a string scalar.");
+end
+if ~isempty(options.Figure) && ( ...
+        ~isscalar(options.Figure) || ...
+        ~isgraphics(options.Figure, "figure"))
+    error("plotAzElPlanKinematics:InvalidFigure", ...
+        "Figure must be a valid scalar figure handle.");
+end
+options.ExcelFile = string(options.ExcelFile);
+if ~isscalar(options.ExcelFile)
+    error("plotAzElPlanKinematics:InvalidExcelFile", ...
+        "ExcelFile must be a string scalar.");
+end
+
+%% Normalize the sampled command history
+requiredPlanFields = ["time_s", "position_deg", ...
+    "velocity_deg_s", "acceleration_deg_s2"];
+if ~isstruct(plan) || ~isscalar(plan) || ...
+        ~all(isfield(plan, cellstr(requiredPlanFields)))
+    error("plotAzElPlanKinematics:InvalidPlan", ...
+        "plan is missing time, position, velocity, or acceleration.");
+end
+if isfield(plan, "success") && ~plan.success
+    error("plotAzElPlanKinematics:UnsuccessfulPlan", ...
+        "Cannot plot an unsuccessful plan.");
+end
+time_s = double(plan.time_s(:));
+validateattributes(time_s, {'numeric'}, ...
+    {'nonempty', 'real', 'finite', 'increasing'});
+sampleCount = numel(time_s);
+wrapped = normalizeSamples( ...
+    plan.position_deg, sampleCount, "position_deg");
+velocity = normalizeSamples( ...
+    plan.velocity_deg_s, sampleCount, "velocity_deg_s");
+acceleration = normalizeSamples( ...
+    plan.acceleration_deg_s2, sampleCount, "acceleration_deg_s2");
+if isfield(plan, "positionUnwrapped_deg") && ...
+        ~isempty(plan.positionUnwrapped_deg)
+    unwrapped = normalizeSamples( ...
+        plan.positionUnwrapped_deg, sampleCount, ...
+        "positionUnwrapped_deg");
+else
+    % Older callers may omit the unwrapped command. Reconstructing it here
+    % keeps plots continuous, but cannot recover intentional full revolutions.
+    unwrapped = wrapped;
+    unwrapped(:, 1) = rad2deg(unwrap(deg2rad(wrapped(:, 1))));
+end
+
+%% Derive sampled jerk
 % Jerk is derived from returned acceleration samples. It is a sampled
 % diagnostic, not an independently constrained planner state.
-jerk = sampledDerivative(acceleration, time_s);
+jerk = zeros(size(acceleration));
+if sampleCount > 1
+    jerk(1, :) = (acceleration(2, :) - acceleration(1, :)) / ...
+        (time_s(2) - time_s(1));
+    jerk(end, :) = (acceleration(end, :) - ...
+        acceleration(end - 1, :)) / ...
+        (time_s(end) - time_s(end - 1));
+    if sampleCount > 2
+        centeredDuration_s = time_s(3:end) - time_s(1:end - 2);
+        jerk(2:end - 1, :) = ( ...
+            acceleration(3:end, :) - ...
+            acceleration(1:end - 2, :)) ./ centeredDuration_s;
+    end
+end
 elapsedTime_s = time_s - time_s(1);
 
+%% Build the table and figure
 data = table( ...
     time_s, elapsedTime_s, ...
     wrapped(:, 1), wrapped(:, 2), ...
@@ -96,7 +192,28 @@ excelFile = "";
 if options.ExportExcel
     % Keep export opt-in because long trajectories can create large workbook
     % files and plotting should otherwise remain side-effect free.
-    excelFile = resolveExcelFile(options.ExcelFile);
+    requestedExcelFile = options.ExcelFile;
+    if strlength(requestedExcelFile) == 0
+        requestedExcelFile = fullfile( ...
+            pwd, "az_el_plan_kinematics.xlsx");
+    end
+    [excelFolder, excelName, excelExtension] = fileparts( ...
+        requestedExcelFile);
+    if excelExtension == ""
+        excelExtension = ".xlsx";
+    elseif ~strcmpi(excelExtension, ".xlsx")
+        error("plotAzElPlanKinematics:InvalidExcelExtension", ...
+            "ExcelFile must use the .xlsx extension.");
+    end
+    if excelFolder == ""
+        excelFolder = pwd;
+    end
+    if ~isfolder(excelFolder)
+        error("plotAzElPlanKinematics:MissingExcelFolder", ...
+            "Excel output folder does not exist: %s", excelFolder);
+    end
+    excelFile = string(fullfile( ...
+        excelFolder, excelName + excelExtension));
     writetable(data, excelFile, "Sheet", "Kinematics");
 end
 
@@ -112,6 +229,9 @@ output = struct( ...
 end
 
 function plotPair(ax, time_s, values)
+% Every panel uses the same axis colors and presentation. Keeping this
+% repeated drawing primitive shared prevents one derivative panel drifting
+% from the others.
 plot(ax, time_s, values(:, 1), ...
     "LineWidth", 1.6, "Color", [0.00 0.35 0.70]);
 hold(ax, "on");
@@ -122,137 +242,11 @@ grid(ax, "on");
 box(ax, "on");
 end
 
-function [time_s, wrapped, unwrapped, velocity, acceleration] = ...
-        normalizePlan(plan)
-required = ["time_s", "position_deg", ...
-    "velocity_deg_s", "acceleration_deg_s2"];
-if ~isstruct(plan) || ~isscalar(plan) || ...
-        ~all(isfield(plan, cellstr(required)))
-    error("plotAzElPlanKinematics:InvalidPlan", ...
-        "plan is missing time, position, velocity, or acceleration.");
-end
-if isfield(plan, "success") && ~plan.success
-    error("plotAzElPlanKinematics:UnsuccessfulPlan", ...
-        "Cannot plot an unsuccessful plan.");
-end
-
-time_s = double(plan.time_s(:));
-validateattributes(time_s, {'numeric'}, ...
-    {'nonempty', 'real', 'finite', 'increasing'});
-sampleCount = numel(time_s);
-wrapped = normalizeSamples(plan.position_deg, sampleCount, "position_deg");
-velocity = normalizeSamples( ...
-    plan.velocity_deg_s, sampleCount, "velocity_deg_s");
-acceleration = normalizeSamples( ...
-    plan.acceleration_deg_s2, sampleCount, "acceleration_deg_s2");
-if isfield(plan, "positionUnwrapped_deg") && ...
-        ~isempty(plan.positionUnwrapped_deg)
-    unwrapped = normalizeSamples( ...
-        plan.positionUnwrapped_deg, sampleCount, ...
-        "positionUnwrapped_deg");
-else
-    unwrapped = wrapped;
-    unwrapped(:, 1) = rad2deg(unwrap(deg2rad(wrapped(:, 1))));
-end
-end
-
 function values = normalizeSamples(values, sampleCount, name)
+% Position, velocity, acceleration, and optional unwrapped position all
+% require the same N-by-2 finite sample contract.
 validateattributes(values, {'numeric'}, ...
     {'2d', 'nrows', sampleCount, 'ncols', 2, ...
     'real', 'finite'}, mfilename, name);
 values = double(values);
-end
-
-function derivative = sampledDerivative(values, time_s)
-sampleCount = numel(time_s);
-derivative = zeros(size(values));
-if sampleCount == 1
-    return;
-end
-derivative(1, :) = ...
-    (values(2, :) - values(1, :)) / (time_s(2) - time_s(1));
-derivative(end, :) = ...
-    (values(end, :) - values(end - 1, :)) / ...
-    (time_s(end) - time_s(end - 1));
-if sampleCount > 2
-    duration = time_s(3:end) - time_s(1:end - 2);
-    derivative(2:end - 1, :) = ...
-        (values(3:end, :) - values(1:end - 2, :)) ./ duration;
-end
-end
-
-function options = normalizeOptions(input)
-if ~isstruct(input) || ~isscalar(input)
-    error("plotAzElPlanKinematics:InvalidOptions", ...
-        "options must be a scalar struct.");
-end
-defaults = struct( ...
-    "ExportExcel", false, ...
-    "ExcelFile", "", ...
-    "PositionMode", "unwrapped", ...
-    "Figure", [], ...
-    "FigureVisible", string(get(groot, "DefaultFigureVisible")), ...
-    "Title", "Boresight az/el kinematics");
-options = applyDefaults(input, defaults);
-validateattributes(options.ExportExcel, ...
-    {'logical', 'numeric'}, {'scalar'});
-options.ExportExcel = logical(options.ExportExcel);
-options.PositionMode = lower(strtrim(string(options.PositionMode)));
-if ~any(options.PositionMode == ["wrapped" "unwrapped"])
-    error("plotAzElPlanKinematics:InvalidPositionMode", ...
-        "PositionMode must be wrapped or unwrapped.");
-end
-options.FigureVisible = lower(strtrim(string(options.FigureVisible)));
-if ~any(options.FigureVisible == ["on" "off"])
-    error("plotAzElPlanKinematics:InvalidFigureVisible", ...
-        "FigureVisible must be on or off.");
-end
-options.Title = string(options.Title);
-if ~isscalar(options.Title)
-    error("plotAzElPlanKinematics:InvalidTitle", ...
-        "Title must be a string scalar.");
-end
-if ~isempty(options.Figure)
-    if ~isscalar(options.Figure) || ...
-            ~isgraphics(options.Figure, "figure")
-        error("plotAzElPlanKinematics:InvalidFigure", ...
-            "Figure must be a valid scalar figure handle.");
-    end
-end
-options.ExcelFile = string(options.ExcelFile);
-if ~isscalar(options.ExcelFile)
-    error("plotAzElPlanKinematics:InvalidExcelFile", ...
-        "ExcelFile must be a string scalar.");
-end
-end
-
-function file = resolveExcelFile(requested)
-if strlength(requested) == 0
-    requested = fullfile(pwd, "az_el_plan_kinematics.xlsx");
-end
-[folder, name, extension] = fileparts(requested);
-if extension == ""
-    extension = ".xlsx";
-elseif ~strcmpi(extension, ".xlsx")
-    error("plotAzElPlanKinematics:InvalidExcelExtension", ...
-        "ExcelFile must use the .xlsx extension.");
-end
-if folder == ""
-    folder = pwd;
-end
-if ~isfolder(folder)
-    error("plotAzElPlanKinematics:MissingExcelFolder", ...
-        "Excel output folder does not exist: %s", folder);
-end
-file = string(fullfile(folder, name + extension));
-end
-
-function output = applyDefaults(input, defaults)
-output = input;
-names = fieldnames(defaults);
-for k = 1:numel(names)
-    if ~isfield(output, names{k}) || isempty(output.(names{k}))
-        output.(names{k}) = defaults.(names{k});
-    end
-end
 end
