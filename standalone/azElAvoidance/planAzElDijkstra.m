@@ -1,26 +1,54 @@
 function plan = planAzElDijkstra( ...
         azElData, initialState, goalState, limits, options)
-%PLANAZELDIJKSTRA Plan one exact-checked az/el/time trajectory.
-%
-% plan = planAzElDijkstra( ...
-%     azElData, initialState, goalState, limits, options)
-%
-% The planner uses one public workflow at progressively finer spatial
-% resolutions:
-%   1. A spatial state is an az/el grid point.
-%   2. Static costs propagate backward from the goal with Dijkstra.
-%   3. Dynamic time is compressed into maximal safe intervals for Dijkstra.
-%   4. Edges are analytic rest-to-rest slews plus optional waiting.
-%   5. An enabled terminal edge may match nonzero velocity/acceleration.
-%   6. Every returned command is checked against packed polygons.
-%
-% Static geometry uses goal-rooted Dijkstra at progressive grid sizes.
-% Dynamic geometry uses safe-interval Dijkstra. Both branches validate the
-% final command against the original packed polygons.
+%% Section 0: Header & Readme
+% SYNTAX
+%   options = planAzElDijkstra(limits, "defaults")
+%   plan = planAzElDijkstra( ...
+%       azElData, initialState, goalState, limits)
+%   plan = planAzElDijkstra( ...
+%       azElData, initialState, goalState, limits, options)
+%**************************************************************************
+% PURPOSE
+%   - Plan one exact-checked azimuth/elevation/time trajectory with
+%     goal-rooted Dijkstra for static geometry or safe-interval Dijkstra for
+%     moving geometry.
+%**************************************************************************
+% INPUTS
+%   - azElData (canonical obstacle data or packed obstacle field)
+%       Obstacle geometry or a reusable preferred/legacy packed container.
+%   - initialState (scalar struct)
+%       time_s, position_deg, velocity_deg_s, and acceleration_deg_s2.
+%   - goalState (scalar struct)
+%       State schema matching initialState at a later time.
+%   - limits (scalar struct)
+%       azimuth_deg, elevation_deg, maxVelocity_deg_s, and
+%       maxAcceleration_deg_s2 axis bounds.
+%   - options (scalar struct)
+%       Search, collision, objective, and output-diagnostic controls.
+%**************************************************************************
+% OUTPUTS
+%   - plan (scalar struct)
+%       Stable success/failure schema with sampled commands, diagnostics,
+%       resolved options, obstacleField, and deprecated workspace alias.
+%       The explicit defaults call returns resolved argument-dependent
+%       options instead.
+%**************************************************************************
+% UNITS
+%   - Angular position is degrees. Time is seconds. Velocity is deg/s and
+%     acceleration is deg/s^2.
 
-%% Normalize and validate inputs
+%% Section 1: Validate Inputs & Apply Defaults
+isDefaultsRequest = nargin == 2 && isstruct(azElData) && ...
+    (ischar(initialState) || isstring(initialState)) && ...
+    isscalar(string(initialState)) && ...
+    strcmpi(strtrim(string(initialState)), "defaults");
+if isDefaultsRequest
+    limits = normalizePlannerLimits(azElData);
+    plan = defaultAzElDijkstraOptions(limits);
+    return;
+end
 timer = tic;
-if nargin < 5
+if nargin < 5 || isempty(options)
     options = struct();
 end
 explicitGraph = isstruct(options) && ...
@@ -38,52 +66,19 @@ if goalState.time_s <= initialState.time_s
         "goalState.time_s must follow initialState.time_s.");
 end
 
-requiredLimitFields = ["azimuth_deg", "elevation_deg", ...
-    "maxVelocity_deg_s", "maxAcceleration_deg_s2"];
-if ~isstruct(limits) || ~isscalar(limits) || ...
-        ~all(isfield(limits, cellstr(requiredLimitFields)))
-    error("planAzElDijkstra:InvalidLimits", ...
-        "limits is missing a required field.");
-end
-for limitField = requiredLimitFields
-    validateattributes(limits.(limitField), {'numeric'}, ...
-        {'vector', 'numel', 2, 'real', 'finite'});
-    limits.(limitField) = reshape(double(limits.(limitField)), 1, 2);
-end
-if any(diff(limits.azimuth_deg) <= 0) || ...
-        any(diff(limits.elevation_deg) <= 0) || ...
-        any(limits.maxVelocity_deg_s <= 0) || ...
-        any(limits.maxAcceleration_deg_s2 <= 0)
-    error("planAzElDijkstra:InvalidLimits", ...
-        "Limit ranges must increase and dynamic limits must be positive.");
-end
-
-defaultOptions = struct( ...
-    "SampleTime_s", 0.5, ...
-    "ValidationStep_s", [], ...
-    "GridStep_deg", 1, ...
-    "GridStepSchedule_deg", [], ...
-    "PrimitiveRadii_deg", [], ...
-    "PrimitiveRadiusMultipliers", [1 2 4 8], ...
-    "DirectionStep_deg", 45, ...
-    "CollisionCheckStep_s", [], ...
-    "MaximumSafeIntervalSamples", 10000, ...
-    "MaximumDepartureTrials", 64, ...
-    "DepartureBatchSize", 8, ...
-    "MaxExpansions", 100000, ...
-    "MaxSearchTime_s", 45, ...
-    "InitialNodeCapacity", 4096, ...
-    "TimePaddingSamples", 1, ...
-    "SafetyMargin_deg", 0, ...
-    "AllowAzimuthWrap", diff(limits.azimuth_deg) >= 360 - 1e-9, ...
-    "AllowNonzeroTerminalState", false, ...
-    "PrintFailureSuggestions", true, ...
-    "Objective", "minimumAngularDistance", ...
-    "RouteShortcutStep_deg", 0.1, ...
-    "MaximumVerticesPerRegion", 500);
+limits = normalizePlannerLimits(limits);
+defaultOptions = defaultAzElDijkstraOptions(limits);
 if ~isstruct(options) || ~isscalar(options)
     error("planAzElDijkstra:InvalidOptions", ...
         "options must be a scalar struct.");
+end
+unknownOptionFields = setdiff( ...
+    fieldnames(options), fieldnames(defaultOptions), "stable");
+if ~isempty(unknownOptionFields)
+    warning("planAzElDijkstra:UnknownOptions", ...
+        "Ignoring unknown option fields: %s.", ...
+        strjoin(string(unknownOptionFields), ", "));
+    options = rmfield(options, unknownOptionFields);
 end
 defaultOptionFields = fieldnames(defaultOptions);
 for defaultOptionIndex = 1:numel(defaultOptionFields)
@@ -183,16 +178,17 @@ if hasTerminalDynamics && ~options.AllowNonzeroTerminalState
         "Set AllowNonzeroTerminalState to true for terminal capture.");
 end
 
-%% Pack the authoritative obstacle workspace
-prebuiltWorkspace = isstruct(azElData) && isscalar(azElData) && ...
+%% Section 2: Build The Search Representation
+isPrebuiltObstacleField = isstruct(azElData) && isscalar(azElData) && ...
     isfield(azElData, "Format") && ...
-    string(azElData.Format) == "AzElTimeObstacleWorkspace";
-% Reusing a packed workspace avoids repacking the same polygons when a
+    any(string(azElData.Format) == [ ...
+    "AzElTimeObstacleField", "AzElTimeObstacleWorkspace"]);
+% Reusing a packed obstacle field avoids repacking polygons when a
 % caller evaluates several initial/goal pairs against one obstacle field.
-if prebuiltWorkspace
-    workspace = azElData;
+if isPrebuiltObstacleField
+    obstacleField = azElData;
 else
-    workspace = buildAzElTimeObstacleWorkspace(azElData, struct( ...
+    obstacleField = buildAzElTimeObstacleField(azElData, struct( ...
         "MaximumVerticesPerRegion", options.MaximumVerticesPerRegion));
 end
 
@@ -200,8 +196,8 @@ schedule = options.GridStepSchedule_deg(:).';
 % A static minimum-distance case can use a cheaper complete 2-D graph.
 % Terminal dynamics remain in the safe-interval search because the final
 % edge must match velocity and acceleration at an exact arrival time.
-workspaceIsStatic = true;
-for packedObstacle = reshape(workspace.Obstacles, 1, [])
+obstacleFieldIsStatic = true;
+for packedObstacle = reshape(obstacleField.Obstacles, 1, [])
     if packedObstacle.SampleCount == 0
         continue;
     end
@@ -211,7 +207,7 @@ for packedObstacle = reshape(workspace.Obstacles, 1, [])
     packedVertexCounts = double(diff(packedObstacle.SliceOffsets));
     if doesNotCoverPlanningInterval || ...
             any(packedVertexCounts ~= packedVertexCounts(1))
-        workspaceIsStatic = false;
+        obstacleFieldIsStatic = false;
         break;
     end
     firstVertexIndices = double(packedObstacle.SliceOffsets(1)): ...
@@ -230,18 +226,18 @@ for packedObstacle = reshape(workspace.Obstacles, 1, [])
             packedObstacle.ElevationDeg(sampleVertexIndices), ...
             firstElevation_deg);
         if ~sampleMatchesFirst
-            workspaceIsStatic = false;
+            obstacleFieldIsStatic = false;
             break;
         end
     end
-    if ~workspaceIsStatic
+    if ~obstacleFieldIsStatic
         break;
     end
 end
 if ~hasTerminalDynamics && ...
         options.Objective == "minimumAngularDistance" && ...
-        workspaceIsStatic
-    %% Search static geometry from coarse to fine
+        obstacleFieldIsStatic
+    % --- Search Static Geometry From Coarse To Fine -----------------------
     staticAttemptTemplate = struct( ...
         "GridStep_deg", NaN, ...
         "PrimitiveRadii_deg", zeros(1, 0), ...
@@ -275,7 +271,7 @@ if ~hasTerminalDynamics && ...
             remainingStaticLevelCount;
 
         staticCandidate = solveStaticGoalDijkstra( ...
-            workspace, initialState, goalState, limits, staticOptions);
+            obstacleField, initialState, goalState, limits, staticOptions);
         staticEndpointDelta_deg = wrappedDelta( ...
             initialState.position_deg, goalState.position_deg, ...
             limits, options);
@@ -337,12 +333,12 @@ if ~hasTerminalDynamics && ...
         bestStaticPlan.safeIntervalSearch = struct();
         bestStaticPlan.searchElapsed_s = toc(timer);
         bestStaticPlan.options = options;
-        plan = bestStaticPlan;
+        plan = normalizeAzElDijkstraPlanSchema(bestStaticPlan);
         return;
     end
 end
 
-%% Search moving geometry with safe intervals
+%% Section 3: Run Dijkstra
 attemptTemplate = struct( ...
     "GridStep_deg", NaN, ...
     "PrimitiveRadii_deg", zeros(1, 0), ...
@@ -390,7 +386,7 @@ for level = 1:numel(schedule)
     levelOptions.MaxSearchTime_s = max( ...
         min(levelBudget, options.MaxSearchTime_s), 0.05);
 
-    candidate = searchAzElSafeIntervalDijkstra(workspace, ...
+    candidate = searchAzElSafeIntervalDijkstra(obstacleField, ...
         initialState, goalState, limits, levelOptions);
     if candidate.Success
         candidateTime = candidate.Profile.time_s;
@@ -489,10 +485,12 @@ if isempty(fieldnames(search)) || ~search.Success
         "stopState", goalState, ...
         "limits", limits, ...
         "options", options, ...
-        "workspace", workspace, ...
+        "obstacleField", obstacleField, ...
+        "workspace", obstacleField, ... % deprecated compatibility alias
         "resolutionAttempts", attempts, ...
         "safeIntervalSearch", search);
     plan = finalizeAzElPlanFailure(plan);
+    plan = normalizeAzElDijkstraPlanSchema(plan);
     return;
 end
 
@@ -511,6 +509,7 @@ else
     objectiveUnits = "s";
 end
 
+%% Section 4: Assemble The Output
 plan = struct( ...
     "success", true, ...
     "message", ...
@@ -541,19 +540,40 @@ plan = struct( ...
     "stopState", goalState, ...
     "limits", limits, ...
     "options", options, ...
-    "workspace", workspace, ...
+    "obstacleField", obstacleField, ...
+    "workspace", obstacleField, ... % deprecated compatibility alias
     "resolutionAttempts", attempts, ...
     "safeIntervalSearch", search);
+plan = normalizeAzElDijkstraPlanSchema(plan);
 end
 
+%% Section 5: Local Functions
 function plan = solveStaticGoalDijkstra( ...
-        workspace, initialState, goalState, axisLimits, options)
+        obstacleField, initialState, goalState, axisLimits, options)
+%% Section 0: Header & Readme
+% SYNTAX
+%   plan = solveStaticGoalDijkstra( ...
+%       obstacleField, initialState, goalState, axisLimits, options)
+%**************************************************************************
+% PURPOSE
+%   - Solve and retime one complete static goal-rooted Dijkstra graph.
+%**************************************************************************
+% INPUTS
+%   - obstacleField, initialState, goalState, axisLimits, options (planner inputs)
+%       Packed geometry, boundary states, limits, and resolved controls.
+%**************************************************************************
+% OUTPUTS
+%   - plan (scalar struct)
+%       Successful or failed static-plan record.
+%**************************************************************************
+% UNITS
+%   - Angular quantities are degrees and time quantities are seconds.
 % Static and moving geometry require different state representations. This
 % complete per-resolution core remains separate so neither algorithm hides
 % branches of the other inside its expansion loop.
 staticTimer = tic;
 topology = emptyGoalDijkstraResult(options);
-endpointBlocked = queryAzElTimeObstacle(workspace, ...
+endpointBlocked = queryAzElTimeObstacle(obstacleField, ...
     [initialState.position_deg(1); goalState.position_deg(1)], ...
     [initialState.position_deg(2); goalState.position_deg(2)], ...
     [initialState.time_s; goalState.time_s], struct( ...
@@ -561,8 +581,8 @@ endpointBlocked = queryAzElTimeObstacle(workspace, ...
     "SafetyMarginDeg", options.SafetyMargin_deg));
 if any(endpointBlocked)
     plan = failedStaticPlan( ...
-        "The initial or goal state lies inside the inflated workspace.", ...
-        workspace, initialState, goalState, axisLimits, options, ...
+        "The initial or goal state lies inside the inflated obstacle field.", ...
+        obstacleField, initialState, goalState, axisLimits, options, ...
         topology, toc(staticTimer));
     return;
 end
@@ -581,13 +601,13 @@ elevationGrid_deg = inclusiveGrid( ...
     axisLimits.elevation_deg, options.GridStep_deg);
 [azimuthMesh_deg, elevationMesh_deg] = meshgrid( ...
     azimuthGrid_deg, elevationGrid_deg);
-blockedGrid = queryAzElTimeObstacle(workspace, ...
+blockedGrid = queryAzElTimeObstacle(obstacleField, ...
     azimuthMesh_deg(:), elevationMesh_deg(:), initialState.time_s, ...
     struct("CollisionMode", "polygon", ...
     "SafetyMarginDeg", options.SafetyMargin_deg));
 blockedGrid = reshape(blockedGrid, size(azimuthMesh_deg));
 
-%% Propagate exact lattice cost backward from the goal
+% --- Propagate Exact Lattice Cost Backward From The Goal -----------------
 topologySearchTimer = tic;
 blockedGrid = logical(blockedGrid);
 elevationBinCount = numel(elevationGrid_deg);
@@ -735,7 +755,7 @@ else
         topology.SettledMask = reshape( ...
             settledGridState, size(blockedGrid));
     else
-        %% Reconstruct the selected goal-directed lattice chain
+        % --- Reconstruct The Selected Goal-Directed Lattice Chain ---------
         gridNodePath = zeros(128, 1, "uint32");
         pathStateCount = 1;
         pathGridNode = uint32(initialGridNode);
@@ -799,7 +819,7 @@ end
 if ~topology.Success
     plan = failedStaticPlan( ...
         "Goal-rooted Dijkstra failed: " + topology.Message, ...
-        workspace, initialState, goalState, axisLimits, options, ...
+        obstacleField, initialState, goalState, axisLimits, options, ...
         topology, toc(staticTimer));
     return;
 end
@@ -825,7 +845,7 @@ keepRouteWaypoint(2:end) = hypot( ...
     diff(routePositions_deg(:, 2))) > 1e-10;
 routePositions_deg = routePositions_deg(keepRouteWaypoint, :);
 unshortenedRoute_deg = routePositions_deg;
-%% Remove unnecessary lattice turns with exact line-of-sight checks
+% --- Remove Lattice Turns With Exact Line-Of-Sight Checks ----------------
 shortcutTimer = tic;
 inputWaypointCount = size(routePositions_deg, 1);
 if inputWaypointCount <= 2
@@ -862,7 +882,7 @@ else
                     axisLimits.azimuth_deg(1), azimuthSpan_deg) + ...
                     axisLimits.azimuth_deg(1);
             end
-            segmentBlocked = queryAzElTimeObstacle(workspace, ...
+            segmentBlocked = queryAzElTimeObstacle(obstacleField, ...
                 queryPosition_deg(:, 1), queryPosition_deg(:, 2), ...
                 initialState.time_s, struct( ...
                 "CollisionMode", "polygon", ...
@@ -901,13 +921,13 @@ end
 if ~shortcut.Success
     plan = failedStaticPlan( ...
         "Exact route shortcut validation failed: " + shortcut.Message, ...
-        workspace, initialState, goalState, axisLimits, options, ...
+        obstacleField, initialState, goalState, axisLimits, options, ...
         topology, toc(staticTimer));
     return;
 end
 routePositions_deg = shortcut.Path_deg;
 
-%% Retime the geometric route with synchronized two-axis slews
+% --- Retime The Route With Synchronized Two-Axis Slews -------------------
 retimingTimer = tic;
 segmentDisplacement_deg = diff(routePositions_deg, 1, 1);
 absoluteDisplacement_deg = abs(segmentDisplacement_deg.');
@@ -967,7 +987,7 @@ else
         segmentDisplacement_deg, segmentInitialTime_s, ...
         segmentDuration_s, normalizedPeakRate, normalizedAcceleration, ...
         collisionSampleStep_s, axisLimits, options);
-    blockedRetimedSamples = queryAzElTimeObstacle(workspace, ...
+    blockedRetimedSamples = queryAzElTimeObstacle(obstacleField, ...
         validationProfile.position_deg(:, 1), ...
         validationProfile.position_deg(:, 2), ...
         validationProfile.time_s, struct( ...
@@ -975,7 +995,7 @@ else
         "TimePaddingSamples", 1));
     if any(blockedRetimedSamples)
         retimed = failedRetiming( ...
-            "The retimed route intersects the exact packed workspace.", ...
+            "The retimed route intersects the exact packed obstacle field.", ...
             toc(retimingTimer));
     else
         routeStep_deg = diff(routePositions_deg, 1, 1);
@@ -996,7 +1016,7 @@ end
 if ~retimed.Success
     plan = failedStaticPlan( ...
         "Static route retiming failed: " + retimed.Message, ...
-        workspace, initialState, goalState, axisLimits, options, ...
+        obstacleField, initialState, goalState, axisLimits, options, ...
         topology, toc(staticTimer));
     plan.preShortcutRoute_deg = unshortenedRoute_deg;
     plan.routeShortcut = shortcut;
@@ -1039,7 +1059,8 @@ plan = struct( ...
     "stopState", goalState, ...
     "limits", axisLimits, ...
     "options", options, ...
-    "workspace", workspace, ...
+    "obstacleField", obstacleField, ...
+    "workspace", obstacleField, ... % deprecated compatibility alias
     "topologySearch", topology, ...
     "preShortcutRoute_deg", unshortenedRoute_deg, ...
     "routeShortcut", shortcut, ...
@@ -1048,6 +1069,25 @@ plan = struct( ...
 end
 
 function gridValues = inclusiveGrid(gridLimits, gridStep)
+%% Section 0: Header & Readme
+% SYNTAX
+%   gridValues = inclusiveGrid(gridLimits, gridStep)
+%**************************************************************************
+% PURPOSE
+%   - Construct a grid that always includes both configured boundaries.
+%**************************************************************************
+% INPUTS
+%   - gridLimits (numeric two-vector)
+%       Inclusive axis limits.
+%   - gridStep (positive numeric scalar)
+%       Requested spacing.
+%**************************************************************************
+% OUTPUTS
+%   - gridValues (double vector)
+%       Inclusive grid.
+%**************************************************************************
+% UNITS
+%   - All inputs and outputs share the caller's angular units.
 % Both axes must include their upper boundary by the same rule even when
 % the requested step does not divide the span exactly.
 gridValues = gridLimits(1):gridStep:gridLimits(2);
@@ -1060,6 +1100,29 @@ end
 function node = nearestFreeGridNode( ...
         blockedGrid, azimuthGrid_deg, elevationGrid_deg, ...
         requestedPosition_deg, allowAzimuthWrap)
+%% Section 0: Header & Readme
+% SYNTAX
+%   node = nearestFreeGridNode( ...
+%       blockedGrid, azimuthGrid_deg, elevationGrid_deg, ...
+%       requestedPosition_deg, allowAzimuthWrap)
+%**************************************************************************
+% PURPOSE
+%   - Attach a boundary state to its nearest free lattice node.
+%**************************************************************************
+% INPUTS
+%   - blockedGrid (logical matrix)
+%       Occupied lattice cells.
+%   - azimuthGrid_deg, elevationGrid_deg, requestedPosition_deg (numeric)
+%       Lattice axes and requested endpoint.
+%   - allowAzimuthWrap (logical scalar)
+%       Whether azimuth distance is periodic.
+%**************************************************************************
+% OUTPUTS
+%   - node (nonnegative integer)
+%       Linear grid index, or zero when no free node exists.
+%**************************************************************************
+% UNITS
+%   - Angular inputs are degrees.
 % Initial and goal endpoints must use identical blocked-cell and azimuth-seam
 % rules when they are attached to the lattice.
 [azimuthMesh_deg, elevationMesh_deg] = meshgrid( ...
@@ -1080,6 +1143,23 @@ end
 end
 
 function azimuthSpan_deg = wrappedGridSpan(azimuthGrid_deg)
+%% Section 0: Header & Readme
+% SYNTAX
+%   azimuthSpan_deg = wrappedGridSpan(azimuthGrid_deg)
+%**************************************************************************
+% PURPOSE
+%   - Recover the periodic span from a grid without a duplicate endpoint.
+%**************************************************************************
+% INPUTS
+%   - azimuthGrid_deg (numeric vector)
+%       Uniform wrapped azimuth samples.
+%**************************************************************************
+% OUTPUTS
+%   - azimuthSpan_deg (numeric scalar)
+%       Inferred periodic span.
+%**************************************************************************
+% UNITS
+%   - Input and output are degrees.
 % Nearest-node selection, transition costs, and path unwrapping must infer
 % the same periodic span from a grid that omits its duplicate endpoint.
 azimuthSpan_deg = azimuthGrid_deg(end) - azimuthGrid_deg(1);
@@ -1091,6 +1171,29 @@ end
 function shortcut = successfulShortcut( ...
         routePositions_deg, inputWaypointCount, ...
         collisionCheckCount, elapsed_s)
+%% Section 0: Header & Readme
+% SYNTAX
+%   shortcut = successfulShortcut( ...
+%       routePositions_deg, inputWaypointCount, ...
+%       collisionCheckCount, elapsed_s)
+%**************************************************************************
+% PURPOSE
+%   - Assemble the shared successful shortcut diagnostic schema.
+%**************************************************************************
+% INPUTS
+%   - routePositions_deg (numeric N-by-2 matrix)
+%       Retained route.
+%   - inputWaypointCount, collisionCheckCount (nonnegative integers)
+%       Input size and validation work.
+%   - elapsed_s (nonnegative scalar)
+%       Shortcut wall time.
+%**************************************************************************
+% OUTPUTS
+%   - shortcut (scalar struct)
+%       Successful shortcut diagnostics.
+%**************************************************************************
+% UNITS
+%   - Route coordinates are degrees and elapsed_s is seconds.
 % Both the trivial and searched shortcut paths return this exact schema;
 % centralizing it keeps diagnostics consistent.
 routeStep_deg = diff(routePositions_deg, 1, 1);
@@ -1111,6 +1214,29 @@ function profile = makeStaticRouteProfile( ...
         segmentDisplacement_deg, segmentInitialTime_s, ...
         segmentDuration_s, normalizedPeakRate, ...
         normalizedAcceleration, sampleTime_s, axisLimits, options)
+%% Section 0: Header & Readme
+% SYNTAX
+%   profile = makeStaticRouteProfile( ...
+%       initialTime_s, goalTime_s, routePositions_deg, ...
+%       segmentDisplacement_deg, segmentInitialTime_s, ...
+%       segmentDuration_s, normalizedPeakRate, ...
+%       normalizedAcceleration, sampleTime_s, axisLimits, options)
+%**************************************************************************
+% PURPOSE
+%   - Sample synchronized static-route motion for output or validation.
+%**************************************************************************
+% INPUTS
+%   - route and timing arguments (numeric)
+%       Waypoints, segment laws, time horizon, and sample spacing.
+%   - axisLimits, options (scalar structs)
+%       Canonicalization limits and wrapping policy.
+%**************************************************************************
+% OUTPUTS
+%   - profile (scalar struct)
+%       Sampled position, velocity, acceleration, and waiting state.
+%**************************************************************************
+% UNITS
+%   - Angles are degrees and time is seconds.
 % Output and dense validation sample the same retimed motion law at different
 % rates, so this shared evaluator prevents validation/output disagreement.
 time_s = (initialTime_s:sampleTime_s:goalTime_s).';
@@ -1187,6 +1313,25 @@ profile = struct( ...
 end
 
 function retimed = failedRetiming(message, elapsed_s)
+%% Section 0: Header & Readme
+% SYNTAX
+%   retimed = failedRetiming(message, elapsed_s)
+%**************************************************************************
+% PURPOSE
+%   - Assemble the shared failed-retiming diagnostic schema.
+%**************************************************************************
+% INPUTS
+%   - message (scalar text)
+%       Failure explanation.
+%   - elapsed_s (nonnegative scalar)
+%       Retiming wall time.
+%**************************************************************************
+% OUTPUTS
+%   - retimed (scalar struct)
+%       Failed retiming diagnostics.
+%**************************************************************************
+% UNITS
+%   - elapsed_s is seconds; empty route fields retain named angular units.
 % Both infeasible timing and collision failures expose the same diagnostic
 % fields to the resolution controller.
 retimed = struct( ...
@@ -1202,8 +1347,29 @@ retimed = struct( ...
 end
 
 function plan = failedStaticPlan( ...
-        message, workspace, initialState, goalState, axisLimits, ...
+        message, obstacleField, initialState, goalState, axisLimits, ...
         options, topology, elapsed_s)
+%% Section 0: Header & Readme
+% SYNTAX
+%   plan = failedStaticPlan( ...
+%       message, obstacleField, initialState, goalState, axisLimits, ...
+%       options, topology, elapsed_s)
+%**************************************************************************
+% PURPOSE
+%   - Assemble the shared static-planner failure schema.
+%**************************************************************************
+% INPUTS
+%   - message, obstacleField, initialState, goalState (failure context)
+%       Explanation, geometry, and boundary states.
+%   - axisLimits, options, topology, elapsed_s (diagnostic context)
+%       Limits, resolved controls, topology evidence, and elapsed time.
+%**************************************************************************
+% OUTPUTS
+%   - plan (scalar struct)
+%       Failed static plan.
+%**************************************************************************
+% UNITS
+%   - Angular quantities are degrees and elapsed_s is seconds.
 % Endpoint, topology, shortcut, and retiming failures share one diagnostic
 % schema so the resolution controller can compare attempts safely.
 plan = struct( ...
@@ -1235,11 +1401,29 @@ plan = struct( ...
     "stopState", goalState, ...
     "limits", axisLimits, ...
     "options", options, ...
-    "workspace", workspace, ...
+    "obstacleField", obstacleField, ...
+    "workspace", obstacleField, ... % deprecated compatibility alias
     "topologySearch", topology);
 end
 
 function result = emptyGoalDijkstraResult(options)
+%% Section 0: Header & Readme
+% SYNTAX
+%   result = emptyGoalDijkstraResult(options)
+%**************************************************************************
+% PURPOSE
+%   - Define the shared empty topology-search diagnostic schema.
+%**************************************************************************
+% INPUTS
+%   - options (scalar struct)
+%       Resolved planner controls.
+%**************************************************************************
+% OUTPUTS
+%   - result (scalar struct)
+%       Empty goal-rooted Dijkstra result.
+%**************************************************************************
+% UNITS
+%   - Unit-bearing fields identify degrees or seconds.
 % Endpoint attachment and all search terminations initialize the same
 % topology fields before adding case-specific diagnostics.
 result = struct( ...
@@ -1264,6 +1448,27 @@ result = struct( ...
 end
 
 function frontier = pushDijkstraFrontier(frontier, node, cost_deg)
+%% Section 0: Header & Readme
+% SYNTAX
+%   frontier = pushDijkstraFrontier(frontier, node, cost_deg)
+%**************************************************************************
+% PURPOSE
+%   - Push one cost-labeled node onto the static binary min-heap.
+%**************************************************************************
+% INPUTS
+%   - frontier (scalar struct)
+%       Heap arrays, count, and serial state.
+%   - node (positive integer)
+%       Grid node index.
+%   - cost_deg (nonnegative scalar)
+%       Cost-to-go label.
+%**************************************************************************
+% OUTPUTS
+%   - frontier (scalar struct)
+%       Updated heap.
+%**************************************************************************
+% UNITS
+%   - cost_deg is degrees; other values are dimensionless.
 % Push and pop share the comparison/swap helpers below so equal-cost states
 % retain deterministic FIFO tie-breaking.
 if frontier.Count >= numel(frontier.Node)
@@ -1292,6 +1497,27 @@ end
 end
 
 function [frontier, node, cost_deg] = popDijkstraFrontier(frontier)
+%% Section 0: Header & Readme
+% SYNTAX
+%   [frontier, node, cost_deg] = popDijkstraFrontier(frontier)
+%**************************************************************************
+% PURPOSE
+%   - Remove the minimum-cost static frontier entry.
+%**************************************************************************
+% INPUTS
+%   - frontier (scalar struct)
+%       Nonempty static binary min-heap.
+%**************************************************************************
+% OUTPUTS
+%   - frontier (scalar struct)
+%       Updated heap.
+%   - node (positive integer)
+%       Removed grid node.
+%   - cost_deg (nonnegative scalar)
+%       Removed cost label.
+%**************************************************************************
+% UNITS
+%   - cost_deg is degrees; other values are dimensionless.
 % This is paired with pushDijkstraFrontier and intentionally reuses the same
 % ordering primitive instead of duplicating heap rules.
 node = double(frontier.Node(1));
@@ -1325,6 +1551,26 @@ end
 
 function less = dijkstraFrontierEntryIsLess( ...
         frontier, firstIndex, secondIndex)
+%% Section 0: Header & Readme
+% SYNTAX
+%   less = dijkstraFrontierEntryIsLess( ...
+%       frontier, firstIndex, secondIndex)
+%**************************************************************************
+% PURPOSE
+%   - Compare static heap entries by cost and deterministic serial order.
+%**************************************************************************
+% INPUTS
+%   - frontier (scalar struct)
+%       Heap arrays.
+%   - firstIndex, secondIndex (positive integers)
+%       Entries to compare.
+%**************************************************************************
+% OUTPUTS
+%   - less (logical scalar)
+%       True when the first entry precedes the second.
+%**************************************************************************
+% UNITS
+%   - Comparison result and indices are dimensionless.
 % Both heap directions depend on this single tolerance and serial ordering
 % rule.
 costTolerance_deg = 1e-12;
@@ -1341,6 +1587,26 @@ end
 
 function frontier = swapDijkstraFrontierEntries( ...
         frontier, firstIndex, secondIndex)
+%% Section 0: Header & Readme
+% SYNTAX
+%   frontier = swapDijkstraFrontierEntries( ...
+%       frontier, firstIndex, secondIndex)
+%**************************************************************************
+% PURPOSE
+%   - Swap every parallel array in two static heap entries.
+%**************************************************************************
+% INPUTS
+%   - frontier (scalar struct)
+%       Heap arrays.
+%   - firstIndex, secondIndex (positive integers)
+%       Entries to exchange.
+%**************************************************************************
+% OUTPUTS
+%   - frontier (scalar struct)
+%       Updated heap.
+%**************************************************************************
+% UNITS
+%   - Indices are dimensionless; stored cost units remain degrees.
 % Push and pop both swap three parallel arrays; centralizing it prevents
 % frontier corruption when the schema changes.
 fieldNames = ["Node", "Cost_deg", "Serial"];
@@ -1352,6 +1618,25 @@ end
 end
 
 function delta = wrappedDelta(fromPosition, toPosition, limits, options)
+%% Section 0: Header & Readme
+% SYNTAX
+%   delta = wrappedDelta(fromPosition, toPosition, limits, options)
+%**************************************************************************
+% PURPOSE
+%   - Compute the shortest configured two-axis displacement.
+%**************************************************************************
+% INPUTS
+%   - fromPosition, toPosition (numeric angular arrays)
+%       Boundary positions.
+%   - limits, options (scalar structs)
+%       Azimuth span and wrapping policy.
+%**************************************************************************
+% OUTPUTS
+%   - delta (numeric angular array)
+%       Shortest signed displacement.
+%**************************************************************************
+% UNITS
+%   - Positions and delta are degrees.
 % Static and dynamic graph operations must agree on the shortest azimuth
 % displacement at the periodic seam.
 delta = toPosition - fromPosition;
@@ -1362,6 +1647,27 @@ end
 end
 
 function state = normalizeState(state, label, requiredState)
+%% Section 0: Header & Readme
+% SYNTAX
+%   state = normalizeState(state, label, requiredState)
+%**************************************************************************
+% PURPOSE
+%   - Validate one planner boundary-state schema and orientation.
+%**************************************************************************
+% INPUTS
+%   - state (scalar struct)
+%       Boundary state to validate.
+%   - label (text)
+%       Diagnostic state name.
+%   - requiredState (string vector)
+%       Required field names.
+%**************************************************************************
+% OUTPUTS
+%   - state (scalar struct)
+%       Validated double state.
+%**************************************************************************
+% UNITS
+%   - Units are encoded in required field names.
 % Initial and goal states share one public schema; centralizing this repeated
 % validation prevents one endpoint from accepting a different shape.
 if ~isstruct(state) || ~isscalar(state) || ...
@@ -1380,8 +1686,25 @@ state.time_s = double(state.time_s);
 end
 
 function result = searchAzElSafeIntervalDijkstra( ...
-        workspace, startState, stopState, limits, options)
-%SEARCHAZELSAFEINTERVALDIJKSTRA Find a dynamic space-time route.
+        obstacleField, startState, stopState, limits, options)
+%% Section 0: Header & Readme
+% SYNTAX
+%   result = searchAzElSafeIntervalDijkstra( ...
+%       obstacleField, startState, stopState, limits, options)
+%**************************************************************************
+% PURPOSE
+%   - Find a continuous-time route through event-compressed safe intervals.
+%**************************************************************************
+% INPUTS
+%   - obstacleField, startState, stopState, limits, options (planner inputs)
+%       Packed geometry, boundary states, limits, and resolved controls.
+%**************************************************************************
+% OUTPUTS
+%   - result (scalar struct)
+%       Route, sampled profile, search diagnostics, and resolved options.
+%**************************************************************************
+% UNITS
+%   - Angles are degrees and time is seconds.
 %
 % Each state is an az/el grid point paired with one run-length-compressed
 % safe time interval. Dijkstra minimizes the earliest arrival label for that
@@ -1390,22 +1713,25 @@ function result = searchAzElSafeIntervalDijkstra( ...
 % dynamics. Time remains continuous inside each interval, so waiting does
 % not create one state per time sample.
 
-%% Classify the moving workspace into event-compressed safe intervals
+%% Section 1: Classify Safe Intervals
 timer = tic;
 hasTerminalDynamics = options.AllowNonzeroTerminalState && ...
     any(abs([stopState.velocity_deg_s, ...
     stopState.acceleration_deg_s2]) > 1e-12);
 % Event times are the only instants used to classify a stationary grid
 % point. Long consecutive safe runs are compressed into one SIPP interval.
-eventTimes = [startState.time_s; stopState.time_s];
-for obstacle = reshape(workspace.Obstacles, 1, [])
+packedObstacles = obstacleField.Obstacles;
+eventTimeParts = cell(numel(packedObstacles) + 1, 1);
+eventTimeParts{1} = [startState.time_s; stopState.time_s];
+for obstacleIndex = 1:numel(packedObstacles)
+    obstacle = packedObstacles(obstacleIndex);
     obstacleTimes_s = double(obstacle.TimeSeconds(:));
     isInsideSearchHorizon = obstacleTimes_s >= startState.time_s & ...
         obstacleTimes_s <= stopState.time_s;
-    eventTimes = [ ...
-        eventTimes; obstacleTimes_s(isInsideSearchHorizon)]; %#ok<AGROW>
+    eventTimeParts{obstacleIndex + 1} = ...
+        obstacleTimes_s(isInsideSearchHorizon);
 end
-eventTimes = unique(eventTimes);
+eventTimes = unique(vertcat(eventTimeParts{:}));
 if numel(eventTimes) > options.MaximumSafeIntervalSamples
     retainedEventIndices = unique(round(linspace( ...
         1, numel(eventTimes), options.MaximumSafeIntervalSamples)));
@@ -1421,7 +1747,7 @@ safeCache = containers.Map( ...
 safeQueryCount = 0;
 
 [startIntervals, safeCache, safeQueryCount] = safeIntervalsAt( ...
-    startState.position_deg, workspace, eventTimes, limits, options, ...
+    startState.position_deg, obstacleField, eventTimes, limits, options, ...
     safeCache, safeQueryCount);
 startInterval = find( ...
     startState.time_s >= startIntervals(:, 1) - 1e-9 & ...
@@ -1437,7 +1763,7 @@ if startInterval == 0
 end
 
 [goalIntervals, safeCache, safeQueryCount] = safeIntervalsAt( ...
-    stopState.position_deg, workspace, eventTimes, limits, options, ...
+    stopState.position_deg, obstacleField, eventTimes, limits, options, ...
     safeCache, safeQueryCount);
 goalInterval = find( ...
     stopState.time_s >= goalIntervals(:, 1) - 1e-9 & ...
@@ -1472,7 +1798,7 @@ if ~hasTerminalDynamics
         directArrival_s = startState.time_s;
     else
         [directFound, directDeparture_s, directArrival_s] = scheduleTransition( ...
-            workspace, startState.position_deg, ...
+            obstacleField, startState.position_deg, ...
             directDelta_deg, startState.time_s, ...
             startSafeInterval_s, goalSafeInterval_s, ...
             directDuration_s, directMotion, eventTimes, limits, options);
@@ -1519,7 +1845,7 @@ if ~hasTerminalDynamics
         directValidationProfile = makeRouteProfile( ...
             directRoute, startState.time_s, stopState.time_s, ...
             options.ValidationStep_s, limits, options);
-        directBlocked = queryAzElTimeObstacle(workspace, ...
+        directBlocked = queryAzElTimeObstacle(obstacleField, ...
             [directValidationProfile.position_deg(:, 1); ...
             directProfile.position_deg(:, 1)], ...
             [directValidationProfile.position_deg(:, 2); ...
@@ -1556,7 +1882,7 @@ if directFound && options.Objective == "minimumAngularDistance"
     return;
 end
 
-%% Initialize the uniform-cost safe-interval graph
+%% Section 2: Initialize The Search Graph
 primitiveRadii_deg = unique(double(options.PrimitiveRadii_deg(:)));
 primitiveAngles_rad = deg2rad((0:options.DirectionStep_deg: ...
     360 - options.DirectionStep_deg).');
@@ -1600,7 +1926,7 @@ arrivalFrontier = struct( ...
 arrivalFrontier = pushArrivalFrontier( ...
     arrivalFrontier, startIndex, startState.time_s);
 
-%% Propagate earliest-arrival labels with Dijkstra
+%% Section 3: Run Dijkstra
 expanded = 0;
 generated = 1;
 goalIndex = 0;
@@ -1645,7 +1971,7 @@ while arrivalFrontier.Count > 0
 
     expanded = expanded + 1;
     [currentIntervals, safeCache, safeQueryCount] = safeIntervalsAt( ...
-        currentPosition, workspace, eventTimes, limits, options, ...
+        currentPosition, obstacleField, eventTimes, limits, options, ...
         safeCache, safeQueryCount);
     currentSafe = currentIntervals(currentIntervalIndex, :);
     candidates = currentPosition + offsets;
@@ -1703,7 +2029,7 @@ while arrivalFrontier.Count > 0
             end
         end
         [candidateIntervals, safeCache, safeQueryCount] = safeIntervalsAt( ...
-            candidatePosition, workspace, ...
+            candidatePosition, obstacleField, ...
             eventTimes, limits, options, safeCache, safeQueryCount);
         if isempty(candidateIntervals)
             continue;
@@ -1723,13 +2049,16 @@ while arrivalFrontier.Count > 0
                 motionDuration = NaN;
                 candidateSafeStart_s = candidateSafe(1) - 1e-9;
                 candidateSafeEnd_s = candidateSafe(2) + 1e-9;
-                goalInsideCandidateInterval = stopState.time_s >= candidateSafeStart_s && ...
+                goalInsideCandidateInterval = ...
+                    stopState.time_s >= candidateSafeStart_s && ...
                     stopState.time_s <= candidateSafeEnd_s;
                 earliestTerminalDeparture_s = max( ...
                     nodes.ArrivalTime_s(currentIndex), currentSafe(1));
                 latestTerminalDeparture_s = min( ...
                     currentSafe(2), stopState.time_s - 1e-6);
-                terminalWindowIsOrdered = latestTerminalDeparture_s >= earliestTerminalDeparture_s;
+                terminalWindowIsOrdered = ...
+                    latestTerminalDeparture_s >= ...
+                    earliestTerminalDeparture_s;
                 if goalInsideCandidateInterval && terminalWindowIsOrdered
                     terminalEventCandidates_s = eventTimes( ...
                         eventTimes >= earliestTerminalDeparture_s & ...
@@ -1750,7 +2079,8 @@ while arrivalFrontier.Count > 0
                         retainedTerminalTrials = unique(round(linspace( ...
                             1, numel(terminalDepartureCandidates_s), ...
                             options.MaximumDepartureTrials)));
-                        terminalDepartureCandidates_s = terminalDepartureCandidates_s( ...
+                        terminalDepartureCandidates_s = ...
+                            terminalDepartureCandidates_s( ...
                             retainedTerminalTrials);
                     end
                     for terminalTrialIndex = 1:numel( ...
@@ -1760,12 +2090,15 @@ while arrivalFrontier.Count > 0
                         trialDuration_s = stopState.time_s - ...
                             trialDeparture_s;
                         maximumVelocity_deg_s = limits.maxVelocity_deg_s + 1e-9;
-                        maximumAcceleration_deg_s2 = limits.maxAcceleration_deg_s2 + 1e-9;
+                        maximumAcceleration_deg_s2 = ...
+                            limits.maxAcceleration_deg_s2 + 1e-9;
                         terminalVelocityIsValid = all(abs( ...
                             stopState.velocity_deg_s) <= maximumVelocity_deg_s);
-                        terminalAccelerationMagnitude_deg_s2 = abs(stopState.acceleration_deg_s2);
+                        terminalAccelerationMagnitude_deg_s2 = ...
+                            abs(stopState.acceleration_deg_s2);
                         terminalAccelerationIsValid = all( ...
-                            terminalAccelerationMagnitude_deg_s2 <= maximumAcceleration_deg_s2);
+                            terminalAccelerationMagnitude_deg_s2 <= ...
+                            maximumAcceleration_deg_s2);
                         terminalDynamicsInsideLimits = trialDuration_s > 0 && ...
                             terminalVelocityIsValid && ...
                             terminalAccelerationIsValid;
@@ -1805,15 +2138,23 @@ while arrivalFrontier.Count > 0
                         terminalPosition_deg = terminalProfile.position_deg;
                         minimumElevation_deg = limits.elevation_deg(1) - 1e-9;
                         maximumElevation_deg = limits.elevation_deg(2) + 1e-9;
-                        aboveMinimumElevation = terminalPosition_deg(:, 2) >= minimumElevation_deg;
-                        belowMaximumElevation = terminalPosition_deg(:, 2) <= maximumElevation_deg;
+                        aboveMinimumElevation = ...
+                            terminalPosition_deg(:, 2) >= ...
+                            minimumElevation_deg;
+                        belowMaximumElevation = ...
+                            terminalPosition_deg(:, 2) <= ...
+                            maximumElevation_deg;
                         terminalInsideLimits = aboveMinimumElevation & ...
                             belowMaximumElevation;
                         if ~options.AllowAzimuthWrap
                             minimumAzimuth_deg = limits.azimuth_deg(1) - 1e-9;
                             maximumAzimuth_deg = limits.azimuth_deg(2) + 1e-9;
-                            aboveMinimumAzimuth = terminalPosition_deg(:, 1) >= minimumAzimuth_deg;
-                            belowMaximumAzimuth = terminalPosition_deg(:, 1) <= maximumAzimuth_deg;
+                            aboveMinimumAzimuth = ...
+                                terminalPosition_deg(:, 1) >= ...
+                                minimumAzimuth_deg;
+                            belowMaximumAzimuth = ...
+                                terminalPosition_deg(:, 1) <= ...
+                                maximumAzimuth_deg;
                             terminalInsideLimits = terminalInsideLimits & ...
                                 aboveMinimumAzimuth & belowMaximumAzimuth;
                         end
@@ -1825,7 +2166,7 @@ while arrivalFrontier.Count > 0
                             terminalQueryPosition_deg(:, 1), ...
                             limits, options);
                         terminalBlocked = queryAzElTimeObstacle( ...
-                            workspace, ...
+                            obstacleField, ...
                             terminalQueryPosition_deg(:, 1), ...
                             terminalQueryPosition_deg(:, 2), ...
                             trialDeparture_s + terminalElapsed_s, ...
@@ -1841,7 +2182,7 @@ while arrivalFrontier.Count > 0
                 end
             else
                 [scheduled, departureTime, arrivalTime] = scheduleTransition( ...
-                    workspace, currentPosition, delta, ...
+                    obstacleField, currentPosition, delta, ...
                     nodes.ArrivalTime_s(currentIndex), currentSafe, ...
                     candidateSafe, motionDuration, motion, eventTimes, ...
                     limits, options);
@@ -1898,7 +2239,7 @@ if goalIndex == 0
     return;
 end
 
-%% Reconstruct and densely validate the selected route
+%% Section 4: Reconstruct & Validate The Route
 nodePath = zeros(128, 1, "uint32");
 nodePathCount = 0;
 pathNodeIndex = uint32(goalIndex);
@@ -1973,7 +2314,7 @@ validationProfile = makeRouteProfile( ...
 route.angularPathLength_deg = sum(hypot( ...
     diff(validationProfile.positionUnwrapped_deg(:, 1)), ...
     diff(validationProfile.positionUnwrapped_deg(:, 2))));
-blocked = queryAzElTimeObstacle(workspace, ...
+blocked = queryAzElTimeObstacle(obstacleField, ...
     [validationProfile.position_deg(:, 1); profile.position_deg(:, 1)], ...
     [validationProfile.position_deg(:, 2); profile.position_deg(:, 2)], ...
     [validationProfile.time_s; profile.time_s], ...
@@ -2014,7 +2355,30 @@ result = struct( ...
 end
 
 function [intervals, cache, queryCount] = safeIntervalsAt( ...
-        position, workspace, eventTimes, limits, options, cache, queryCount)
+        position, obstacleField, eventTimes, limits, options, cache, queryCount)
+%% Section 0: Header & Readme
+% SYNTAX
+%   [intervals, cache, queryCount] = safeIntervalsAt( ...
+%       position, obstacleField, eventTimes, limits, options, ...
+%       cache, queryCount)
+%**************************************************************************
+% PURPOSE
+%   - Classify and cache maximal safe time intervals at one position.
+%**************************************************************************
+% INPUTS
+%   - position, obstacleField, eventTimes, limits, options (query inputs)
+%       Spatial point, geometry, event grid, limits, and collision controls.
+%   - cache, queryCount (diagnostic state)
+%       Shared classification cache and cumulative query count.
+%**************************************************************************
+% OUTPUTS
+%   - intervals (numeric N-by-2 matrix)
+%       Inclusive safe interval bounds.
+%   - cache, queryCount (updated diagnostic state)
+%       Shared cache and count.
+%**************************************************************************
+% UNITS
+%   - Position is degrees and intervals/eventTimes are seconds.
 % Start, goal, and expanded nodes share this cache so one position has one
 % authoritative event classification throughout the search.
 key = positionKey(position, limits, options);
@@ -2022,7 +2386,7 @@ if isKey(cache, key)
     intervals = cache(key);
     return;
 end
-blocked = queryAzElTimeObstacle(workspace, ...
+blocked = queryAzElTimeObstacle(obstacleField, ...
     repmat(canonicalAzimuth(position(1), limits, options), ...
     numel(eventTimes), 1), ...
     repmat(position(2), numel(eventTimes), 1), ...
@@ -2039,8 +2403,32 @@ queryCount = queryCount + numel(eventTimes);
 end
 
 function [scheduled, departure, arrival] = scheduleTransition( ...
-        workspace, startPosition, delta, currentArrival, currentSafe, ...
+        obstacleField, startPosition, delta, currentArrival, currentSafe, ...
         candidateSafe, duration, motion, eventTimes, limits, options)
+%% Section 0: Header & Readme
+% SYNTAX
+%   [scheduled, departure, arrival] = scheduleTransition( ...
+%       obstacleField, startPosition, delta, currentArrival, ...
+%       currentSafe, candidateSafe, duration, motion, ...
+%       eventTimes, limits, options)
+%**************************************************************************
+% PURPOSE
+%   - Find the earliest collision-free departure for one motion primitive.
+%**************************************************************************
+% INPUTS
+%   - obstacleField, startPosition, delta, motion (motion inputs)
+%       Geometry and analytic primitive definition.
+%   - timing arguments, eventTimes, limits, options (search inputs)
+%       Safe windows, duration, event grid, limits, and controls.
+%**************************************************************************
+% OUTPUTS
+%   - scheduled (logical scalar)
+%       True when a feasible departure exists.
+%   - departure, arrival (numeric scalars)
+%       Selected transition times, or NaN on failure.
+%**************************************************************************
+% UNITS
+%   - Position/delta are degrees and all timing arguments are seconds.
 % Direct certification and graph expansion must apply identical waiting and
 % collision rules, so this shared transition scheduler prevents divergence.
 earliestDeparture_s = max(currentArrival, candidateSafe(1) - duration);
@@ -2109,7 +2497,8 @@ for batchStartIndex = 1:batchSize:numel(departureCandidates_s)
     packedTrialTime_s = vertcat(trialTime_s{:});
     packedTrialOwner = vertcat(trialOwner{:});
     trialBlocked = queryAzElTimeObstacle( ...
-        workspace, packedTrialAzimuth_deg, packedTrialElevation_deg, ...
+        obstacleField, packedTrialAzimuth_deg, ...
+        packedTrialElevation_deg, ...
         packedTrialTime_s, collisionOptions(options));
     collisionFreeCandidate = true(trialCount, 1);
     collisionFreeCandidate(unique( ...
@@ -2126,6 +2515,23 @@ end
 end
 
 function times = alignedTimes(firstTime_s, lastTime_s, step_s, originTime_s)
+%% Section 0: Header & Readme
+% SYNTAX
+%   times = alignedTimes(firstTime_s, lastTime_s, step_s, originTime_s)
+%**************************************************************************
+% PURPOSE
+%   - Select mission-clock samples inside one inclusive time interval.
+%**************************************************************************
+% INPUTS
+%   - firstTime_s, lastTime_s, step_s, originTime_s (numeric scalars)
+%       Interval, grid spacing, and grid origin.
+%**************************************************************************
+% OUTPUTS
+%   - times (numeric column vector)
+%       Aligned samples inside the interval.
+%**************************************************************************
+% UNITS
+%   - All inputs and output are seconds.
 % Every edge validator uses the same mission clock phase; duplicating this
 % rounding logic would reopen sample-grid aliasing gaps.
 firstIndex = ceil((firstTime_s - originTime_s) / step_s - 1e-10);
@@ -2139,6 +2545,28 @@ end
 
 function profile = makeRouteProfile( ...
         route, startTime, stopTime, sampleStep, limits, options)
+%% Section 0: Header & Readme
+% SYNTAX
+%   profile = makeRouteProfile( ...
+%       route, startTime, stopTime, sampleStep, limits, options)
+%**************************************************************************
+% PURPOSE
+%   - Reconstruct a safe-interval route on a requested uniform sample grid.
+%**************************************************************************
+% INPUTS
+%   - route (scalar struct)
+%       Waypoints, arrivals, departures, and terminal dynamics.
+%   - startTime, stopTime, sampleStep (numeric scalars)
+%       Output horizon and spacing.
+%   - limits, options (scalar structs)
+%       Dynamic limits and wrapping policy.
+%**************************************************************************
+% OUTPUTS
+%   - profile (scalar struct)
+%       Sampled position, velocity, acceleration, and waiting state.
+%**************************************************************************
+% UNITS
+%   - Angles are degrees and timing arguments are seconds.
 % Returned and validation profiles must reconstruct the same waits and
 % motion law at different sampling rates.
 time = (startTime:sampleStep:stopTime).';
@@ -2205,6 +2633,27 @@ profile = struct( ...
 end
 
 function [duration, motion] = segmentMotion(delta, limits)
+%% Section 0: Header & Readme
+% SYNTAX
+%   [duration, motion] = segmentMotion(delta, limits)
+%**************************************************************************
+% PURPOSE
+%   - Derive the shortest synchronized rest-to-rest two-axis slew.
+%**************************************************************************
+% INPUTS
+%   - delta (numeric two-vector)
+%       Signed axis displacement.
+%   - limits (scalar struct)
+%       Two-axis velocity and acceleration limits.
+%**************************************************************************
+% OUTPUTS
+%   - duration (nonnegative scalar)
+%       Synchronized slew duration.
+%   - motion (scalar struct)
+%       Normalized trapezoidal or triangular motion law.
+%**************************************************************************
+% UNITS
+%   - delta is degrees and duration is seconds.
 % Search edges and profile reconstruction share one synchronized two-axis
 % law so feasibility cannot change after route selection.
 absoluteDelta = abs(delta);
@@ -2241,6 +2690,28 @@ end
 
 function [progress, rate, acceleration] = segmentProgress( ...
         tau, duration, motion)
+%% Section 0: Header & Readme
+% SYNTAX
+%   [progress, rate, acceleration] = segmentProgress( ...
+%       tau, duration, motion)
+%**************************************************************************
+% PURPOSE
+%   - Evaluate normalized segment position, rate, and acceleration.
+%**************************************************************************
+% INPUTS
+%   - tau (numeric vector)
+%       Elapsed segment times.
+%   - duration (nonnegative scalar)
+%       Segment duration.
+%   - motion (scalar struct)
+%       Analytic normalized motion law.
+%**************************************************************************
+% OUTPUTS
+%   - progress, rate, acceleration (numeric vectors)
+%       Normalized motion samples.
+%**************************************************************************
+% UNITS
+%   - progress is dimensionless, rate is 1/s, acceleration is 1/s^2.
 % Collision checks and output derivatives must evaluate the exact same
 % normalized trapezoidal law.
 progress = zeros(size(tau));
@@ -2271,6 +2742,25 @@ progress(tau >= duration) = 1;
 end
 
 function yes = samePosition(firstPosition, secondPosition, limits, options)
+%% Section 0: Header & Readme
+% SYNTAX
+%   yes = samePosition(firstPosition, secondPosition, limits, options)
+%**************************************************************************
+% PURPOSE
+%   - Compare positions with the same wrapped displacement tolerance.
+%**************************************************************************
+% INPUTS
+%   - firstPosition, secondPosition (numeric two-vectors)
+%       Positions to compare.
+%   - limits, options (scalar structs)
+%       Azimuth span and wrapping policy.
+%**************************************************************************
+% OUTPUTS
+%   - yes (logical scalar)
+%       True when positions are equivalent.
+%**************************************************************************
+% UNITS
+%   - Position and comparison tolerance are degrees.
 % Start/goal tests and candidate deduplication require the same seam-aware
 % tolerance.
 delta = wrappedDelta(firstPosition, secondPosition, limits, options);
@@ -2278,6 +2768,25 @@ yes = hypot(delta(1), delta(2)) <= 1e-9;
 end
 
 function azimuth = canonicalAzimuth(azimuth, limits, options)
+%% Section 0: Header & Readme
+% SYNTAX
+%   azimuth = canonicalAzimuth(azimuth, limits, options)
+%**************************************************************************
+% PURPOSE
+%   - Map azimuth values into the configured periodic interval.
+%**************************************************************************
+% INPUTS
+%   - azimuth (numeric array)
+%       Possibly unwrapped values.
+%   - limits, options (scalar structs)
+%       Azimuth span and wrapping policy.
+%**************************************************************************
+% OUTPUTS
+%   - azimuth (numeric array)
+%       Canonical values.
+%**************************************************************************
+% UNITS
+%   - Azimuth and limits are degrees.
 % Cache keys, collision queries, and returned commands share this canonical
 % interval even though motion is reconstructed unwrapped.
 if options.AllowAzimuthWrap
@@ -2288,6 +2797,27 @@ end
 end
 
 function key = stateKey(position, interval, limits, options)
+%% Section 0: Header & Readme
+% SYNTAX
+%   key = stateKey(position, interval, limits, options)
+%**************************************************************************
+% PURPOSE
+%   - Build a deterministic cache key for a position-safe-interval state.
+%**************************************************************************
+% INPUTS
+%   - position (numeric two-vector)
+%       Spatial state.
+%   - interval (positive integer)
+%       Safe-interval index.
+%   - limits, options (scalar structs)
+%       Canonicalization policy.
+%**************************************************************************
+% OUTPUTS
+%   - key (character vector)
+%       Stable state key.
+%**************************************************************************
+% UNITS
+%   - Position is degrees; interval and output encoding are dimensionless.
 % Every frontier lookup must encode a spatial point and its safe interval
 % exactly like every insertion.
 key = sprintf('%s#%d', ...
@@ -2295,12 +2825,48 @@ key = sprintf('%s#%d', ...
 end
 
 function key = positionKey(position, limits, options)
+%% Section 0: Header & Readme
+% SYNTAX
+%   key = positionKey(position, limits, options)
+%**************************************************************************
+% PURPOSE
+%   - Build a deterministic cache key for one canonical position.
+%**************************************************************************
+% INPUTS
+%   - position (numeric two-vector)
+%       Spatial state.
+%   - limits, options (scalar structs)
+%       Canonicalization policy.
+%**************************************************************************
+% OUTPUTS
+%   - key (character vector)
+%       Stable position key.
+%**************************************************************************
+% UNITS
+%   - Position is degrees; output encoding is dimensionless.
 % Safe-interval caching and graph-state keys share this spatial encoding.
 azimuth = canonicalAzimuth(position(1), limits, options);
 key = sprintf('%.9f|%.9f', azimuth, position(2));
 end
 
 function queryOptions = collisionOptions(options)
+%% Section 0: Header & Readme
+% SYNTAX
+%   queryOptions = collisionOptions(options)
+%**************************************************************************
+% PURPOSE
+%   - Translate planner controls into the shared collision-query schema.
+%**************************************************************************
+% INPUTS
+%   - options (scalar struct)
+%       Resolved planner options.
+%**************************************************************************
+% OUTPUTS
+%   - queryOptions (scalar struct)
+%       Exact polygon query controls.
+%**************************************************************************
+% UNITS
+%   - SafetyMarginDeg is degrees; sample padding is dimensionless.
 % Every exploratory and final collision query must preserve identical
 % spatial margin and temporal padding.
 queryOptions = struct( ...
@@ -2311,6 +2877,28 @@ end
 
 function [nodes, index] = appendNode(nodes, position, interval, arrival, ...
         parent, departure, duration)
+%% Section 0: Header & Readme
+% SYNTAX
+%   [nodes, index] = appendNode( ...
+%       nodes, position, interval, arrival, parent, departure, duration)
+%**************************************************************************
+% PURPOSE
+%   - Append one geometrically grown safe-interval search node.
+%**************************************************************************
+% INPUTS
+%   - nodes (scalar packed struct)
+%       Parallel search-node arrays.
+%   - position, interval, arrival, parent, departure, duration (node values)
+%       Spatial, safe-interval, timing, and ancestry fields.
+%**************************************************************************
+% OUTPUTS
+%   - nodes (scalar packed struct)
+%       Updated arrays.
+%   - index (positive integer)
+%       Appended node index.
+%**************************************************************************
+% UNITS
+%   - Position is degrees and timing values are seconds.
 % Node creation occurs from multiple transition cases; one allocator keeps
 % the structure-of-arrays fields synchronized during growth.
 if nodes.Count >= size(nodes.PositionDeg, 1)
@@ -2335,6 +2923,26 @@ end
 
 function result = failedResult( ...
         message, eventTimes, cache, queryCount, elapsed, options)
+%% Section 0: Header & Readme
+% SYNTAX
+%   result = failedResult( ...
+%       message, eventTimes, cache, queryCount, elapsed, options)
+%**************************************************************************
+% PURPOSE
+%   - Assemble the shared failed safe-interval search schema.
+%**************************************************************************
+% INPUTS
+%   - message (scalar text)
+%       Failure explanation.
+%   - eventTimes, cache, queryCount, elapsed, options (diagnostic context)
+%       Event grid, cache, work counts, wall time, and resolved controls.
+%**************************************************************************
+% OUTPUTS
+%   - result (scalar struct)
+%       Failed dynamic-search result.
+%**************************************************************************
+% UNITS
+%   - Event times and elapsed are seconds.
 % All early exits expose one stable diagnostic schema to examples and tests.
 result = struct( ...
     "Success", false, ...
@@ -2356,6 +2964,27 @@ result = struct( ...
 end
 
 function frontier = pushArrivalFrontier(frontier, node, arrivalTime_s)
+%% Section 0: Header & Readme
+% SYNTAX
+%   frontier = pushArrivalFrontier(frontier, node, arrivalTime_s)
+%**************************************************************************
+% PURPOSE
+%   - Push one earliest-arrival label onto the dynamic binary min-heap.
+%**************************************************************************
+% INPUTS
+%   - frontier (scalar struct)
+%       Heap arrays, count, and serial state.
+%   - node (positive integer)
+%       Search-node index.
+%   - arrivalTime_s (numeric scalar)
+%       Earliest-arrival label.
+%**************************************************************************
+% OUTPUTS
+%   - frontier (scalar struct)
+%       Updated heap.
+%**************************************************************************
+% UNITS
+%   - arrivalTime_s is seconds; other values are dimensionless.
 % Push and pop share the comparison/swap helpers below so equal-cost labels
 % keep deterministic FIFO tie-breaking.
 if frontier.Count >= numel(frontier.Node)
@@ -2382,6 +3011,25 @@ end
 end
 
 function [frontier, node] = popArrivalFrontier(frontier)
+%% Section 0: Header & Readme
+% SYNTAX
+%   [frontier, node] = popArrivalFrontier(frontier)
+%**************************************************************************
+% PURPOSE
+%   - Remove the earliest dynamic frontier entry.
+%**************************************************************************
+% INPUTS
+%   - frontier (scalar struct)
+%       Nonempty arrival-time binary min-heap.
+%**************************************************************************
+% OUTPUTS
+%   - frontier (scalar struct)
+%       Updated heap.
+%   - node (positive integer)
+%       Removed search-node index.
+%**************************************************************************
+% UNITS
+%   - Stored arrival labels are seconds; outputs are otherwise dimensionless.
 % This is paired with pushArrivalFrontier and intentionally reuses the same
 % ordering primitive instead of duplicating heap rules.
 node = double(frontier.Node(1));
@@ -2411,6 +3059,26 @@ end
 
 function isLess = arrivalFrontierEntryIsLess( ...
         frontier, firstIndex, secondIndex)
+%% Section 0: Header & Readme
+% SYNTAX
+%   isLess = arrivalFrontierEntryIsLess( ...
+%       frontier, firstIndex, secondIndex)
+%**************************************************************************
+% PURPOSE
+%   - Compare dynamic heap entries by arrival time and serial order.
+%**************************************************************************
+% INPUTS
+%   - frontier (scalar struct)
+%       Heap arrays.
+%   - firstIndex, secondIndex (positive integers)
+%       Entries to compare.
+%**************************************************************************
+% OUTPUTS
+%   - isLess (logical scalar)
+%       True when the first entry precedes the second.
+%**************************************************************************
+% UNITS
+%   - Comparison result and indices are dimensionless.
 % Both heap directions depend on this single cost and serial ordering rule.
 firstArrivalTime_s = frontier.ArrivalTime_s(firstIndex);
 secondArrivalTime_s = frontier.ArrivalTime_s(secondIndex);
@@ -2424,6 +3092,26 @@ end
 
 function frontier = swapArrivalFrontierEntries( ...
         frontier, firstIndex, secondIndex)
+%% Section 0: Header & Readme
+% SYNTAX
+%   frontier = swapArrivalFrontierEntries( ...
+%       frontier, firstIndex, secondIndex)
+%**************************************************************************
+% PURPOSE
+%   - Swap every parallel array in two dynamic heap entries.
+%**************************************************************************
+% INPUTS
+%   - frontier (scalar struct)
+%       Heap arrays.
+%   - firstIndex, secondIndex (positive integers)
+%       Entries to exchange.
+%**************************************************************************
+% OUTPUTS
+%   - frontier (scalar struct)
+%       Updated heap.
+%**************************************************************************
+% UNITS
+%   - Indices are dimensionless; arrival-time units remain seconds.
 % Push and pop both swap three parallel arrays; centralizing it prevents
 % frontier corruption when the schema changes.
 fields = ["Node", "ArrivalTime_s", "Serial"];
@@ -2437,6 +3125,29 @@ end
 function profile = evaluateAzElBoundaryProfile( ...
         initialPosition, initialVelocity, initialAcceleration, ...
         goalPosition, goalVelocity, goalAcceleration, duration_s, tau_s)
+%% Section 0: Header & Readme
+% SYNTAX
+%   profile = evaluateAzElBoundaryProfile( ...
+%       initialPosition, initialVelocity, initialAcceleration, ...
+%       goalPosition, goalVelocity, goalAcceleration, duration_s, tau_s)
+%**************************************************************************
+% PURPOSE
+%   - Evaluate the shared quintic terminal boundary-value trajectory.
+%**************************************************************************
+% INPUTS
+%   - initial and goal position/velocity/acceleration (numeric two-vectors)
+%       Six terminal boundary conditions.
+%   - duration_s (positive scalar)
+%       Complete maneuver duration.
+%   - tau_s (numeric vector)
+%       Elapsed evaluation times.
+%**************************************************************************
+% OUTPUTS
+%   - profile (scalar struct)
+%       Position, velocity, acceleration, jerk, and coefficients.
+%**************************************************************************
+% UNITS
+%   - Angles are degrees and time is seconds.
 % Terminal feasibility and route reconstruction must evaluate the same
 % quintic boundary-value solution.
 validateattributes(duration_s, {'numeric'}, ...
@@ -2495,4 +3206,131 @@ profile = struct( ...
     "acceleration_deg_s2", accelerationBasis * coefficient, ...
     "jerk_deg_s3", jerkBasis * coefficient, ...
     "coefficient", coefficient);
+end
+
+function limits = normalizePlannerLimits(limits)
+%% Section 0: Header & Readme
+% SYNTAX
+%   limits = normalizePlannerLimits(limits)
+%**************************************************************************
+% PURPOSE
+%   - Apply one limits invariant to planning and explicit-default requests.
+%**************************************************************************
+% INPUTS
+%   - limits (scalar struct)
+%       Required angular ranges and two-axis dynamic limits.
+%**************************************************************************
+% OUTPUTS
+%   - limits (scalar struct)
+%       Validated row-oriented double values.
+%**************************************************************************
+% UNITS
+%   - Angular ranges are degrees, velocity is deg/s, and acceleration is
+%     deg/s^2.
+requiredLimitFields = ["azimuth_deg", "elevation_deg", ...
+    "maxVelocity_deg_s", "maxAcceleration_deg_s2"];
+hasRequiredLimits = isstruct(limits) && isscalar(limits) && ...
+    all(isfield(limits, cellstr(requiredLimitFields)));
+if ~hasRequiredLimits
+    error("planAzElDijkstra:InvalidLimits", ...
+        "limits is missing a required field.");
+end
+for limitField = requiredLimitFields
+    validateattributes(limits.(limitField), {'numeric'}, ...
+        {'vector', 'numel', 2, 'real', 'finite'});
+    limits.(limitField) = reshape(double(limits.(limitField)), 1, 2);
+end
+rangesIncrease = all(diff(limits.azimuth_deg) > 0) && ...
+    all(diff(limits.elevation_deg) > 0);
+dynamicsArePositive = all(limits.maxVelocity_deg_s > 0) && ...
+    all(limits.maxAcceleration_deg_s2 > 0);
+if ~rangesIncrease || ~dynamicsArePositive
+    error("planAzElDijkstra:InvalidLimits", ...
+        "Limit ranges must increase and dynamic limits must be positive.");
+end
+end
+
+function options = defaultAzElDijkstraOptions(limits)
+%% Section 0: Header & Readme
+% SYNTAX
+%   options = defaultAzElDijkstraOptions(limits)
+%**************************************************************************
+% PURPOSE
+%   - Keep argument-dependent Dijkstra defaults in one source of truth.
+%**************************************************************************
+% INPUTS
+%   - limits (validated scalar struct)
+%       Azimuth span determines whether wrapping is enabled by default.
+%**************************************************************************
+% OUTPUTS
+%   - options (scalar struct)
+%       Fully populated base options. Derived sampling defaults remain empty
+%       until the public function resolves them against other options.
+%**************************************************************************
+% UNITS
+%   - Unit-bearing option fields use _deg, _s, or their rate derivatives.
+options = struct( ...
+    "SampleTime_s", 0.5, ...
+    "ValidationStep_s", [], ...
+    "GridStep_deg", 1, ...
+    "GridStepSchedule_deg", [], ...
+    "PrimitiveRadii_deg", [], ...
+    "PrimitiveRadiusMultipliers", [1 2 4 8], ...
+    "DirectionStep_deg", 45, ...
+    "CollisionCheckStep_s", [], ...
+    "MaximumSafeIntervalSamples", 10000, ...
+    "MaximumDepartureTrials", 64, ...
+    "DepartureBatchSize", 8, ...
+    "MaxExpansions", 100000, ...
+    "MaxSearchTime_s", 45, ...
+    "InitialNodeCapacity", 4096, ...
+    "TimePaddingSamples", 1, ...
+    "SafetyMargin_deg", 0, ...
+    "AllowAzimuthWrap", diff(limits.azimuth_deg) >= 360 - 1e-9, ...
+    "AllowNonzeroTerminalState", false, ...
+    "PrintFailureSuggestions", true, ...
+    "Objective", "minimumAngularDistance", ...
+    "RouteShortcutStep_deg", 0.1, ...
+    "MaximumVerticesPerRegion", 500);
+end
+
+function plan = normalizeAzElDijkstraPlanSchema(plan)
+%% Section 0: Header & Readme
+% SYNTAX
+%   plan = normalizeAzElDijkstraPlanSchema(plan)
+%**************************************************************************
+% PURPOSE
+%   - Give static, dynamic, successful, and failed public plans the same
+%     diagnostic field set without overwriting branch-specific evidence.
+%**************************************************************************
+% INPUTS
+%   - plan (scalar struct)
+%       Partially assembled plan from any public exit path.
+%**************************************************************************
+% OUTPUTS
+%   - plan (scalar struct)
+%       Plan with every public diagnostic field present.
+%**************************************************************************
+% UNITS
+%   - Unit-bearing fields use degrees, seconds, or their rate derivatives.
+schemaDefaults = struct( ...
+    "topologyOptimalOnLattice", false, ...
+    "topologySearch", struct(), ...
+    "preShortcutRoute_deg", zeros(0, 2), ...
+    "routeShortcut", struct(), ...
+    "autonomousRoute_deg", zeros(0, 2), ...
+    "retiming", struct(), ...
+    "resolutionAttempts", struct([]), ...
+    "safeIntervalSearch", struct(), ...
+    "failureCategory", "", ...
+    "failureCause", "", ...
+    "failureSuggestions", strings(0, 1), ...
+    "failureSummary", "");
+schemaFieldNames = fieldnames(schemaDefaults);
+for fieldIndex = 1:numel(schemaFieldNames)
+    fieldName = schemaFieldNames{fieldIndex};
+    if ~isfield(plan, fieldName)
+        plan.(fieldName) = schemaDefaults.(fieldName);
+    end
+end
 end

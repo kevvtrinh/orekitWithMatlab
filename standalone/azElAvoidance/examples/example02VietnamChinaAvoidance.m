@@ -59,12 +59,12 @@ if ~plan.success
     error("example02VietnamChinaAvoidance:NoPath", ...
         "%s", plan.message);
 end
-if plan.workspace.ObstacleCount ~= 2
-    error("example02VietnamChinaAvoidance:WorkspaceMismatch", ...
+if plan.obstacleField.ObstacleCount ~= 2
+    error("example02VietnamChinaAvoidance:ObstacleFieldMismatch", ...
         "Expected two independently packed obstacles.");
 end
 
-names = string({plan.workspace.Obstacles.Name});
+names = string({plan.obstacleField.Obstacles.Name});
 fprintf("Packed obstacles: %s\n", strjoin(names, ", "));
 fprintf("Path length: %.3f deg (<= %.3fx global optimum).\n", ...
     plan.angularPathLength_deg, plan.suboptimalityBound);

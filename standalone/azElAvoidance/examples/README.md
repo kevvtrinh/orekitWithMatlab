@@ -9,7 +9,7 @@ addpath(genpath(root));
 
 Every numbered example uses the common combined animation, with current 2-D
 azimuth/elevation geometry beside the accumulated 3-D
-azimuth/elevation/time workspace.
+azimuth/elevation/time obstacle field.
 
 ## Algorithm Map
 

@@ -1,37 +1,51 @@
 function output = plotAzElPlanKinematics(plan, options)
-%PLOTAZELPLANKINEMATICS Plot and optionally export boresight kinematics.
-%
-% output = plotAzElPlanKinematics(plan)
-% output = plotAzElPlanKinematics(plan, options)
-%
-% The figure shows azimuth and elevation position, velocity, acceleration,
-% and sampled jerk. Jerk is the finite-difference derivative of the
-% planner's sampled acceleration command; it is not a jerk-limited motion
-% model.
-%
-% Options:
-%   ExportExcel   Write output.Data to an XLSX file (default false).
-%   ExcelFile     Output path (default az_el_plan_kinematics.xlsx).
-%   PositionMode  "unwrapped" or "wrapped" for the position plot.
-%   Figure        Existing figure handle, or empty to create one.
-%   FigureVisible Visibility for a new figure (default MATLAB setting).
-%   Title         Figure title.
+%% Section 0: Header & Readme
+% SYNTAX
+%   options = plotAzElPlanKinematics()
+%   output = plotAzElPlanKinematics(plan)
+%   output = plotAzElPlanKinematics(plan, options)
+%**************************************************************************
+% PURPOSE
+%   - Plot sampled position, velocity, acceleration, and finite-difference
+%     jerk, with optional XLSX export.
+%**************************************************************************
+% INPUTS
+%   - plan (scalar struct)
+%       Successful sampled boresight plan.
+%   - options (scalar struct)
+%       ExportExcel, ExcelFile, PositionMode, Figure, FigureVisible, and
+%       Title controls.
+%**************************************************************************
+% OUTPUTS
+%   - output (scalar struct)
+%       Data table, sampled jerk, graphics handles, export path, and resolved
+%       options. A zero-argument call returns default options.
+%**************************************************************************
+% UNITS
+%   - Position is degrees, time is seconds, velocity is deg/s,
+%     acceleration is deg/s^2, and sampled jerk is deg/s^3.
 
-%% Normalize options
-if nargin < 2
+%% Section 1: Validate Inputs & Apply Defaults
+defaultOptions = defaultPlotAzElPlanKinematicsOptions();
+if nargin == 0
+    output = defaultOptions;
+    return;
+end
+if nargin < 2 || isempty(options)
     options = struct();
 end
 if ~isstruct(options) || ~isscalar(options)
     error("plotAzElPlanKinematics:InvalidOptions", ...
         "options must be a scalar struct.");
 end
-defaultOptions = struct( ...
-    "ExportExcel", false, ...
-    "ExcelFile", "", ...
-    "PositionMode", "unwrapped", ...
-    "Figure", [], ...
-    "FigureVisible", string(get(groot, "DefaultFigureVisible")), ...
-    "Title", "Boresight az/el kinematics");
+unknownOptionFields = setdiff( ...
+    fieldnames(options), fieldnames(defaultOptions), "stable");
+if ~isempty(unknownOptionFields)
+    warning("plotAzElPlanKinematics:UnknownOptions", ...
+        "Ignoring unknown option fields: %s.", ...
+        strjoin(string(unknownOptionFields), ", "));
+    options = rmfield(options, unknownOptionFields);
+end
 defaultOptionFields = fieldnames(defaultOptions);
 for defaultOptionIndex = 1:numel(defaultOptionFields)
     defaultOptionField = defaultOptionFields{defaultOptionIndex};
@@ -70,7 +84,7 @@ if ~isscalar(options.ExcelFile)
         "ExcelFile must be a string scalar.");
 end
 
-%% Normalize the sampled command history
+%% Section 2: Normalize The Sampled Command
 requiredPlanFields = ["time_s", "position_deg", ...
     "velocity_deg_s", "acceleration_deg_s2"];
 if ~isstruct(plan) || ~isscalar(plan) || ...
@@ -104,7 +118,7 @@ else
     unwrapped(:, 1) = rad2deg(unwrap(deg2rad(wrapped(:, 1))));
 end
 
-%% Derive sampled jerk
+%% Section 3: Derive Sampled Jerk
 % Jerk is derived from returned acceleration samples. It is a sampled
 % diagnostic, not an independently constrained planner state.
 jerk = zeros(size(acceleration));
@@ -123,7 +137,7 @@ if sampleCount > 1
 end
 elapsedTime_s = time_s - time_s(1);
 
-%% Build the table and figure
+%% Section 4: Build The Table & Figure
 data = table( ...
     time_s, elapsedTime_s, ...
     wrapped(:, 1), wrapped(:, 2), ...
@@ -228,7 +242,28 @@ output = struct( ...
     "Options", options);
 end
 
+%% Section 5: Local Functions
 function plotPair(ax, time_s, values)
+%% Section 0: Header & Readme
+% SYNTAX
+%   plotPair(ax, time_s, values)
+%**************************************************************************
+% PURPOSE
+%   - Draw azimuth and elevation series with one shared panel style.
+%**************************************************************************
+% INPUTS
+%   - ax (axes handle)
+%       Destination axes.
+%   - time_s (numeric vector)
+%       Horizontal sample coordinates.
+%   - values (numeric matrix)
+%       Two sampled angular quantities.
+%**************************************************************************
+% OUTPUTS
+%   - None.
+%**************************************************************************
+% UNITS
+%   - time_s is seconds; value units are defined by the caller.
 % Every panel uses the same axis colors and presentation. Keeping this
 % repeated drawing primitive shared prevents one derivative panel drifting
 % from the others.
@@ -243,10 +278,57 @@ box(ax, "on");
 end
 
 function values = normalizeSamples(values, sampleCount, name)
+%% Section 0: Header & Readme
+% SYNTAX
+%   values = normalizeSamples(values, sampleCount, name)
+%**************************************************************************
+% PURPOSE
+%   - Enforce the shared finite N-by-2 sampled-plan shape.
+%**************************************************************************
+% INPUTS
+%   - values (numeric matrix)
+%       Samples to validate.
+%   - sampleCount (positive integer)
+%       Required row count.
+%   - name (text)
+%       Diagnostic argument name.
+%**************************************************************************
+% OUTPUTS
+%   - values (double matrix)
+%       Validated samples.
+%**************************************************************************
+% UNITS
+%   - Units are carried by the caller and argument name.
 % Position, velocity, acceleration, and optional unwrapped position all
 % require the same N-by-2 finite sample contract.
 validateattributes(values, {'numeric'}, ...
     {'2d', 'nrows', sampleCount, 'ncols', 2, ...
     'real', 'finite'}, mfilename, name);
 values = double(values);
+end
+
+function options = defaultPlotAzElPlanKinematicsOptions()
+%% Section 0: Header & Readme
+% SYNTAX
+%   options = defaultPlotAzElPlanKinematicsOptions()
+%**************************************************************************
+% PURPOSE
+%   - Keep plotting and export defaults in one source of truth.
+%**************************************************************************
+% INPUTS
+%   - None.
+%**************************************************************************
+% OUTPUTS
+%   - options (scalar struct)
+%       Fully populated kinematics-plot options.
+%**************************************************************************
+% UNITS
+%   - Options contain no numeric physical quantities.
+options = struct( ...
+    "ExportExcel", false, ...
+    "ExcelFile", "", ...
+    "PositionMode", "unwrapped", ...
+    "Figure", [], ...
+    "FigureVisible", string(get(groot, "DefaultFigureVisible")), ...
+    "Title", "Boresight az/el kinematics");
 end

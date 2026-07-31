@@ -1,9 +1,24 @@
 function data = normalizeAzElTimeObstacleData(input)
-%NORMALIZEAZELTIMEOBSTACLEDATA Validate canonical azElData orientation.
-%
-% azElData is created by calculateAreaTargetAzEl and always contains:
-%   targetName, time_s, az_deg, el_deg, status
+%% Section 0: Header & Readme
+% SYNTAX
+%   data = normalizeAzElTimeObstacleData(input)
+%**************************************************************************
+% PURPOSE
+%   - Validate and column-normalize one canonical azElData record.
+%**************************************************************************
+% INPUTS
+%   - input (scalar struct)
+%       targetName, time_s, az_deg, el_deg, and status are required.
+%       Nonfinite paired boundary rows are preserved as region separators.
+%**************************************************************************
+% OUTPUTS
+%   - data (scalar struct)
+%       Validated canonical obstacle record with stable field order.
+%**************************************************************************
+% UNITS
+%   - az_deg and el_deg are degrees; time_s is seconds.
 
+%% Section 1: Validate Structure & Sample Time
 requiredFields = ["targetName", "time_s", "az_deg", "el_deg", "status"];
 if ~isstruct(input) || ~isscalar(input) || ...
         ~all(isfield(input, cellstr(requiredFields)))
@@ -27,6 +42,7 @@ if sampleCount == 0 || any(diff(time_s) <= 0)
     error("normalizeAzElTimeObstacleData:InvalidTime", ...
         "time_s must be nonempty and strictly increasing.");
 end
+%% Section 2: Validate Boundary Slices
 if ~iscell(input.az_deg) || ~iscell(input.el_deg) || ...
         numel(input.az_deg) ~= sampleCount || ...
         numel(input.el_deg) ~= sampleCount
@@ -52,9 +68,10 @@ for sampleIndex = 1:sampleCount
     el_deg{sampleIndex} = double(el_deg{sampleIndex}(:));
 end
 
+%% Section 3: Normalize Status & Assemble The Output
 status = string(input.status);
 % A scalar status is shorthand for a uniform history. Status is preserved
-% rather than interpreted here because the workspace builder owns the
+% rather than interpreted here because the obstacle-field builder owns the
 % policy for which labels produce active obstacle geometry.
 if isscalar(status)
     status = repmat(status, sampleCount, 1);

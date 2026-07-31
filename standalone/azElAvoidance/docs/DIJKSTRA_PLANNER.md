@@ -37,7 +37,7 @@ Time is the vertical coordinate.
 
 ```mermaid
 flowchart LR
-    A["azElData polygon slices"] --> B["Packed polygon workspace"]
+    A["azElData polygon slices"] --> B["Packed polygon obstacle field"]
     B --> C{"Geometry static?"}
     C -->|Yes| D["Progressive goal-rooted Dijkstra"]
     C -->|No| E["Progressive safe-interval Dijkstra"]
@@ -106,9 +106,9 @@ Each obstacle contains:
 Multiple scalar structs, struct arrays, cell arrays, and nested mixtures are
 accepted. Each scalar data struct is treated as one independent obstacle.
 
-## 2. From polygon slices to a workspace
+## 2. From polygon slices to an obstacle field
 
-`buildAzElTimeObstacleWorkspace` transforms `azElData` into a compact query
+`buildAzElTimeObstacleField` transforms `azElData` into a compact query
 structure.
 
 ![Workspace transformation](figures/01_workspace_transformation.png)
@@ -134,7 +134,7 @@ distant polygons by bounding box before performing point-in-polygon tests.
 
 ### 2.2 What is not built
 
-The workspace is not a dense 3-D Boolean array. No memory is reserved for
+The obstacle field is not a dense 3-D Boolean array. No memory is reserved for
 every possible `(azimuth, elevation, time)` voxel.
 
 This distinction is central:
@@ -216,7 +216,7 @@ in `plan.resolutionAttempts`.
 
 ## 4. Static-obstacle mode
 
-An obstacle workspace is considered static over the planning interval when
+An obstacle field is considered static over the planning interval when
 its polygon geometry does not change. Time then adds no new connectivity
 information, so the planner searches a 2-D graph.
 
@@ -233,7 +233,7 @@ q_{ij} =
 $$
 
 Each grid state is marked free or occupied by querying the packed polygon
-workspace. The search initially considers the eight neighboring grid states.
+field. The search initially considers the eight neighboring grid states.
 Diagonal corner-cutting through occupied cells is forbidden.
 
 ### 4.2 Goal-rooted cost propagation
@@ -640,7 +640,8 @@ Important fields in `plan` include:
 | `expandedNodeCount` | Total expanded nodes |
 | `searchElapsed_s` | Planner wall time |
 | `resolutionAttempts` | Result and candidate from every attempted level |
-| `workspace` | Packed obstacle workspace |
+| `obstacleField` | Packed obstacle field |
+| `workspace` | Deprecated compatibility alias for `obstacleField` |
 | `safeIntervalSearch` | Dynamic-search diagnostics |
 
 Plot or animate the result with:
@@ -740,7 +741,8 @@ The dominant dynamic costs are usually:
 | File | Responsibility |
 | --- | --- |
 | `planAzElDijkstra.m` | Public API, progressive schedule, inline static Dijkstra, shortening, and retiming |
-| `buildAzElTimeObstacleWorkspace.m` | Packs original polygon slices |
+| `buildAzElTimeObstacleField.m` | Packs original polygon slices |
+| `buildAzElTimeObstacleWorkspace.m` | Deprecated forwarding shim |
 | `queryAzElTimeObstacle.m` | Authoritative point/time collision query |
 | `planAzElDijkstra.m` local dynamic core | Dynamic safe-interval Dijkstra |
 | `animateAzElAvoidancePlan.m` | 2-D and 3-D route animation |

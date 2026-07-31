@@ -130,8 +130,40 @@ verifyEqual(testCase, ...
 verifyPlan(testCase, plan);
 end
 
+function testObstacleFieldMigrationAndDefaults(testCase)
+time_s = [0; 10];
+data = makeAzElObstacleData("remote", time_s, ...
+    [40; 45; 45; 40; 40], [20; 20; 25; 25; 20]);
+
+fieldOptions = buildAzElTimeObstacleField();
+verifyEqual(testCase, fieldOptions.MaximumVerticesPerRegion, 64);
+obstacleField = buildAzElTimeObstacleField(data);
+verifyEqual(testCase, obstacleField.Format, "AzElTimeObstacleField");
+
+forwardedField = buildAzElTimeObstacleWorkspace(data);
+verifyEqual(testCase, forwardedField.Format, "AzElTimeObstacleField");
+verifyEqual(testCase, forwardedField.Obstacles, obstacleField.Obstacles);
+
+legacyField = obstacleField;
+legacyField.Format = "AzElTimeObstacleWorkspace";
+verifyFalse(testCase, queryAzElTimeObstacle( ...
+    legacyField, 0, 0, 5));
+queryOptions = queryAzElTimeObstacle();
+verifyEqual(testCase, queryOptions.CollisionMode, "polygon");
+
+[startState, stopState, limits] = standardProblem(10);
+plannerDefaults = planAzElDijkstra(limits, "defaults");
+verifyTrue(testCase, isfield(plannerDefaults, "AllowAzimuthWrap"));
+plan = planAzElDijkstra(obstacleField, startState, stopState, limits, ...
+    struct("GridStep_deg", 5, "GridStepSchedule_deg", 5, ...
+    "MaxSearchTime_s", 5, "PrintFailureSuggestions", false));
+verifyTrue(testCase, isfield(plan, "obstacleField"));
+verifyTrue(testCase, isfield(plan, "workspace"));
+verifyEqual(testCase, plan.workspace, plan.obstacleField);
+end
+
 function verifyPlan(testCase, plan)
-blocked = queryAzElTimeObstacle(plan.workspace, ...
+blocked = queryAzElTimeObstacle(plan.obstacleField, ...
     plan.position_deg(:, 1), plan.position_deg(:, 2), plan.time_s, ...
     struct( ...
     "SafetyMarginDeg", plan.options.SafetyMargin_deg, ...

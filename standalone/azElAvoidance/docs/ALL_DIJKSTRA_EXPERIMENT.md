@@ -9,7 +9,7 @@ supports both static and moving azimuth/elevation obstacles:
 - moving geometry uses forward Dijkstra on spatial-point/safe-interval
   states.
 
-The dynamic conversion changes only queue ordering. Workspace packing,
+The dynamic conversion changes only queue ordering. Obstacle-field packing,
 adaptive spatial resolutions, safe-interval compression, analytic slew
 edges, waiting, terminal capture, and authoritative polygon validation remain
 unchanged.

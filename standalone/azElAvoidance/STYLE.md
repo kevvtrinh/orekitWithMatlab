@@ -1,27 +1,149 @@
-# Standalone Library Style
+# Standalone Az/El Avoidance Style
 
-Apply these rules to planner, workspace, collision, visualization, example,
-and test code in this folder.
+This folder remains function-oriented. Packed obstacle data and planner results
+are structures; no class definitions or handle wrappers belong in this folder.
+Keep the main algorithm inline and in execution order. Retain a local helper
+only when several call sites share a nontrivial invariant or when folding it
+into the caller would obscure the main algorithm.
 
-1. Keep the core algorithm inline in its main function and in execution
-   order. Use section comments to mark substantial stages.
-2. Fold a local helper into its caller when it has one call site. Fold a
-   single-caller file into its caller unless that file is a public API.
-3. Keep a helper only when multiple call sites share a nontrivial invariant
-   and duplicating it would create a fix-one-copy risk. State that reason in
-   a short comment near the helper.
-4. Use variable names that identify the represented quantity and units.
-   Avoid generic names such as `k`, `n`, `start`, `stop`, and `length` when
-   a diagnostic name is available.
-5. Do not end an assignment or comparison with `= ...`, `<= ...`, or a
-   similar operator followed by a continuation line. Keep the assigned
-   expression on that line or introduce a meaningful intermediate value.
-6. Do not use `cellfun` or `arrayfun`. Prefer explicit loops or direct
-   vectorized operations.
-7. Comments explain reasons, invariants, legitimate empty cases, diagnostic
-   meaning, and proof limitations. Do not narrate obvious assignments.
-8. Display decimation must never alter planner state, collision data, or
-   validation. Label visualization-only reductions where they occur.
+## 1. Function headers
 
-Public entry points may remain separate even when one internal caller uses
-them because their file boundary is part of the supported library API.
+Every function begins immediately after its declaration with:
+
+```matlab
+%% Section 0: Header & Readme
+```
+
+The help block lists every supported call form under `SYNTAX`, followed by the
+four required sections in this order: `PURPOSE`, `INPUTS`, `OUTPUTS`, and
+`UNITS`. The separator is `%` followed by 74 asterisks. Purpose entries use
+`%   -` bullets. Arguments use `%   - name (type)`, with descriptions on the
+next line and structure fields nested one level deeper. Put caveats beside the
+argument or field they govern rather than in a separate notes section.
+
+## 2. Executable sections
+
+Top-level sections use numbered, title-cased headings in execution order:
+
+```matlab
+%% Section 1: Validate Inputs & Apply Defaults
+%% Section 2: Build The Search Representation
+%% Section 3: Run Dijkstra
+%% Section 4: Assemble The Output
+%% Section 5: Local Functions
+```
+
+Do not place `%%` sections inside loops or conditionals. Use dashed comments
+for internal stages:
+
+```matlab
+% --- Broad-Phase Reject Box ---------------------------------------
+```
+
+A short helper that reads as one idea needs no executable sections.
+
+## 3. Naming and units
+
+Spell words out. Use `maximumVertices`, not `maxVerts`, and
+`neighborElevationIndex`, not `nbrElIdx`. Physical quantities carry unit
+suffixes:
+
+| Suffix | Meaning |
+| --- | --- |
+| `_deg` | degrees |
+| `_s` | seconds |
+| `_deg_s` | degrees per second |
+| `_deg_s2` | degrees per second squared |
+| `_deg2` | degrees squared |
+| `_1_deg` | per degree |
+| `_rad` | radians |
+| `_rad_s` | radians per second |
+
+Dimensionless values have no suffix. Boolean names read as assertions, such as
+`isUniformTime`, `edgeHasLength`, and `terminalDynamicsAreInsideLimits`.
+
+The packed container is `obstacleField`, with plural members such as
+`obstacleField.Obstacles`. Public planner fields use lower camel case. Packed
+records and diagnostic records use Pascal case.
+
+Error and warning identifiers use the emitting function and a Pascal-case
+problem name:
+
+```matlab
+error("buildAzElTimeObstacleField:BoundaryCountMismatch", ...)
+warning("smoothAzElPlan:PathLengthIncreased", ...)
+```
+
+## 4. Options structures
+
+A public function with argument-independent defaults supports a zero-argument
+call that returns a fully populated options structure. One local defaults
+function is the only source of truth. Partial structures remain valid; omitted
+or empty fields receive defaults. Unknown fields warn once and are ignored.
+Echo resolved options on the returned record.
+
+When defaults depend on an argument, support an explicit defaults request:
+
+```matlab
+options = planAzElDijkstra(limits, "defaults");
+```
+
+## 5. Validation
+
+Validate conditions whose failure would otherwise be silent or appear far
+downstream: required fields, structural types, strictly increasing time,
+algorithm-dependent domains, and bounds that would silently discard data.
+Use `validateattributes` for numeric arguments and explicit identified errors
+for structural failures. Include the affected index and actual counts or values
+when useful.
+
+Do not duplicate expensive validation already performed naturally by the main
+packing or search loop. State deliberate tolerance of ragged or nonfinite input
+where the behavior is not obvious.
+
+## 6. Warnings
+
+Warn when geometry, samples, or requested behavior are silently reduced,
+dropped, or ignored and the return value alone would not reveal it. Accumulate
+counts inside loops and warn once per obstacle or result. State the consequence,
+not merely the event. Distinguish an expected tradeoff from an implementation
+defect.
+
+## 7. Comments
+
+Comments explain why, the invariant being protected, or the consequence of a
+choice. Do not narrate code that already states what it does. Explain every
+non-obvious tolerance, magic constant, and deliberate asymmetry at the point of
+use. A shared helper states which invariant would diverge if duplicated.
+
+## 8. Return schemas
+
+Every exit path returns the same public fields. Construct failures and empty
+results from one template helper. Preallocate record arrays from the same
+template. When final size is unknown, grow storage geometrically and trim once.
+
+## 9. Layout
+
+Target about 78 characters per line. Continue long expressions with `...` and
+indent continuations four spaces. Replace long multi-line conditions with named
+intermediate assertions when that improves debugging and readability.
+
+## 10. Renaming and migration
+
+A public rename keeps the previous spelling for one release. New plans expose
+`plan.obstacleField`; deprecated `plan.workspace` remains a compatibility alias.
+`buildAzElTimeObstacleWorkspace` forwards to
+`buildAzElTimeObstacleField`. Collision queries accept both the preferred and
+legacy packed-format tags. Mark every shim with `deprecated` so cleanup is one
+search.
+
+Automated replacement does not understand compatibility branches. Review diffs
+containing `isfield`, format-tag checks, and fallbacks by hand after every
+public rename.
+
+## 11. Data structures, not classes
+
+Keep packed obstacles and planner results as structures. Hoist packed arrays
+into local variables before inner loops rather than repeatedly dereferencing
+structure fields. Visualization consumes the same packed obstacle field used by
+collision checking so displayed geometry and collision geometry cannot diverge.

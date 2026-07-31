@@ -1,35 +1,51 @@
 function handles = animateAzElAvoidancePlan(azElData, plan, options)
-%ANIMATEAZELAVOIDANCEPLAN Animate a completed az/el avoidance plan.
-%
-% handles = animateAzElAvoidancePlan(azElData, plan)
-%
-% The combined view synchronizes the current moving obstacle boundary and
-% boresight in 2-D with accumulated obstacle slices and the traveled plan
-% in azimuth/elevation/time space. Playback is display-decimated only; the
-% plan and packed collision workspace retain every input sample.
-%
-% Options:
-%   ViewMode                 "2d", "3d", or "combined" (default).
-%   MaximumAnimationFrames   Display-frame cap (default 180).
-%   MaximumDisplayedSlices  3-D obstacle-slice cap (default 100).
-%   PauseSeconds             Pause after each frame (default 0.01).
-%   ShowFuturePath           Show the remaining path (default true).
-%   ShowObstacleSlices       Reveal accumulated 3-D slices (default true).
-%   ObstacleFaceAlpha        3-D slice opacity (default 0.08).
-%   ShowDiscretization       Backward-compatible master switch (default true).
-%   DiscretizationMode       "off", "final", or "build" (default "final").
-%   ShowCandidateRoutes      Show rejected valid routes (default true).
-%   MaximumDiscretizationLines  Per-axis lattice-line cap (default 40).
-%   MaximumDiscretizationTimePlanes  3-D time-plane cap (default 6).
-%   MaximumDiscretizationEdges  Per-tree edge display cap (default 2000).
-%   ShowPlanningSummary       Coordinate input, workspace, search, and
-%                             selection playback (default false).
-%   MovingTarget             Optional struct with time_s and position_deg.
-%   FigureVisible            "on" or "off" (default "on").
+%% Section 0: Header & Readme
+% SYNTAX
+%   options = animateAzElAvoidancePlan()
+%   handles = animateAzElAvoidancePlan(azElData, plan)
+%   handles = animateAzElAvoidancePlan(azElData, plan, options)
+%**************************************************************************
+% PURPOSE
+%   - Animate synchronized 2-D and 3-D views of the authoritative obstacle
+%     field, search diagnostics, and sampled boresight command.
+%**************************************************************************
+% INPUTS
+%   - azElData (canonical obstacle data)
+%       Source polygons used when the plan has no packed obstacle field.
+%   - plan (scalar struct)
+%       Planner result with sampled command and collision representation.
+%   - options (scalar struct)
+%       View, display-decimation, playback, and figure controls.
+%**************************************************************************
+% OUTPUTS
+%   - handles (scalar struct)
+%       Figure, axes, animated graphics, resolved options, and display
+%       sampling diagnostics. A zero-argument call returns default options.
+%**************************************************************************
+% UNITS
+%   - Plan position is degrees and plan time is seconds.
+%   - PauseSeconds is seconds; ObstacleFaceAlpha is dimensionless.
 
-%% Normalize display options
-if nargin < 3
+%% Section 1: Validate Inputs & Apply Defaults
+defaultOptions = defaultAnimateAzElAvoidancePlanOptions();
+if nargin == 0
+    handles = defaultOptions;
+    return;
+end
+if nargin < 3 || isempty(options)
     options = struct();
+end
+if ~isstruct(options) || ~isscalar(options)
+    error("animateAzElAvoidancePlan:InvalidOptions", ...
+        "options must be a scalar struct.");
+end
+unknownOptionFields = setdiff( ...
+    fieldnames(options), fieldnames(defaultOptions), "stable");
+if ~isempty(unknownOptionFields)
+    warning("animateAzElAvoidancePlan:UnknownOptions", ...
+        "Ignoring unknown option fields: %s.", ...
+        strjoin(string(unknownOptionFields), ", "));
+    options = rmfield(options, unknownOptionFields);
 end
 callerSpecifiedDiscretizationMode = isfield( ...
     options, "DiscretizationMode") && ...
@@ -43,24 +59,6 @@ callerSpecifiedCandidateRoutes = isfield( ...
 % Empty caller fields intentionally mean "use the library default." This
 % lets examples override only the display choices they care about without
 % copying a second configuration contract that can drift from this one.
-defaultOptions = struct( ...
-    "ViewMode", "combined", ...
-    "MaximumAnimationFrames", 180, ...
-    "MaximumDisplayedSlices", 100, ...
-    "PauseSeconds", 0.01, ...
-    "ShowFuturePath", true, ...
-    "ShowObstacleSlices", true, ...
-    "ObstacleFaceAlpha", 0.08, ...
-    "ShowDiscretization", true, ...
-    "DiscretizationMode", "final", ...
-    "ShowCandidateRoutes", true, ...
-    "MaximumObstacleLegendEntries", 6, ...
-    "MaximumDiscretizationLines", 40, ...
-    "MaximumDiscretizationTimePlanes", 6, ...
-    "MaximumDiscretizationEdges", 2000, ...
-    "ShowPlanningSummary", false, ...
-    "MovingTarget", [], ...
-    "FigureVisible", "on");
 defaultOptionFields = fieldnames(defaultOptions);
 for defaultOptionIndex = 1:numel(defaultOptionFields)
     defaultOptionField = defaultOptionFields{defaultOptionIndex};
@@ -153,7 +151,7 @@ if ~isscalar(options.FigureVisible) || ...
         "FigureVisible must be on or off.");
 end
 
-%% Normalize obstacle and plan inputs
+%% Section 2: Normalize Obstacles & Plan
 % combineAzElObstacles preserves one logical obstacle per element. The cell
 % representation below is deliberate: each obstacle can have a different
 % time base and a different number of vertices per slice.
@@ -177,18 +175,25 @@ if size(plan.position_deg, 1) ~= numel(plan.time_s)
     error("animateAzElAvoidancePlan:PlanSizeMismatch", ...
         "plan.position_deg must contain one row per time sample.");
 end
-if isfield(plan, "workspace") && isstruct(plan.workspace) && ...
-        isfield(plan.workspace, "Format") && ...
-        plan.workspace.Format == "AzElTimeObstacleWorkspace"
-    % A planner-owned workspace is already the exact collision model used
-    % to validate the route, so displaying it avoids silently rebuilding a
-    % geometrically different view from lossy or transformed source data.
-    workspace = plan.workspace;
+hasPreferredObstacleField = isfield(plan, "obstacleField") && ...
+    isstruct(plan.obstacleField) && ...
+    isfield(plan.obstacleField, "Format") && ...
+    any(string(plan.obstacleField.Format) == [ ...
+    "AzElTimeObstacleField", "AzElTimeObstacleWorkspace"]);
+% deprecated: Read plan.workspace only during the compatibility window.
+hasLegacyWorkspace = isfield(plan, "workspace") && ...
+    isstruct(plan.workspace) && isfield(plan.workspace, "Format") && ...
+    any(string(plan.workspace.Format) == [ ...
+    "AzElTimeObstacleField", "AzElTimeObstacleWorkspace"]);
+if hasPreferredObstacleField
+    obstacleField = plan.obstacleField;
+elseif hasLegacyWorkspace
+    obstacleField = plan.workspace;
 else
-    workspace = buildAzElTimeObstacleWorkspace(dataList);
+    obstacleField = buildAzElTimeObstacleField(dataList);
 end
 
-%% Summarize the data-to-command planning chain
+%% Section 3: Summarize The Planning Chain
 inputTimeSampleCount = 0;
 for obstacleIndex = 1:numel(dataList)
     inputTimeSampleCount = inputTimeSampleCount + ...
@@ -196,11 +201,11 @@ for obstacleIndex = 1:numel(dataList)
 end
 packedSliceCount = 0;
 packedEdgeCount = 0;
-for obstacleIndex = 1:numel(workspace.Obstacles)
+for obstacleIndex = 1:numel(obstacleField.Obstacles)
     packedSliceCount = packedSliceCount + ...
-        double(workspace.Obstacles(obstacleIndex).SampleCount);
+        double(obstacleField.Obstacles(obstacleIndex).SampleCount);
     packedEdgeCount = packedEdgeCount + numel( ...
-        workspace.Obstacles(obstacleIndex).EdgeStartAzimuthDeg);
+        obstacleField.Obstacles(obstacleIndex).EdgeStartAzimuthDeg);
 end
 searchType = "planned route";
 if isfield(plan, "forwardTree") || isfield(plan, "backwardTree")
@@ -236,8 +241,8 @@ planningSummary = struct( ...
     "SelectedMethod", selectedMethod, ...
     "SelectedPathSampleCount", numel(plan.time_s));
 
-%% Create the synchronized figure
-% Frame decimation affects display only. The plan and collision workspace
+%% Section 4: Render The Animation
+% Frame decimation affects display only. The plan and collision obstacle field
 % retain all samples for analysis and validation. The final sample is always
 % present because linspace includes both ends.
 planSampleCount = numel(plan.time_s);
@@ -254,7 +259,7 @@ figureHandle = figure( ...
     "Visible", options.FigureVisible);
 
 azElAxes = gobjects(1);
-workspaceAxes = gobjects(1);
+obstacleFieldAxes = gobjects(1);
 switch options.ViewMode
     case "2d"
         layout = tiledlayout(figureHandle, 1, 1, ...
@@ -263,12 +268,12 @@ switch options.ViewMode
     case "3d"
         layout = tiledlayout(figureHandle, 1, 1, ...
             "TileSpacing", "compact", "Padding", "compact");
-        workspaceAxes = nexttile(layout);
+        obstacleFieldAxes = nexttile(layout);
     otherwise
         layout = tiledlayout(figureHandle, 1, 2, ...
             "TileSpacing", "compact", "Padding", "compact");
         azElAxes = nexttile(layout);
-        workspaceAxes = nexttile(layout);
+        obstacleFieldAxes = nexttile(layout);
 end
 summaryTitle = gobjects(1);
 if options.ShowPlanningSummary
@@ -314,9 +319,9 @@ if isgraphics(azElAxes)
     twoDimensional = initializeTwoDimensionalView( ...
         azElAxes, dataList, plan, colors, options);
 end
-if isgraphics(workspaceAxes)
+if isgraphics(obstacleFieldAxes)
     threeDimensional = initializeThreeDimensionalView( ...
-        workspaceAxes, workspace, dataList, plan, colors, options);
+        obstacleFieldAxes, obstacleField, dataList, plan, colors, options);
 end
 summaryDiscretizationData = twoDimensional.DiscretizationData;
 if isempty(summaryDiscretizationData)
@@ -330,7 +335,7 @@ for layerIndex = 1:numel(summaryDiscretizationData)
         layerSearchItemCount;
 end
 
-%% Animate display-decimated frames
+% --- Animate Display-Decimated Frames ------------------------------------
 completedFrameCount = 0;
 for frameNumber = 1:numel(frameIndices)
     if ~isgraphics(figureHandle)
@@ -345,7 +350,7 @@ for frameNumber = 1:numel(frameIndices)
             twoDimensional, dataList, plan, planIndex, ...
             currentTime_s, playbackProgress, isFinalFrame, options);
     end
-    if isgraphics(workspaceAxes)
+    if isgraphics(obstacleFieldAxes)
         updateThreeDimensionalView( ...
             threeDimensional, dataList, plan, planIndex, ...
             currentTime_s, playbackProgress, isFinalFrame, options);
@@ -379,7 +384,7 @@ for frameNumber = 1:numel(frameIndices)
                 planningSummary.ValidContenderCount);
         else
             summaryText = sprintf( ...
-                "azElData: %d obstacles | workspace: %d/%d slices, " + ...
+                "azElData: %d obstacles | obstacle field: %d/%d slices, " + ...
                 "%d packed edges | %s: %d/%d search items", ...
                 planningSummary.InputObstacleCount, ...
                 min(processedSliceCount, planningSummary.PackedSliceCount), ...
@@ -405,7 +410,8 @@ handles = struct( ...
     "Figure", figureHandle, ...
     "Layout", layout, ...
     "AzElAxes", azElAxes, ...
-    "WorkspaceAxes", workspaceAxes, ...
+    "ObstacleFieldAxes", obstacleFieldAxes, ...
+    "WorkspaceAxes", obstacleFieldAxes, ... % deprecated compatibility alias
     "TwoDimensional", twoDimensional, ...
     "ThreeDimensional", threeDimensional, ...
     "SummaryTitle", summaryTitle, ...
@@ -416,16 +422,37 @@ handles = struct( ...
     "Options", options);
 end
 
+%% Section 5: Local Functions
 % The 2-D view owns a distinct set of stable graphics handles. Keeping this
 % lifecycle boundary separate prevents frame updates from creating new
 % line objects, which is the dominant source of animation slowdown.
 function view = initializeTwoDimensionalView( ...
         ax, dataList, plan, colors, options)
+%% Section 0: Header & Readme
+% SYNTAX
+%   view = initializeTwoDimensionalView( ...
+%       ax, dataList, plan, colors, options)
+%**************************************************************************
+% PURPOSE
+%   - Allocate the stable graphics owned by the two-dimensional view.
+%**************************************************************************
+% INPUTS
+%   - ax (axes handle)
+%       Destination axes.
+%   - dataList, plan, colors, options (display inputs)
+%       Normalized obstacle data, plan, palette, and resolved controls.
+%**************************************************************************
+% OUTPUTS
+%   - view (scalar struct)
+%       Stable handles and reveal data used during playback.
+%**************************************************************************
+% UNITS
+%   - Plotted angular coordinates are degrees.
 hold(ax, "on");
 grid(ax, "on");
 box(ax, "on");
 
-%% Prepare 2-D lattice or RRT* tree playback layers
+%% Section 1: Prepare Search Layers
 emptyDiscretizationLayer = struct("XData", zeros(0, 1), ...
     "YData", zeros(0, 1), "ZData", zeros(0, 1), ...
     "RevealOrder", zeros(0, 1));
@@ -472,7 +499,7 @@ else
     end
 end
 
-%% Prepare valid but unselected candidate routes
+%% Section 2: Prepare Candidate & Selected Routes
 candidateRouteAttempts = candidateAttempts(plan, options);
 view.CandidateRoutes = gobjects(numel(candidateRouteAttempts), 1);
 candidateVisibility = visibility(~options.ShowPlanningSummary);
@@ -562,12 +589,32 @@ end
 % obstacle slices. It stays separate because those patch handles and their
 % reveal times have no 2-D equivalent.
 function viewState = initializeThreeDimensionalView( ...
-        ax, workspace, dataList, plan, colors, options)
+        ax, obstacleField, dataList, plan, colors, options)
+%% Section 0: Header & Readme
+% SYNTAX
+%   viewState = initializeThreeDimensionalView( ...
+%       ax, obstacleField, dataList, plan, colors, options)
+%**************************************************************************
+% PURPOSE
+%   - Allocate stable three-dimensional plan and obstacle-field graphics.
+%**************************************************************************
+% INPUTS
+%   - ax (axes handle)
+%       Destination axes.
+%   - obstacleField, dataList, plan, colors, options (display inputs)
+%       Packed geometry, source data, plan, palette, and resolved controls.
+%**************************************************************************
+% OUTPUTS
+%   - viewState (scalar struct)
+%       Stable handles, slice times, and reveal data.
+%**************************************************************************
+% UNITS
+%   - Horizontal coordinates are degrees and vertical time is seconds.
 hold(ax, "on");
 grid(ax, "on");
 box(ax, "on");
 
-%% Prepare 3-D lattice planes or RRT* tree playback layers
+%% Section 1: Prepare Search Layers
 emptyDiscretizationLayer = struct("XData", zeros(0, 1), ...
     "YData", zeros(0, 1), "ZData", zeros(0, 1), ...
     "RevealOrder", zeros(0, 1));
@@ -649,7 +696,7 @@ else
     end
 end
 
-%% Prepare valid but unselected candidate routes
+%% Section 2: Prepare Candidate & Selected Routes
 candidateRouteAttempts = candidateAttempts(plan, options);
 viewState.CandidateRoutes = gobjects(numel(candidateRouteAttempts), 1);
 candidateVisibility = visibility(~options.ShowPlanningSummary);
@@ -718,17 +765,17 @@ for obstacleIndex = 1:numel(dataList)
         "HandleVisibility", "off");
 end
 
-%% Pack display-decimated obstacle slices into stable patch handles
+%% Section 3: Pack Display-Decimated Obstacle Slices
 viewState.ObstacleSlices = gobjects(0, 1);
 viewState.ObstacleSliceTimes_s = zeros(0, 1);
 if options.ShowObstacleSlices && options.MaximumDisplayedSlices > 0
-    obstacleCount = numel(workspace.Obstacles);
+    obstacleCount = numel(obstacleField.Obstacles);
     % Share one global patch budget across obstacles. Adding an obstacle
     % must not multiply graphics cost while collision data stays complete.
     maximumSlicesPerObstacle = max(1, floor( ...
         options.MaximumDisplayedSlices / max(1, obstacleCount)));
     for obstacleIndex = 1:obstacleCount
-        obstacle = workspace.Obstacles(obstacleIndex);
+        obstacle = obstacleField.Obstacles(obstacleIndex);
         availableSamples = find(all(isfinite(obstacle.BoundsDeg), 2));
         if numel(availableSamples) <= maximumSlicesPerObstacle
             displayedSamples = availableSamples;
@@ -781,7 +828,7 @@ end
 xlabel(ax, "Azimuth (deg)");
 ylabel(ax, "Elevation (deg)");
 zlabel(ax, "Time (s)");
-title(ax, "Plan through az/el/time workspace");
+title(ax, "Plan through az/el/time obstacle field");
 applyAngularLimits(ax, plan);
 zlim(ax, expandedLimits(plan.time_s));
 view(ax, 38, 25);
@@ -792,6 +839,28 @@ end
 function updateTwoDimensionalView( ...
         view, dataList, plan, planIndex, currentTime_s, ...
         playbackProgress, isFinalFrame, options)
+%% Section 0: Header & Readme
+% SYNTAX
+%   updateTwoDimensionalView( ...
+%       view, dataList, plan, planIndex, currentTime_s, ...
+%       playbackProgress, isFinalFrame, options)
+%**************************************************************************
+% PURPOSE
+%   - Update existing two-dimensional graphics for one playback frame.
+%**************************************************************************
+% INPUTS
+%   - view, dataList, plan, options (display state)
+%       Stable handles and normalized source records.
+%   - planIndex, playbackProgress, isFinalFrame (frame state)
+%       Current sample, normalized progress, and terminal-frame assertion.
+%   - currentTime_s (numeric scalar)
+%       Current command time.
+%**************************************************************************
+% OUTPUTS
+%   - None.
+%**************************************************************************
+% UNITS
+%   - currentTime_s is seconds and plotted coordinates are degrees.
 updateDiscretizationDisplay(view.Discretization, ...
     view.DiscretizationData, playbackProgress, isFinalFrame, options);
 if options.ShowPlanningSummary
@@ -833,6 +902,28 @@ end
 function updateThreeDimensionalView( ...
         view, dataList, plan, planIndex, currentTime_s, ...
         playbackProgress, isFinalFrame, options)
+%% Section 0: Header & Readme
+% SYNTAX
+%   updateThreeDimensionalView( ...
+%       view, dataList, plan, planIndex, currentTime_s, ...
+%       playbackProgress, isFinalFrame, options)
+%**************************************************************************
+% PURPOSE
+%   - Update existing three-dimensional graphics for one playback frame.
+%**************************************************************************
+% INPUTS
+%   - view, dataList, plan, options (display state)
+%       Stable handles and normalized source records.
+%   - planIndex, playbackProgress, isFinalFrame (frame state)
+%       Current sample, normalized progress, and terminal-frame assertion.
+%   - currentTime_s (numeric scalar)
+%       Current command time.
+%**************************************************************************
+% OUTPUTS
+%   - None.
+%**************************************************************************
+% UNITS
+%   - currentTime_s is seconds and plotted coordinates are degrees.
 updateDiscretizationDisplay(view.Discretization, ...
     view.DiscretizationData, playbackProgress, isFinalFrame, options);
 if options.ShowPlanningSummary
@@ -886,10 +977,29 @@ if options.ShowObstacleSlices && ~isempty(view.ObstacleSlices)
     end
 end
 title(view.TraveledPath.Parent, sprintf( ...
-    "Az/el/time workspace at t = %.1f s", currentTime_s));
+    "Az/el/time obstacle field at t = %.1f s", currentTime_s));
 end
 
 function [azimuth, elevation, time_s] = segmentedPlan(plan, indices)
+%% Section 0: Header & Readme
+% SYNTAX
+%   [azimuth, elevation, time_s] = segmentedPlan(plan, indices)
+%**************************************************************************
+% PURPOSE
+%   - Insert NaN breaks where a wrapped plan crosses the azimuth seam.
+%**************************************************************************
+% INPUTS
+%   - plan (scalar struct)
+%       Sampled command.
+%   - indices (numeric vector)
+%       Samples to extract.
+%**************************************************************************
+% OUTPUTS
+%   - azimuth, elevation, time_s (numeric vectors)
+%       Plot-ready segmented coordinates.
+%**************************************************************************
+% UNITS
+%   - Angles are degrees and time_s is seconds.
 indices = reshape(indices, [], 1);
 azimuth = plan.position_deg(indices, 1);
 elevation = plan.position_deg(indices, 2);
@@ -903,6 +1013,25 @@ time_s(wrapBreak) = NaN;
 end
 
 function layers = searchTreeLayers(plan, options)
+%% Section 0: Header & Readme
+% SYNTAX
+%   layers = searchTreeLayers(plan, options)
+%**************************************************************************
+% PURPOSE
+%   - Convert supported search-tree diagnostics into shared display layers.
+%**************************************************************************
+% INPUTS
+%   - plan (scalar struct)
+%       Plan with optional forward and backward trees.
+%   - options (scalar struct)
+%       Display edge cap.
+%**************************************************************************
+% OUTPUTS
+%   - layers (struct array)
+%       Plot coordinates, colors, names, and reveal order.
+%**************************************************************************
+% UNITS
+%   - Angular coordinates are degrees and time coordinates are seconds.
 % Both views consume this extraction, so tree validation, display
 % decimation, and reveal order must remain identical in 2-D and 3-D.
 emptyTreeLayer = struct("XData", zeros(0, 1), ...
@@ -994,6 +1123,25 @@ end
 
 function updateDiscretizationDisplay( ...
         handles, layerData, playbackProgress, isFinalFrame, options)
+%% Section 0: Header & Readme
+% SYNTAX
+%   updateDiscretizationDisplay( ...
+%       handles, layerData, playbackProgress, isFinalFrame, options)
+%**************************************************************************
+% PURPOSE
+%   - Apply final/build reveal semantics to stable discretization graphics.
+%**************************************************************************
+% INPUTS
+%   - handles (graphics array)
+%       Existing layer graphics.
+%   - layerData, playbackProgress, isFinalFrame, options (display state)
+%       Plot data, normalized progress, terminal assertion, and controls.
+%**************************************************************************
+% OUTPUTS
+%   - None.
+%**************************************************************************
+% UNITS
+%   - playbackProgress is dimensionless; layer units follow their axes.
 % Both views use this updater so "final" and "build" have exactly the same
 % reveal semantics. Graphics state changes; planner diagnostics do not.
 if isempty(handles)
@@ -1046,6 +1194,25 @@ end
 end
 
 function attempts = candidateAttempts(plan, options)
+%% Section 0: Header & Readme
+% SYNTAX
+%   attempts = candidateAttempts(plan, options)
+%**************************************************************************
+% PURPOSE
+%   - Select successful but unchosen resolution attempts for display.
+%**************************************************************************
+% INPUTS
+%   - plan (scalar struct)
+%       Plan with optional resolutionAttempts diagnostics.
+%   - options (scalar struct)
+%       Candidate visibility control.
+%**************************************************************************
+% OUTPUTS
+%   - attempts (struct array)
+%       Valid unselected candidate records.
+%**************************************************************************
+% UNITS
+%   - Units follow the candidate diagnostic fields.
 attempts = struct([]);
 if ~options.ShowCandidateRoutes || ...
         ~isfield(plan, "resolutionAttempts") || ...
@@ -1074,6 +1241,25 @@ end
 
 function [azimuth, elevation, time_s] = segmentedCandidate( ...
         position, time_s)
+%% Section 0: Header & Readme
+% SYNTAX
+%   [azimuth, elevation, time_s] = segmentedCandidate(position, time_s)
+%**************************************************************************
+% PURPOSE
+%   - Insert NaN breaks where a candidate route crosses the azimuth seam.
+%**************************************************************************
+% INPUTS
+%   - position (numeric N-by-2 matrix)
+%       Candidate angular coordinates.
+%   - time_s (numeric vector)
+%       Candidate sample times.
+%**************************************************************************
+% OUTPUTS
+%   - azimuth, elevation, time_s (numeric vectors)
+%       Plot-ready segmented route.
+%**************************************************************************
+% UNITS
+%   - Angles are degrees and time_s is seconds.
 azimuth = position(:, 1);
 elevation = position(:, 2);
 if isempty(time_s)
@@ -1088,6 +1274,27 @@ time_s(wrapBreak) = NaN;
 end
 
 function [azimuth, elevation, step] = latticeLineData(plan, options)
+%% Section 0: Header & Readme
+% SYNTAX
+%   [azimuth, elevation, step] = latticeLineData(plan, options)
+%**************************************************************************
+% PURPOSE
+%   - Build display-decimated lattice line coordinates.
+%**************************************************************************
+% INPUTS
+%   - plan (scalar struct)
+%       Plan limits and selected grid step.
+%   - options (scalar struct)
+%       Maximum displayed lattice lines.
+%**************************************************************************
+% OUTPUTS
+%   - azimuth, elevation (numeric vectors)
+%       NaN-separated lattice line coordinates.
+%   - step (numeric scalar)
+%       Selected grid spacing.
+%**************************************************************************
+% UNITS
+%   - All outputs are degrees.
 azimuth = zeros(0, 1);
 elevation = zeros(0, 1);
 step = NaN;
@@ -1126,6 +1333,27 @@ end
 end
 
 function values = sampledGridValues(limits, step, maximumCount)
+%% Section 0: Header & Readme
+% SYNTAX
+%   values = sampledGridValues(limits, step, maximumCount)
+%**************************************************************************
+% PURPOSE
+%   - Include both grid bounds while honoring a display-only sample cap.
+%**************************************************************************
+% INPUTS
+%   - limits (numeric two-vector)
+%       Inclusive axis bounds.
+%   - step (positive numeric scalar)
+%       Nominal spacing.
+%   - maximumCount (positive integer)
+%       Display sample cap.
+%**************************************************************************
+% OUTPUTS
+%   - values (numeric vector)
+%       Decimated inclusive grid coordinates.
+%**************************************************************************
+% UNITS
+%   - limits, step, and values are degrees.
 values = limits(1):step:limits(2);
 if isempty(values) || values(end) < limits(2) - 1e-9
     values(end + 1) = limits(2);
@@ -1140,14 +1368,54 @@ values = double(values);
 end
 
 function sampleIndex = nearestSample(time_s, queryTime_s)
+%% Section 0: Header & Readme
+% SYNTAX
+%   sampleIndex = nearestSample(time_s, queryTime_s)
+%**************************************************************************
+% PURPOSE
+%   - Select the nearest piecewise-constant obstacle sample.
+%**************************************************************************
+% INPUTS
+%   - time_s (numeric vector)
+%       Obstacle sample times.
+%   - queryTime_s (numeric scalar)
+%       Playback time.
+%**************************************************************************
+% OUTPUTS
+%   - sampleIndex (positive integer)
+%       Nearest sample index.
+%**************************************************************************
+% UNITS
+%   - Both time inputs are seconds.
 % Nearest-neighbor selection matches the piecewise-constant obstacle
-% semantics used by the packed workspace. Interpolating polygon vertices
+% semantics used by the packed obstacle field. Interpolating polygon vertices
 % here would display geometry that collision checking never evaluated.
 [~, sampleIndex] = min(abs(time_s - queryTime_s));
 end
 
 function [position, past, pastTime] = movingTargetAtTime( ...
         target, queryTime_s)
+%% Section 0: Header & Readme
+% SYNTAX
+%   [position, past, pastTime] = movingTargetAtTime(target, queryTime_s)
+%**************************************************************************
+% PURPOSE
+%   - Interpolate a moving target and extract its traveled history.
+%**************************************************************************
+% INPUTS
+%   - target (scalar struct)
+%       time_s and position_deg samples.
+%   - queryTime_s (numeric scalar)
+%       Playback time.
+%**************************************************************************
+% OUTPUTS
+%   - position, past (numeric angular arrays)
+%       Current and historical target positions.
+%   - pastTime (numeric vector)
+%       Historical sample times.
+%**************************************************************************
+% UNITS
+%   - Position is degrees and time is seconds.
 position = interp1(target.time_s, target.position_deg, ...
     queryTime_s, "linear", "extrap");
 pastIndex = target.time_s <= queryTime_s;
@@ -1156,6 +1424,24 @@ past = [target.position_deg(pastIndex, :); position];
 end
 
 function applyAngularLimits(ax, plan)
+%% Section 0: Header & Readme
+% SYNTAX
+%   applyAngularLimits(ax, plan)
+%**************************************************************************
+% PURPOSE
+%   - Apply explicit plan limits or data-derived padded angular limits.
+%**************************************************************************
+% INPUTS
+%   - ax (axes handle)
+%       Axes to configure.
+%   - plan (scalar struct)
+%       Plan samples and optional limits.
+%**************************************************************************
+% OUTPUTS
+%   - None.
+%**************************************************************************
+% UNITS
+%   - Axis limits are degrees.
 if isfield(plan, "limits") && ...
         all(isfield(plan.limits, ["azimuth_deg", "elevation_deg"]))
     xlim(ax, plan.limits.azimuth_deg);
@@ -1167,6 +1453,23 @@ end
 end
 
 function limits = expandedLimits(values)
+%% Section 0: Header & Readme
+% SYNTAX
+%   limits = expandedLimits(values)
+%**************************************************************************
+% PURPOSE
+%   - Derive finite plotting limits with nonzero visual padding.
+%**************************************************************************
+% INPUTS
+%   - values (numeric array)
+%       Values whose finite range is required.
+%**************************************************************************
+% OUTPUTS
+%   - limits (numeric two-vector)
+%       Padded lower and upper limits.
+%**************************************************************************
+% UNITS
+%   - Output units match values.
 finite = values(isfinite(values));
 if isempty(finite)
     limits = [-1 1];
@@ -1182,6 +1485,25 @@ end
 end
 
 function value = logicalScalar(value, name)
+%% Section 0: Header & Readme
+% SYNTAX
+%   value = logicalScalar(value, name)
+%**************************************************************************
+% PURPOSE
+%   - Normalize a public 0/1 or logical display option.
+%**************************************************************************
+% INPUTS
+%   - value (logical or numeric scalar)
+%       Candidate assertion.
+%   - name (text)
+%       Diagnostic option name.
+%**************************************************************************
+% OUTPUTS
+%   - value (logical scalar)
+%       Validated assertion.
+%**************************************************************************
+% UNITS
+%   - value is dimensionless.
 % Shared by four flags so they all reject ambiguous truthy values such as
 % 2 or NaN instead of silently producing inconsistent display behavior.
 validateattributes(value, {'logical', 'numeric'}, {'scalar'});
@@ -1193,6 +1515,23 @@ value = logical(value);
 end
 
 function value = visibility(isVisible)
+%% Section 0: Header & Readme
+% SYNTAX
+%   value = visibility(isVisible)
+%**************************************************************************
+% PURPOSE
+%   - Convert a logical assertion to a MATLAB on/off property value.
+%**************************************************************************
+% INPUTS
+%   - isVisible (logical scalar)
+%       Requested graphics visibility.
+%**************************************************************************
+% OUTPUTS
+%   - value (string scalar)
+%       "on" or "off".
+%**************************************************************************
+% UNITS
+%   - Input and output are dimensionless.
 % MATLAB graphics properties require on/off text even though the public
 % options use logical scalars.
 if isVisible
@@ -1200,4 +1539,41 @@ if isVisible
 else
     value = "off";
 end
+end
+
+function options = defaultAnimateAzElAvoidancePlanOptions()
+%% Section 0: Header & Readme
+% SYNTAX
+%   options = defaultAnimateAzElAvoidancePlanOptions()
+%**************************************************************************
+% PURPOSE
+%   - Keep animation defaults in one source of truth.
+%**************************************************************************
+% INPUTS
+%   - None.
+%**************************************************************************
+% OUTPUTS
+%   - options (scalar struct)
+%       Fully populated animation options.
+%**************************************************************************
+% UNITS
+%   - PauseSeconds is seconds. ObstacleFaceAlpha is dimensionless.
+options = struct( ...
+    "ViewMode", "combined", ...
+    "MaximumAnimationFrames", 180, ...
+    "MaximumDisplayedSlices", 100, ...
+    "PauseSeconds", 0.01, ...
+    "ShowFuturePath", true, ...
+    "ShowObstacleSlices", true, ...
+    "ObstacleFaceAlpha", 0.08, ...
+    "ShowDiscretization", true, ...
+    "DiscretizationMode", "final", ...
+    "ShowCandidateRoutes", true, ...
+    "MaximumObstacleLegendEntries", 6, ...
+    "MaximumDiscretizationLines", 40, ...
+    "MaximumDiscretizationTimePlanes", 6, ...
+    "MaximumDiscretizationEdges", 2000, ...
+    "ShowPlanningSummary", false, ...
+    "MovingTarget", [], ...
+    "FigureVisible", "on");
 end

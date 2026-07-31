@@ -15,7 +15,7 @@ root = "C:\path\to\azElAvoidance";
 addpath(genpath(root))
 ```
 
-The package root contains the supported planners, workspace functions, and
+The package root contains the supported planners, obstacle-field functions, and
 visualizer. Planner implementation details are in `private`, runnable
 examples are in `examples`, scenario-only helpers are in `examples/support`,
 tests are in `tests`, and performance runners are in `benchmarks`.
@@ -62,8 +62,8 @@ azElData = combineAzElObstacles( ...
 azElData = [vietnamAzElData, chinaAzElData];
 azElData = {vietnamAzElData, chinaAzElData};
 
-workspace = buildAzElTimeObstacleWorkspace(azElData);
-assert(workspace.ObstacleCount == 2);
+obstacleField = buildAzElTimeObstacleField(azElData);
+assert(obstacleField.ObstacleCount == 2);
 ```
 
 The planner, collision query, static plot, and animation treat every element
@@ -120,7 +120,7 @@ plan = planAzElDijkstra( ...
 The steering command is in `plan.time_s` and `plan.position_deg`.
 `plan.positionUnwrapped_deg` preserves continuous azimuth across the
 `-180/180` seam. Velocity, acceleration, waiting samples, search statistics,
-and the packed obstacle workspace are also returned.
+and the packed obstacle field are also returned.
 
 Static obstacle volumes use progressive goal-rooted Dijkstra. Moving volumes
 use progressive event-compressed safe-interval Dijkstra. Both modes use
@@ -254,7 +254,7 @@ over the requested interval. At each requested grid spacing it then:
 6. validates the complete command against the packed polygons.
 
 `plan.topologySearch.CostToGoal_deg` and `SettledMask` expose the propagated
-workspace for diagnosis. Every value in `GridStepSchedule_deg` applies to the
+obstacle field for diagnosis. Every value in `GridStepSchedule_deg` applies to the
 complete az/el domain. There is no route-tube, supplied guide, preferred
 direction, or separate static planner entry point.
 
@@ -273,10 +273,10 @@ The 2-D pane shows the selected search lattice, every valid rejected resolution
 route, the selected route, current obstacle boundary, and current boresight.
 The 3-D pane places the same search information beside accumulating obstacle
 slices in azimuth/elevation/time space. Display decimation does not change
-the plan or collision workspace.
+the plan or collision obstacle field.
 
 `ShowPlanningSummary=true` coordinates those layers into a data-to-command
-playback. The heading reports the input `azElData`, packed workspace growth,
+playback. The heading reports the input `azElData`, packed field growth,
 search-structure growth, valid alternate routes, and final selected method.
 Contenders appear during selection and the final route is emphasized at the
 end. Dijkstra plans reveal their lattice. Plans that contain `forwardTree`
@@ -322,20 +322,25 @@ position, velocity, acceleration, and finite-difference jerk for both axes.
 Sampled jerk shows acceleration-command transitions; the planner does not
 currently impose a jerk limit.
 
-## Workspace and collision queries
+## Obstacle-field and collision queries
 
 Build once when many candidate paths will query the same obstacles:
 
 ```matlab
-workspace = buildAzElTimeObstacleWorkspace(azElData);
+obstacleField = buildAzElTimeObstacleField(azElData);
 
 occupied = queryAzElTimeObstacle( ...
-    workspace, azimuth_deg, elevation_deg, time_s, ...
+    obstacleField, azimuth_deg, elevation_deg, time_s, ...
     struct("SafetyMarginDeg", 1));
 ```
 
-The workspace packs all time slices into contiguous arrays. Display
+The obstacle field packs all time slices into contiguous arrays. Display
 decimation never affects collision queries.
+
+For one release, `buildAzElTimeObstacleWorkspace` forwards to the preferred
+builder, collision queries accept the legacy `AzElTimeObstacleWorkspace`
+format tag, and plans retain `plan.workspace` as a deprecated alias of
+`plan.obstacleField`.
 
 The continuous waypoint result reports a certified bound derived from the
 straight angular lower bound. Dynamic Dijkstra minimizes earliest arrival
