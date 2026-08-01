@@ -37,6 +37,18 @@ Examples 05-09 can be run as a set:
 results = runStaticGauntletExamples();
 ```
 
+## Learning Baseline
+
+`example_simple_azEl_time_kinodynamic_birrt` is intentionally outside the
+numbered mature-planner sequence. It creates a compact moving-polygon field,
+grows a forward initial tree and time-reversed destination tree, and plots
+both trees with the revalidated constant-jerk trajectory. Pass `false` to
+run it without creating a figure:
+
+```matlab
+plan = example_simple_azEl_time_kinodynamic_birrt(false);
+```
+
 ## Unified Planner
 
 Every fixed-goal example calls `planAzElDijkstra`, either directly or

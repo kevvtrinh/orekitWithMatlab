@@ -4,6 +4,28 @@ This folder is self-contained. It starts with `azElData` and does not use
 Orekit, a satellite scenario, or any repository startup function.
 Library edits follow the inline-first conventions in [`STYLE.md`](STYLE.md).
 
+The learning-oriented random-search baseline is
+[`planSimpleAzElTimeKinodynamicBiRRT.m`](planSimpleAzElTimeKinodynamicBiRRT.m).
+It keeps two inspectable seven-state trees: the initial tree grows forward
+with constant-jerk dynamics, while the destination tree uses the analytic
+inverse of the same step. Destination-tree controls are stored in their
+forward-time form, and every accepted result is reconstructed and checked
+again with the forward equations. It intentionally omits RRT* rewiring,
+informed sampling, smoothing, safe intervals, optimization-based steering,
+and all mature-planner acceleration structures.
+
+Run its deterministic moving-obstacle example with:
+
+```matlab
+[plan, handles] = example_simple_azEl_time_kinodynamic_birrt(true);
+```
+
+The returned `initialTree` and `destinationTree` expose state rows, parent
+indices, applied jerks, edge durations, and search directions. Collision
+checking samples each cubic constant-jerk edge at `CollisionCheckStep_s` and
+queries the original packed polygons; `continuousCollisionGuaranteed` is
+therefore deliberately false.
+
 Every numbered entry point in `examples` opens the synchronized combined animation:
 the current 2-D azimuth/elevation geometry is shown beside the accumulating
 3-D azimuth/elevation/time obstacle volume and steering path.
