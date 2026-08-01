@@ -26,8 +26,8 @@ It describes the state of the implementation on the `simpledjistra` branch.
 | Parent reconstruction | Complete | The destination parent chain is reversed into timed position, velocity, acceleration, jerk, waiting, and state-index arrays. |
 | Search and trajectory visualization | Complete | `plotSimpleAzElTimeKinodynamicDijkstra` shows generated/settled states, occupied space-time cells, the path, velocity, acceleration, jerk, and true holds. |
 | Small runnable example | Complete | `examples/example_simple_azEl_time_kinodynamic_dijkstra.m` uses a moving full-height gate and asserts that a true hold occurs. |
-| Focused verification | Complete | MATLAB tests cover rest-to-rest motion, a time-varying gate, and continuous unwrapped azimuth through the seam. |
-| Excluded advanced methods | Complete | No safe intervals, A*, heuristics, motion primitives, smoothing, optimization, topology refinement, custom heap, caching, or parallel processing was added. Grid refinement is the first explicitly requested post-baseline extension. |
+| Focused verification | Complete | MATLAB tests cover baseline propagation, moving obstacles, wrapping, position/time refinement, frontier equivalence, equal-cost ordering, lattice-compatible jerk, and intermediate limit enforcement. |
+| Excluded advanced methods | Complete | No safe intervals, A*, cost-changing heuristics, motion primitives, smoothing, optimization, topology refinement, caching, or parallel processing was added. The optional heap and equal-cost ordering preserve Dijkstra cost semantics and are disabled by default. |
 
 ## Post-baseline feature: position-grid refinement
 
@@ -45,6 +45,31 @@ This extension refines only the position grid. Time, velocity, acceleration,
 jerk commands, collision sampling, and terminal semantics remain unchanged.
 It deliberately does not introduce path corridors, heuristics, topology
 refinement, or cached search state between levels.
+
+## Later isolated features
+
+The subsequent compatibility work added four independently selectable
+features. Their exact implementation locations, guarantees, focused tests,
+and measured legacy-example results are recorded in
+[`SIMPLE_DIJKSTRA_EXAMPLE_COMPATIBILITY.md`](SIMPLE_DIJKSTRA_EXAMPLE_COMPATIBILITY.md).
+
+- `frontierMethod = "binaryHeap"` replaces only minimum-frontier selection
+  and cost decrease operations. Stable state-index ties reproduce scan order.
+- `equalCostTieBreaker = "destinationDistance"` orders only states whose
+  Dijkstra costs are exactly equal; it never promotes a higher-cost state.
+- `timeStepSchedule_s` runs independent coarse-to-fine time lattices and
+  exposes every attempt in `plan.timeRefinement.Levels`.
+- `jerkCommandMode = "latticeCompatible"` aligns default jerk commands to
+  whole acceleration-cell changes without exceeding physical jerk limits.
+- `pruneNonterminalFinalStates` exactly discards nonterminal states on the
+  final time slice before allocation.
+- `pruneDynamicallyUnreachableStates` builds obstacle-free per-axis backward
+  lattice tables and removes states with no remaining discrete jerk sequence.
+
+The scan frontier, state-index ties, one `timeStep_s`, and maximum-magnitude
+default jerk remain the public defaults. The optional frontier and tie-order
+experiments did not improve compatibility-suite outcomes and are not described
+as performance improvements.
 
 ## Deliberate first-version limitations
 
@@ -84,8 +109,9 @@ The implementation was checked against both the original specification and
 
 ## Verification record
 
-MATLAB `checkcode` reports zero findings for the planner, plotter, example,
-and focused test file. The focused test suite contains five passing tests:
+MATLAB `checkcode` reports zero findings for the planner and both new
+compatibility/focused test files. The focused test suite contains eleven passing
+tests:
 
 1. rest-to-rest kinodynamic propagation and dynamic limits;
 2. a moving full-height obstacle that produces a true hold;
@@ -95,3 +121,38 @@ and focused test file. The focused test suite contains five passing tests:
    successful `0.5 deg` lattice;
 5. rejection of a constant-jerk transition whose velocity exceeds its limit
    between two otherwise valid endpoint velocities.
+6. stable binary-heap equivalence with the visible scan frontier;
+7. equal-cost destination ordering preserving the Dijkstra result cost;
+8. coarse-to-fine `[2 1]` second time-grid refinement;
+9. lattice-compatible jerk commands producing whole acceleration-cell
+   changes within the physical jerk limit.
+10. exact final-slice pruning preserving solution/cost with fewer states;
+11. backward dynamic-reachability pruning preserving solution/cost with a
+    positive prune count and fewer generated states.
+
+## Legacy spiral regression status
+
+`tests/testSimpleDijkstraLegacySpiralScenarios.m` calls only
+`planSimpleAzElTimeKinodynamicDijkstra`. It reproduces or extracts legacy
+`azElData`, endpoint states, and physical limits without calling
+`planAzElDijkstra`, `runAzElGauntletCase`, safe intervals, guide paths, or
+topology search.
+
+The two success assertions are intentionally red at the current baseline:
+
+- The five-turn static spiral exhausts its reachable `1 deg`, 4-second
+  simple lattice after 27,062 expanded/generated states without a route.
+- The spinning-rod spiral reaches its configured 30,000 generated-state cap
+  after 24,096 expansions without a route.
+
+These tests prevent a mature-planner result from being mistaken for simple
+Dijkstra capability and provide explicit targets for later improvements.
+
+## Complete example compatibility status
+
+`tests/runSimpleDijkstraExampleCompatibility.m` now executes all fifteen
+numbered standalone example datasets plus the new simple moving-gate example.
+At the final tested feature stage, Examples 04, 06, and 08 pass in addition to
+the new simple example. The doubled legacy budgets, rotating-slots failure,
+alternating-slalom pass, and gradual feature reruns are recorded without omission in
+[`SIMPLE_DIJKSTRA_EXAMPLE_COMPATIBILITY.md`](SIMPLE_DIJKSTRA_EXAMPLE_COMPATIBILITY.md).
