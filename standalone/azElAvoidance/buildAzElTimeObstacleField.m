@@ -1,4 +1,5 @@
-function obstacleField = buildAzElTimeObstacleField(azElData, options)
+function obstacleField = buildAzElTimeObstacleField( ...
+        azElData, optionOverrides)
 %% Section 0: Header & Readme
 % SYNTAX
 %   options = buildAzElTimeObstacleField()
@@ -13,7 +14,7 @@ function obstacleField = buildAzElTimeObstacleField(azElData, options)
 %   - azElData (struct array or cell array)
 %       Canonical obstacle samples. Nested cells and struct arrays are
 %       flattened in caller order. NaN vertex rows separate polygon regions.
-%   - options (scalar struct)
+%   - optionOverrides (scalar struct)
 %       .MaximumVerticesPerRegion (positive integer or Inf)
 %           Boundary cap per region. Reduction is uniform index sampling.
 %       .ReferenceTime (datetime scalar)
@@ -34,45 +35,44 @@ if nargin == 0
     obstacleField = defaultOptions;
     return;
 end
-if nargin < 2 || isempty(options)
-    options = struct();
+if nargin < 2 || isempty(optionOverrides)
+    optionOverrides = struct();
 end
-if ~isstruct(options) || ~isscalar(options)
+if ~isstruct(optionOverrides) || ~isscalar(optionOverrides)
     error("buildAzElTimeObstacleField:InvalidOptions", ...
         "options must be a scalar struct.");
 end
 unknownOptionFields = setdiff( ...
-    fieldnames(options), fieldnames(defaultOptions), "stable");
+    fieldnames(optionOverrides), fieldnames(defaultOptions), "stable");
 if ~isempty(unknownOptionFields)
     warning("buildAzElTimeObstacleField:UnknownOptions", ...
         "Ignoring unknown option fields: %s.", ...
         strjoin(string(unknownOptionFields), ", "));
-    options = rmfield(options, unknownOptionFields);
+    optionOverrides = rmfield(optionOverrides, unknownOptionFields);
 end
 resolvedOptions = defaultOptions;
-providedOptionFields = fieldnames(options);
+providedOptionFields = fieldnames(optionOverrides);
 for optionIndex = 1:numel(providedOptionFields)
     optionName = providedOptionFields{optionIndex};
-    if ~isempty(options.(optionName))
-        resolvedOptions.(optionName) = options.(optionName);
+    if ~isempty(optionOverrides.(optionName))
+        resolvedOptions.(optionName) = optionOverrides.(optionName);
     end
 end
-options = resolvedOptions;
-validateattributes(options.MaximumVerticesPerRegion, {'numeric'}, ...
+validateattributes(resolvedOptions.MaximumVerticesPerRegion, {'numeric'}, ...
     {'scalar', 'real', 'positive'});
-if isfinite(options.MaximumVerticesPerRegion)
-    validateattributes(options.MaximumVerticesPerRegion, {'numeric'}, ...
+if isfinite(resolvedOptions.MaximumVerticesPerRegion)
+    validateattributes(resolvedOptions.MaximumVerticesPerRegion, {'numeric'}, ...
         {'integer', '>=', 4});
 end
-maximumVertices = options.MaximumVerticesPerRegion;
+maximumVerticesPerRegion = resolvedOptions.MaximumVerticesPerRegion;
 
 % The reference epoch is the one input still checked here, because
 % queryAzElTimeObstacle reads it from the obstacle field on every collision
 % query and a wrong-typed value there fails far from this file.
-if isempty(options.ReferenceTime)
+if isempty(resolvedOptions.ReferenceTime)
     referenceTime = datetime(1970, 1, 1, 0, 0, 0, "TimeZone", "UTC");
 else
-    referenceTime = options.ReferenceTime;
+    referenceTime = resolvedOptions.ReferenceTime;
     if ~isdatetime(referenceTime)
         error("buildAzElTimeObstacleField:InvalidTime", ...
             "Time must be a datetime vector.");
@@ -90,20 +90,16 @@ end
 tolerance_deg = 1e-12;
 
 %% Section 2: Normalize & Pack Obstacles
-azElData = combineAzElObstacles(azElData);
+canonicalObstacles = combineAzElObstacles(azElData);
 
 % combineAzElObstacles owns recursive flattening and returns a canonical
 % column array, so packing never needs a second compatibility branch.
-items = num2cell(azElData(:));
-
-% =========================================================================
-% Pack each obstacle
-% =========================================================================
-% Preallocating from emptyObstacle() fixes the field order so struct-array
-% assignment in the loop cannot fail.
-obstacles = repmat(emptyObstacle(), numel(items), 1);
-for obstacleIndex = 1:numel(items)
-    obstacleData = items{obstacleIndex};
+% The shared empty template fixes field order so struct-array assignment in
+% the loop cannot fail.
+packedObstacles = repmat( ...
+    emptyPackedObstacle(), numel(canonicalObstacles), 1);
+for obstacleIndex = 1:numel(canonicalObstacles)
+    obstacleData = canonicalObstacles(obstacleIndex);
     sliceTime_s = double(obstacleData.time_s(:));
     sliceCount = numel(sliceTime_s);
     reducedRegionCount = 0;
@@ -114,11 +110,10 @@ for obstacleIndex = 1:numel(items)
     % the packed arrays and the offset tables are both derived from the same
     % data, so they cannot describe different geometry.
     %
-    % DIAGNOSING A BAD SLICE: sliceVertexCounts(i) == 0 means slice i
-    % contributed nothing -- either it had no finite vertices at all, or
-    % every ring in it was too small to be a polygon. That slice is not an
-    % error; it packs as an empty CSR range and reads back as "no obstacle
-    % here at this time".
+    % DIAGNOSING A BAD SLICE: sliceVertexCounts(sliceIndex) == 0 means the
+    % slice contributed nothing, either because no paired finite vertices
+    % arrived or every ring was too small. It intentionally becomes an empty
+    % CSR range and therefore blocks no query at that sample.
     sliceAzimuthBuffer_deg = cell(sliceCount, 1);
     sliceElevationBuffer_deg = cell(sliceCount, 1);
     sliceEdgeBuffer_deg = cell(sliceCount, 1);
@@ -173,20 +168,25 @@ for obstacleIndex = 1:numel(items)
         keptEdgeTotal = 0;        % their combined edge count
 
         for ringIndex = 1:numel(ringFirstVertex)
-            ringRange = ringFirstVertex(ringIndex):ringLastVertex(ringIndex);
-            if numel(ringRange) < 3
+            firstRingVertex = ringFirstVertex(ringIndex);
+            lastRingVertex = ringLastVertex(ringIndex);
+            ringVertexRows = firstRingVertex:lastRingVertex;
+            if numel(ringVertexRows) < 3
                 droppedRegionCount = droppedRegionCount + 1;
                 continue;  % fewer than 3 vertices cannot form a polygon
             end
-            ringAzimuth_deg = inputAzimuth_deg(ringRange);
-            ringElevation_deg = inputElevation_deg(ringRange);
+            ringAzimuth_deg = inputAzimuth_deg(ringVertexRows);
+            ringElevation_deg = inputElevation_deg(ringVertexRows);
 
             % Cap the ring by uniform index subsampling. This is a storage
             % and performance control, NOT a geometric simplifier: it does
             % not preserve area or shape, it just thins vertices evenly. A
             % ring that arrives explicitly closed stays explicitly closed.
             inputRingSize = numel(ringAzimuth_deg);
-            if isfinite(maximumVertices) && inputRingSize > maximumVertices
+            hasFiniteVertexCap = isfinite(maximumVerticesPerRegion);
+            exceedsVertexCap = inputRingSize > maximumVerticesPerRegion;
+            shouldReduceRing = hasFiniteVertexCap && exceedsVertexCap;
+            if shouldReduceRing
                 reducedRegionCount = reducedRegionCount + 1;
                 % "Explicitly closed" means the last vertex repeats the
                 % first. Such a ring must keep that property, or the closing
@@ -199,10 +199,11 @@ for obstacleIndex = 1:numel(items)
                 if isExplicitlyClosed
                     % Thin the unique vertices only -- range stops one short
                     % of the duplicate closer -- then re-append the first
-                    % kept vertex. That is maximumVertices-1 unique plus 1
-                    % repeat, so the cap is still respected exactly.
+                    % kept vertex. That is one fewer unique vertex than the
+                    % cap plus one repeat, so the cap is respected exactly.
                     keptVertexIndex = round(linspace( ...
-                        1, inputRingSize - 1, maximumVertices - 1));
+                        1, inputRingSize - 1, ...
+                        maximumVerticesPerRegion - 1));
                     ringAzimuth_deg = [ ...
                         ringAzimuth_deg(keptVertexIndex); ...
                         ringAzimuth_deg(keptVertexIndex(1))];
@@ -211,7 +212,7 @@ for obstacleIndex = 1:numel(items)
                         ringElevation_deg(keptVertexIndex(1))];
                 else
                     keptVertexIndex = round(linspace( ...
-                        1, inputRingSize, maximumVertices));
+                        1, inputRingSize, maximumVerticesPerRegion));
                     ringAzimuth_deg = ringAzimuth_deg(keptVertexIndex);
                     ringElevation_deg = ...
                         ringElevation_deg(keptVertexIndex);
@@ -268,15 +269,14 @@ for obstacleIndex = 1:numel(items)
         sliceVertexAzimuth_deg = ...
             nan(keptVertexTotal + keptRingCount - 1, 1);
         sliceVertexElevation_deg = sliceVertexAzimuth_deg;
-        writeCursor = 1;
+        nextRingWriteRow = 1;
         for ringIndex = 1:keptRingCount
             ringSize = numel(keptRingAzimuth_deg{ringIndex});
-            ringSlots = writeCursor:writeCursor + ringSize - 1;
-            sliceVertexAzimuth_deg(ringSlots) = ...
-                keptRingAzimuth_deg{ringIndex};
-            sliceVertexElevation_deg(ringSlots) = ...
-                keptRingElevation_deg{ringIndex};
-            writeCursor = writeCursor + ringSize + 1;
+            lastRingWriteRow = nextRingWriteRow + ringSize - 1;
+            ringWriteRows = nextRingWriteRow:lastRingWriteRow;
+            sliceVertexAzimuth_deg(ringWriteRows) = keptRingAzimuth_deg{ringIndex};
+            sliceVertexElevation_deg(ringWriteRows) = keptRingElevation_deg{ringIndex};
+            nextRingWriteRow = nextRingWriteRow + ringSize + 1;
         end
 
         sliceAzimuthBuffer_deg{sliceIndex} = ...
@@ -292,14 +292,16 @@ for obstacleIndex = 1:numel(items)
     end
 
     % CSR-style offset tables. Slice i owns rows
-    % vertexOffsets(i) .. vertexOffsets(i+1)-1 of the packed arrays;
-    % vertexOffsets(end)-1 is the grand total; an empty slice leaves
-    % vertexOffsets(i) == vertexOffsets(i+1), i.e. a zero-width range.
+    % sliceVertexOffsets(i) .. sliceVertexOffsets(i+1)-1 of the packed
+    % arrays; an empty slice leaves equal adjacent offsets and therefore a
+    % zero-width range.
     % Offsets are 1-based to index MATLAB arrays directly.
-    vertexOffsets = ones(sliceCount + 1, 1, "uint64");
-    vertexOffsets(2:end) = uint64(1) + cumsum(uint64(sliceVertexCounts));
-    edgeOffsets = ones(sliceCount + 1, 1, "uint64");
-    edgeOffsets(2:end) = uint64(1) + cumsum(uint64(sliceEdgeCounts));
+    sliceVertexOffsets = ones(sliceCount + 1, 1, "uint64");
+    cumulativeVertexCounts = cumsum(uint64(sliceVertexCounts));
+    sliceVertexOffsets(2:end) = uint64(1) + cumulativeVertexCounts;
+    sliceEdgeOffsets = ones(sliceCount + 1, 1, "uint64");
+    cumulativeEdgeCounts = cumsum(uint64(sliceEdgeCounts));
+    sliceEdgeOffsets(2:end) = uint64(1) + cumulativeEdgeCounts;
 
     % Vertices support reconstruction and plotting; explicit edges support
     % the vectorized point-in-polygon and safety-margin narrow phases. The
@@ -320,60 +322,63 @@ for obstacleIndex = 1:numel(items)
     % relative tolerance absorbs floating-point noise across long missions
     % and the 1e-9 s floor covers steps near zero. NaN is the signal to fall
     % back to search-based lookup.
-    isUniformTime = true;
+    timeSamplesAreUniform = true;
     timeStep_s = NaN;
     if sliceCount >= 2
         adjacentTimeSteps_s = diff(sliceTime_s);
         timeStep_s = median(adjacentTimeSteps_s);
         timeStepTolerance_s = max(1e-9, abs(timeStep_s) * 1e-9);
-        isUniformTime = all( ...
+        timeSamplesAreUniform = all( ...
             abs(adjacentTimeSteps_s - timeStep_s) <= ...
             timeStepTolerance_s);
-        if ~isUniformTime
+        if ~timeSamplesAreUniform
             timeStep_s = NaN;
         end
     end
 
-    obstacle = emptyObstacle();
-    obstacle.Name = string(obstacleData.targetName);
-    obstacle.TimeSeconds = sliceTime_s;
-    obstacle.IsUniformTime = isUniformTime;
-    obstacle.TimeStepSeconds = timeStep_s;
-    obstacle.SliceOffsets = vertexOffsets;
-    obstacle.AzimuthDeg = packedAzimuth_deg;
-    obstacle.ElevationDeg = packedElevation_deg;
-    obstacle.EdgeOffsets = edgeOffsets;
-    obstacle.EdgeStartAzimuthDeg = packedEdges_deg(:, 1);
-    obstacle.EdgeStartElevationDeg = packedEdges_deg(:, 2);
-    obstacle.EdgeEndAzimuthDeg = packedEdges_deg(:, 3);
-    obstacle.EdgeEndElevationDeg = packedEdges_deg(:, 4);
-    obstacle.BoundsDeg = sliceBounds_deg;
-    obstacle.SampleCount = sliceCount;
-    obstacle.PackedVertexCount = numel(packedAzimuth_deg);
-    obstacle.PackedEdgeCount = size(packedEdges_deg, 1);
+    packedObstacle = emptyPackedObstacle();
+    packedObstacle.Name = string(obstacleData.targetName);
+    packedObstacle.TimeSeconds = sliceTime_s;
+    packedObstacle.IsUniformTime = timeSamplesAreUniform;
+    packedObstacle.TimeStepSeconds = timeStep_s;
+    packedObstacle.SliceOffsets = sliceVertexOffsets;
+    packedObstacle.AzimuthDeg = packedAzimuth_deg;
+    packedObstacle.ElevationDeg = packedElevation_deg;
+    packedObstacle.EdgeOffsets = sliceEdgeOffsets;
+    packedObstacle.EdgeStartAzimuthDeg = packedEdges_deg(:, 1);
+    packedObstacle.EdgeStartElevationDeg = packedEdges_deg(:, 2);
+    packedObstacle.EdgeEndAzimuthDeg = packedEdges_deg(:, 3);
+    packedObstacle.EdgeEndElevationDeg = packedEdges_deg(:, 4);
+    packedObstacle.BoundsDeg = sliceBounds_deg;
+    packedObstacle.SampleCount = sliceCount;
+    packedObstacle.PackedVertexCount = numel(packedAzimuth_deg);
+    packedObstacle.PackedEdgeCount = size(packedEdges_deg, 1);
     % Reported footprint: 8 bytes per double time and per uint64 offset,
     % 4 bytes per single geometry value.
-    doubleBytes = 8 * numel(obstacle.TimeSeconds) + 8 * ( ...
-        numel(obstacle.SliceOffsets) + numel(obstacle.EdgeOffsets));
-    singleBytes = 4 * ( ...
-        numel(obstacle.AzimuthDeg) + numel(obstacle.ElevationDeg) + ...
-        numel(obstacle.EdgeStartAzimuthDeg) + ...
-        numel(obstacle.EdgeStartElevationDeg) + ...
-        numel(obstacle.EdgeEndAzimuthDeg) + ...
-        numel(obstacle.EdgeEndElevationDeg) + numel(obstacle.BoundsDeg));
-    obstacle.EstimatedStorageBytes = doubleBytes + singleBytes;
-    obstacles(obstacleIndex) = obstacle;
+    doubleStorageBytes = 8 * numel(packedObstacle.TimeSeconds) + 8 * ( ...
+        numel(packedObstacle.SliceOffsets) + ...
+        numel(packedObstacle.EdgeOffsets));
+    singleStorageBytes = 4 * ( ...
+        numel(packedObstacle.AzimuthDeg) + ...
+        numel(packedObstacle.ElevationDeg) + ...
+        numel(packedObstacle.EdgeStartAzimuthDeg) + ...
+        numel(packedObstacle.EdgeStartElevationDeg) + ...
+        numel(packedObstacle.EdgeEndAzimuthDeg) + ...
+        numel(packedObstacle.EdgeEndElevationDeg) + ...
+        numel(packedObstacle.BoundsDeg));
+    packedObstacle.EstimatedStorageBytes = doubleStorageBytes + singleStorageBytes;
+    packedObstacles(obstacleIndex) = packedObstacle;
     if reducedRegionCount > 0
         warning("buildAzElTimeObstacleField:RegionsReduced", ...
             ["Obstacle %d (%s) uniformly reduced %d polygon regions; " ...
             "the packed collision boundary is an approximation."], ...
-            obstacleIndex, obstacle.Name, reducedRegionCount);
+            obstacleIndex, packedObstacle.Name, reducedRegionCount);
     end
     if droppedRegionCount > 0
         warning("buildAzElTimeObstacleField:RegionsDropped", ...
             ["Obstacle %d (%s) dropped %d regions with fewer than three " ...
             "usable vertices; those regions cannot block queries."], ...
-            obstacleIndex, obstacle.Name, droppedRegionCount);
+            obstacleIndex, packedObstacle.Name, droppedRegionCount);
     end
 end
 
@@ -383,18 +388,18 @@ obstacleField = struct();
 obstacleField.Format = "AzElTimeObstacleField";
 obstacleField.Version = 3;
 obstacleField.ReferenceTime = referenceTime;
-obstacleField.Obstacles = obstacles;
-obstacleField.ObstacleCount = numel(obstacles);
-obstacleField.Options = options;
-obstacleField.EstimatedStorageBytes = ...
-    sum([obstacles.EstimatedStorageBytes]);
+obstacleField.Obstacles = packedObstacles;
+obstacleField.ObstacleCount = numel(packedObstacles);
+obstacleField.Options = resolvedOptions;
+packedStorageBytes = [packedObstacles.EstimatedStorageBytes];
+obstacleField.EstimatedStorageBytes = sum(packedStorageBytes);
 end
 
 %% Section 4: Local Functions
-function obstacle = emptyObstacle()
+function packedObstacle = emptyPackedObstacle()
 %% Section 0: Header & Readme
 % SYNTAX
-%   obstacle = emptyObstacle()
+%   packedObstacle = emptyPackedObstacle()
 %**************************************************************************
 % PURPOSE
 %   - Define the single source of truth for one packed obstacle record.
@@ -403,7 +408,7 @@ function obstacle = emptyObstacle()
 %   - None.
 %**************************************************************************
 % OUTPUTS
-%   - obstacle (scalar struct)
+%   - packedObstacle (scalar struct)
 %       Empty packed obstacle record used for preallocation.
 %**************************************************************************
 % UNITS
@@ -412,7 +417,7 @@ function obstacle = emptyObstacle()
 % Serves both as the preallocation template (fixing field order for
 % struct-array assignment) and as documentation of every field. Offset
 % tables begin as the single sentinel value 1: an empty CSR table.
-obstacle = struct( ...
+packedObstacle = struct( ...
     "Name", "", ...                   % obstacle display name
     "TimeSeconds", zeros(0, 1), ...   % slice sample times (s)
     "IsUniformTime", false, ...       % constant time step?

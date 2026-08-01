@@ -1,9 +1,9 @@
-function obstacles = combineAzElObstacles(varargin)
+function azElObstacles = combineAzElObstacles(varargin)
 %% Section 0: Header & Readme
 % SYNTAX
-%   obstacles = combineAzElObstacles(obstacle1, obstacle2, ...)
-%   obstacles = combineAzElObstacles(obstacleArray)
-%   obstacles = combineAzElObstacles(nestedObstacleCells)
+%   azElObstacles = combineAzElObstacles(obstacle1, obstacle2, ...)
+%   azElObstacles = combineAzElObstacles(obstacleArray)
+%   azElObstacles = combineAzElObstacles(nestedObstacleCells)
 %**************************************************************************
 % PURPOSE
 %   - Flatten and validate canonical obstacle inputs in caller order.
@@ -13,7 +13,7 @@ function obstacles = combineAzElObstacles(varargin)
 %       Every leaf must be a canonical scalar azElData struct.
 %**************************************************************************
 % OUTPUTS
-%   - obstacles (column struct array)
+%   - azElObstacles (column struct array)
 %       Independently retained, validated obstacle records.
 %**************************************************************************
 % UNITS
@@ -39,12 +39,12 @@ obstacleCapacity = 16;
 obstacleItems = cell(obstacleCapacity, 1);
 obstacleCount = 0;
 while pendingCount > 0
-    currentValue = pendingValues{pendingCount};
-    currentInputIndex = pendingInputIndices(pendingCount);
+    pendingInputValue = pendingValues{pendingCount};
+    topLevelInputIndex = pendingInputIndices(pendingCount);
     pendingValues{pendingCount} = [];
     pendingCount = pendingCount - 1;
-    if isstruct(currentValue)
-        flattenedStructItems = num2cell(currentValue(:));
+    if isstruct(pendingInputValue)
+        flattenedStructItems = num2cell(pendingInputValue(:));
         addedObstacleCount = numel(flattenedStructItems);
         requiredObstacleCapacity = obstacleCount + addedObstacleCount;
         if requiredObstacleCapacity > obstacleCapacity
@@ -52,12 +52,12 @@ while pendingCount > 0
                 2 * obstacleCapacity, requiredObstacleCapacity);
             obstacleItems{obstacleCapacity, 1} = [];
         end
-        itemRows = obstacleCount + (1:addedObstacleCount);
-        obstacleItems(itemRows) = flattenedStructItems;
+        obstacleWriteRows = obstacleCount + (1:addedObstacleCount);
+        obstacleItems(obstacleWriteRows) = flattenedStructItems;
         obstacleCount = requiredObstacleCapacity;
-    elseif iscell(currentValue)
-        nestedValueCount = numel(currentValue);
-        reversedNestedValues = flipud(currentValue(:));
+    elseif iscell(pendingInputValue)
+        nestedValueCount = numel(pendingInputValue);
+        reversedNestedValues = flipud(pendingInputValue(:));
         requiredPendingCapacity = pendingCount + nestedValueCount;
         if requiredPendingCapacity > pendingCapacity
             pendingCapacity = max( ...
@@ -67,12 +67,12 @@ while pendingCount > 0
         end
         pendingRows = pendingCount + (1:nestedValueCount);
         pendingValues(pendingRows) = reversedNestedValues;
-        pendingInputIndices(pendingRows) = currentInputIndex;
+        pendingInputIndices(pendingRows) = topLevelInputIndex;
         pendingCount = requiredPendingCapacity;
     else
         error("combineAzElObstacles:InvalidInput", ...
             ["Input %d must be an azElData struct, struct array, or cell " ...
-            "array containing azElData structs."], currentInputIndex);
+            "array containing azElData structs."], topLevelInputIndex);
     end
 end
 obstacleItems = obstacleItems(1:obstacleCount);
@@ -90,5 +90,5 @@ for obstacleIndex = 1:numel(obstacleItems)
     normalizedObstacles{obstacleIndex} = normalizeAzElTimeObstacleData( ...
         obstacleItems{obstacleIndex});
 end
-obstacles = vertcat(normalizedObstacles{:});
+azElObstacles = vertcat(normalizedObstacles{:});
 end

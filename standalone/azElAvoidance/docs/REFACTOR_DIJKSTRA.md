@@ -12,11 +12,13 @@ The maintained implementation still has one public entry point:
 heuristic, or toolbox shortest-path call was added.
 
 A follow-up pass applies the same readability contract to every other MATLAB
-file in `standalone/azElAvoidance`. This includes public obstacle/visualization
-APIs, numbered examples, scenario support, benchmarks, the documentation
-figure generator, and test entry points. Scenario equations, random draw order,
-planner options, validation thresholds, and public result schemas remain the
-behavioral source of truth.
+file in `standalone/azElAvoidance`. This includes public obstacle and
+visualization APIs, numbered examples, scenario support, benchmarks, the
+documentation figure generator, and test entry points. A corrective runtime
+pass then revisited every root API instead of treating existing section headers
+as proof that its internal structure had already been reviewed. Scenario
+equations, random draw order, planner options, validation thresholds, and
+public result schemas remain the behavioral source of truth.
 
 ## Actual execution map
 
@@ -162,8 +164,8 @@ Crossy Road, and spinning-rod spiral animation checks also passed.
 The folder-wide follow-up produced the following additional evidence:
 
 ```text
-MATLAB files with Section 0 headers: 51 of 51
-MATLAB Code Analyzer messages:       0 across 51 files
+MATLAB files with Section 0 headers: 50 of 50
+MATLAB Code Analyzer messages:       0 across 50 files
 Complete test suite:                 37 passed, 0 failed, 0 incomplete
 Fresh randomized blinking batch:     5 of 5 passed
 Five-turn spiral path length:        241.439 deg
@@ -172,9 +174,13 @@ Five-turn spiral motion completion:  117.0 s
 ```
 
 The follow-up did not modify `planAzElDijkstra` after its dedicated pass. The
-remaining public runtime APIs already conformed to the Section 0, execution
-section, naming, and helper-placement rules and were audited rather than
-rewritten gratuitously.
+corrective root-runtime pass made substantive behavior-preserving edits to the
+ten remaining public and shared runtime files. Canonical obstacle records,
+packed obstacles, query candidates, blockers, moving-target candidates, and
+kinematics samples now carry diagnostic names. The obstacle packer no longer
+converts a canonical struct array to cells merely to index it. The animator
+folds its single-caller grid sampler into the lattice builder; its padded-limit
+helper remains because angular and time axes both share that nontrivial policy.
 
 ## Behavioral-preservation checklist
 
@@ -194,6 +200,19 @@ rewritten gratuitously.
 
 - `planAzElDijkstra.m`: stage boundaries, diagnostic names, and comments
   connecting the two relaxation loops to their mathematics.
+- `buildAzElTimeObstacleField.m`, `queryAzElTimeObstacle.m`, and
+  `buildAzElTimeObstacleWorkspace.m`: direct canonical-struct packing,
+  explicit CSR offset names, blocker-oriented query names, and documented
+  compatibility forwarding.
+- `makeAzElObstacleData.m`, `normalizeAzElTimeObstacleData.m`, and
+  `combineAzElObstacles.m`: canonical-data names and traceable nested-input
+  flattening.
+- `animateAzElAvoidancePlan.m` and `defaultAzElAnimationOptions.m`:
+  explicit display-only lattice sampling, fewer one-caller helpers, and clear
+  override versus presentation-preference precedence.
+- `planAzElMovingTargetIntercept.m` and `plotAzElPlanKinematics.m`:
+  unit-bearing interception candidates, catch diagnostics, tracking samples,
+  plotted derivatives, and export results.
 - `DIJKSTRA_PLANNER.md`: maintained call flow and representation-selection
   map.
 - `STATIC_DIJKSTRA.md`: implementation-stage and frontier behavior map.

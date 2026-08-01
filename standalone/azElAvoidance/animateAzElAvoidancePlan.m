@@ -1,9 +1,11 @@
-function handles = animateAzElAvoidancePlan(azElData, plan, options)
+function animationHandles = animateAzElAvoidancePlan( ...
+        azElData, plan, options)
 %% Section 0: Header & Readme
 % SYNTAX
 %   options = animateAzElAvoidancePlan()
-%   handles = animateAzElAvoidancePlan(azElData, plan)
-%   handles = animateAzElAvoidancePlan(azElData, plan, options)
+%   animationHandles = animateAzElAvoidancePlan(azElData, plan)
+%   animationHandles = animateAzElAvoidancePlan( ...
+%       azElData, plan, options)
 %**************************************************************************
 % PURPOSE
 %   - Animate synchronized 2-D and 3-D views of the authoritative obstacle
@@ -18,7 +20,7 @@ function handles = animateAzElAvoidancePlan(azElData, plan, options)
 %       View, display-decimation, playback, and figure controls.
 %**************************************************************************
 % OUTPUTS
-%   - handles (scalar struct)
+%   - animationHandles (scalar struct)
 %       Figure, axes, animated graphics, resolved options, and display
 %       sampling diagnostics. A zero-argument call returns default options.
 %**************************************************************************
@@ -29,7 +31,7 @@ function handles = animateAzElAvoidancePlan(azElData, plan, options)
 %% Section 1: Validate Inputs & Apply Defaults
 defaultOptions = defaultAnimateAzElAvoidancePlanOptions();
 if nargin == 0
-    handles = defaultOptions;
+    animationHandles = defaultOptions;
     return;
 end
 if nargin < 3 || isempty(options)
@@ -406,7 +408,7 @@ if isgraphics(figureHandle)
     drawnow;
 end
 
-handles = struct( ...
+animationHandles = struct( ...
     "Figure", figureHandle, ...
     "Layout", layout, ...
     "AzElAxes", azElAxes, ...
@@ -830,7 +832,7 @@ ylabel(ax, "Elevation (deg)");
 zlabel(ax, "Time (s)");
 title(ax, "Plan through az/el/time obstacle field");
 applyAngularLimits(ax, plan);
-zlim(ax, expandedLimits(plan.time_s));
+zlim(ax, paddedFiniteLimits(plan.time_s));
 view(ax, 38, 25);
 axis(ax, "vis3d");
 legend(ax, "Location", "best");
@@ -1273,10 +1275,12 @@ elevation(wrapBreak) = NaN;
 time_s(wrapBreak) = NaN;
 end
 
-function [azimuth, elevation, step] = latticeLineData(plan, options)
+function [latticeAzimuth_deg, latticeElevation_deg, gridStep_deg] = latticeLineData( ...
+        plan, options)
 %% Section 0: Header & Readme
 % SYNTAX
-%   [azimuth, elevation, step] = latticeLineData(plan, options)
+%   [latticeAzimuth_deg, latticeElevation_deg, gridStep_deg] = latticeLineData( ...
+%       plan, options)
 %**************************************************************************
 % PURPOSE
 %   - Build display-decimated lattice line coordinates.
@@ -1288,16 +1292,16 @@ function [azimuth, elevation, step] = latticeLineData(plan, options)
 %       Maximum displayed lattice lines.
 %**************************************************************************
 % OUTPUTS
-%   - azimuth, elevation (numeric vectors)
+%   - latticeAzimuth_deg, latticeElevation_deg (numeric vectors)
 %       NaN-separated lattice line coordinates.
-%   - step (numeric scalar)
+%   - gridStep_deg (numeric scalar)
 %       Selected grid spacing.
 %**************************************************************************
 % UNITS
 %   - All outputs are degrees.
-azimuth = zeros(0, 1);
-elevation = zeros(0, 1);
-step = NaN;
+latticeAzimuth_deg = zeros(0, 1);
+latticeElevation_deg = zeros(0, 1);
+gridStep_deg = NaN;
 if ~isfield(plan, "selectedGridStep_deg") || ...
         ~isfinite(plan.selectedGridStep_deg) || ...
         plan.selectedGridStep_deg <= 0 || ...
@@ -1305,66 +1309,63 @@ if ~isfield(plan, "selectedGridStep_deg") || ...
         ~all(isfield(plan.limits, ["azimuth_deg", "elevation_deg"]))
     return;
 end
-step = plan.selectedGridStep_deg;
-azimuthValues = sampledGridValues( ...
-    plan.limits.azimuth_deg, step, ...
-    options.MaximumDiscretizationLines);
-elevationValues = sampledGridValues( ...
-    plan.limits.elevation_deg, step, ...
-    options.MaximumDiscretizationLines);
+gridStep_deg = plan.selectedGridStep_deg;
+% Both axes use one inline sampling loop. This was formerly a one-caller
+% helper, which hid the important fact that decimation changes only the
+% displayed lattice and never the planner's state graph.
+axisLimits_deg = { ...
+    plan.limits.azimuth_deg, plan.limits.elevation_deg};
+sampledAxisValues_deg = cell(2, 1);
+for axisIndex = 1:2
+    currentAxisLimits_deg = axisLimits_deg{axisIndex};
+    firstDisplayedValue_deg = currentAxisLimits_deg(1);
+    lastDisplayedValue_deg = currentAxisLimits_deg(2);
+    displayedValues_deg = firstDisplayedValue_deg: ...
+        gridStep_deg:lastDisplayedValue_deg;
+    missesUpperLimit = isempty(displayedValues_deg);
+    if ~missesUpperLimit
+        upperLimitTolerance_deg = currentAxisLimits_deg(2) - 1e-9;
+        missesUpperLimit = displayedValues_deg(end) < upperLimitTolerance_deg;
+    end
+    if missesUpperLimit
+        inclusiveValues_deg = zeros(1, numel(displayedValues_deg) + 1);
+        inclusiveValues_deg(1:end - 1) = displayedValues_deg;
+        inclusiveValues_deg(end) = currentAxisLimits_deg(2);
+        displayedValues_deg = inclusiveValues_deg;
+    end
+    displayedValueCount = numel(displayedValues_deg);
+    if displayedValueCount > options.MaximumDiscretizationLines
+        retainedValueRows = unique(round(linspace( ...
+            1, displayedValueCount, ...
+            options.MaximumDiscretizationLines)));
+        displayedValues_deg = displayedValues_deg(retainedValueRows);
+    end
+    sampledAxisValues_deg{axisIndex} = double(displayedValues_deg);
+end
+azimuthValues = sampledAxisValues_deg{1};
+elevationValues = sampledAxisValues_deg{2};
 verticalCount = numel(azimuthValues);
 horizontalCount = numel(elevationValues);
-azimuth = nan( ...
+latticeAzimuth_deg = nan( ...
     3 * (verticalCount + horizontalCount), 1);
-elevation = azimuth;
-cursor = 1;
-for value = azimuthValues
-    rows = cursor:cursor + 2;
-    azimuth(rows) = [value; value; NaN];
-    elevation(rows) = [plan.limits.elevation_deg(:); NaN];
-    cursor = cursor + 3;
+latticeElevation_deg = latticeAzimuth_deg;
+nextLineWriteRow = 1;
+for gridAzimuth_deg = azimuthValues
+    lineWriteRows = nextLineWriteRow:nextLineWriteRow + 2;
+    latticeAzimuth_deg(lineWriteRows) = [ ...
+        gridAzimuth_deg; gridAzimuth_deg; NaN];
+    latticeElevation_deg(lineWriteRows) = [ ...
+        plan.limits.elevation_deg(:); NaN];
+    nextLineWriteRow = nextLineWriteRow + 3;
 end
-for value = elevationValues
-    rows = cursor:cursor + 2;
-    azimuth(rows) = [plan.limits.azimuth_deg(:); NaN];
-    elevation(rows) = [value; value; NaN];
-    cursor = cursor + 3;
+for gridElevation_deg = elevationValues
+    lineWriteRows = nextLineWriteRow:nextLineWriteRow + 2;
+    latticeAzimuth_deg(lineWriteRows) = [ ...
+        plan.limits.azimuth_deg(:); NaN];
+    latticeElevation_deg(lineWriteRows) = [ ...
+        gridElevation_deg; gridElevation_deg; NaN];
+    nextLineWriteRow = nextLineWriteRow + 3;
 end
-end
-
-function values = sampledGridValues(limits, step, maximumCount)
-%% Section 0: Header & Readme
-% SYNTAX
-%   values = sampledGridValues(limits, step, maximumCount)
-%**************************************************************************
-% PURPOSE
-%   - Include both grid bounds while honoring a display-only sample cap.
-%**************************************************************************
-% INPUTS
-%   - limits (numeric two-vector)
-%       Inclusive axis bounds.
-%   - step (positive numeric scalar)
-%       Nominal spacing.
-%   - maximumCount (positive integer)
-%       Display sample cap.
-%**************************************************************************
-% OUTPUTS
-%   - values (numeric vector)
-%       Decimated inclusive grid coordinates.
-%**************************************************************************
-% UNITS
-%   - limits, step, and values are degrees.
-values = limits(1):step:limits(2);
-if isempty(values) || values(end) < limits(2) - 1e-9
-    values(end + 1) = limits(2);
-end
-if numel(values) > maximumCount
-    % Decimate lines uniformly for readability; this is not the planner's
-    % actual state reduction.
-    selected = unique(round(linspace(1, numel(values), maximumCount)));
-    values = values(selected);
-end
-values = double(values);
 end
 
 function sampleIndex = nearestSample(time_s, queryTime_s)
@@ -1442,45 +1443,56 @@ function applyAngularLimits(ax, plan)
 %**************************************************************************
 % UNITS
 %   - Axis limits are degrees.
-if isfield(plan, "limits") && ...
-        all(isfield(plan.limits, ["azimuth_deg", "elevation_deg"]))
+hasPlanLimits = isfield(plan, "limits");
+if hasPlanLimits
+    hasAngularLimits = all(isfield( ...
+        plan.limits, ["azimuth_deg", "elevation_deg"]));
+else
+    hasAngularLimits = false;
+end
+if hasAngularLimits
     xlim(ax, plan.limits.azimuth_deg);
     ylim(ax, plan.limits.elevation_deg);
 else
-    xlim(ax, expandedLimits(plan.position_deg(:, 1)));
-    ylim(ax, expandedLimits(plan.position_deg(:, 2)));
+    xlim(ax, paddedFiniteLimits(plan.position_deg(:, 1)));
+    ylim(ax, paddedFiniteLimits(plan.position_deg(:, 2)));
 end
 end
 
-function limits = expandedLimits(values)
+function paddedLimits = paddedFiniteLimits(sampleValues)
 %% Section 0: Header & Readme
 % SYNTAX
-%   limits = expandedLimits(values)
+%   paddedLimits = paddedFiniteLimits(sampleValues)
 %**************************************************************************
 % PURPOSE
 %   - Derive finite plotting limits with nonzero visual padding.
 %**************************************************************************
 % INPUTS
-%   - values (numeric array)
-%       Values whose finite range is required.
+%   - sampleValues (numeric array)
+%       Angular or temporal values whose visible range is required.
 %**************************************************************************
 % OUTPUTS
-%   - limits (numeric two-vector)
-%       Padded lower and upper limits.
+%   - paddedLimits (numeric two-vector)
+%       Finite lower and upper graphics limits.
 %**************************************************************************
 % UNITS
-%   - Output units match values.
-finite = values(isfinite(values));
-if isempty(finite)
-    limits = [-1 1];
+%   - Output units match sampleValues.
+% Both the angular fallback and the 3-D time axis need this policy. Keeping
+% one shared implementation prevents their degenerate-range handling from
+% diverging.
+finiteValues = sampleValues(isfinite(sampleValues));
+if isempty(finiteValues)
+    paddedLimits = [-1 1];
     return;
 end
-limits = [min(finite), max(finite)];
-if diff(limits) < eps(max(abs(limits)) + 1)
-    limits = limits + [-0.5 0.5];
+paddedLimits = [min(finiteValues), max(finiteValues)];
+valueRange = diff(paddedLimits);
+isDegenerateRange = valueRange < eps(max(abs(paddedLimits)) + 1);
+if isDegenerateRange
+    paddedLimits = paddedLimits + [-0.5 0.5];
 else
-    padding = 0.03 * diff(limits);
-    limits = limits + [-padding padding];
+    rangePadding = 0.03 * valueRange;
+    paddedLimits = paddedLimits + [-rangePadding rangePadding];
 end
 end
 

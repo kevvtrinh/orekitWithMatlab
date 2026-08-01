@@ -20,6 +20,9 @@ function obstacleField = buildAzElTimeObstacleWorkspace(varargin)
 % UNITS
 %   - Units are defined by buildAzElTimeObstacleField.
 
+%% Section 1: Forward To The Preferred Builder
 % deprecated: Remove this public forwarding shim after one release.
+% Keeping this as a transparent forwarding boundary preserves old scripts
+% without maintaining a second packing implementation.
 obstacleField = buildAzElTimeObstacleField(varargin{:});
 end

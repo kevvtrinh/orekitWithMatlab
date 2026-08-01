@@ -1,15 +1,15 @@
-function data = makeAzElObstacleData(name, time_s, ...
+function azElData = makeAzElObstacleData(obstacleName, time_s, ...
         azimuthBoundary_deg, elevationBoundary_deg)
 %% Section 0: Header & Readme
 % SYNTAX
-%   data = makeAzElObstacleData( ...
-%       name, time_s, azimuthBoundary_deg, elevationBoundary_deg)
+%   azElData = makeAzElObstacleData( ...
+%       obstacleName, time_s, azimuthBoundary_deg, elevationBoundary_deg)
 %**************************************************************************
 % PURPOSE
 %   - Build validated canonical static or time-varying obstacle data.
 %**************************************************************************
 % INPUTS
-%   - name (scalar text)
+%   - obstacleName (scalar text)
 %       Obstacle display and diagnostic name.
 %   - time_s (numeric vector)
 %       Strictly increasing sample times.
@@ -19,7 +19,7 @@ function data = makeAzElObstacleData(name, time_s, ...
 %       Boundary representation matching azimuthBoundary_deg.
 %**************************************************************************
 % OUTPUTS
-%   - data (scalar struct)
+%   - azElData (scalar struct)
 %       Canonical azElData record accepted by planners and packers.
 %**************************************************************************
 % UNITS
@@ -39,8 +39,8 @@ if ~iscell(elevationBoundary_deg)
         {double(elevationBoundary_deg(:))}, sampleCount, 1);
 end
 %% Section 2: Assemble & Validate The Output
-data = struct( ...
-    "targetName", string(name), ...
+azElData = struct( ...
+    "targetName", string(obstacleName), ...
     "time_s", time_s, ...
     "az_deg", {reshape(azimuthBoundary_deg, [], 1)}, ...
     "el_deg", {reshape(elevationBoundary_deg, [], 1)}, ...
@@ -48,5 +48,5 @@ data = struct( ...
 % Route synthetic examples through the same validator as measured input.
 % This keeps test fixtures from relying on shapes the public planner would
 % reject in operational data.
-data = normalizeAzElTimeObstacleData(data);
+azElData = normalizeAzElTimeObstacleData(azElData);
 end

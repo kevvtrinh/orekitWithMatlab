@@ -183,40 +183,52 @@ else
 end
 
 %% Section 3: Filter & Search Interception Candidates
-candidateTime = (options.EarliestInterceptTime_s: ...
+candidateTimes_s = (options.EarliestInterceptTime_s: ...
     options.InterceptTimeStep_s:options.LatestInterceptTime_s).';
-if isempty(candidateTime) || ...
-        candidateTime(end) < options.LatestInterceptTime_s - 1e-9
-    candidateTime(end + 1, 1) = options.LatestInterceptTime_s;
+hasNoCandidateTimes = isempty(candidateTimes_s);
+if hasNoCandidateTimes
+    missesLatestTime = true;
+else
+    latestTimeThreshold_s = options.LatestInterceptTime_s - 1e-9;
+    missesLatestTime = candidateTimes_s(end) < latestTimeThreshold_s;
 end
-candidateUnwrapped = interp1( ...
+if hasNoCandidateTimes || missesLatestTime
+    candidateTimes_s(end + 1, 1) = options.LatestInterceptTime_s;
+end
+candidatePositionsUnwrapped_deg = interp1( ...
     target.time_s, target.positionUnwrapped_deg, ...
-    candidateTime, "linear");
-candidatePosition = canonicalPosition( ...
-    candidateUnwrapped, limits, options);
-candidateVelocity = interp1(target.time_s, target.velocity_deg_s, ...
-    candidateTime, "linear");
-candidateAcceleration = interp1( ...
+    candidateTimes_s, "linear");
+candidatePositions_deg = canonicalPosition( ...
+    candidatePositionsUnwrapped_deg, limits, options);
+candidateVelocities_deg_s = interp1(target.time_s, ...
+    target.velocity_deg_s, candidateTimes_s, "linear");
+candidateAccelerations_deg_s2 = interp1( ...
     target.time_s, target.acceleration_deg_s2, ...
-    candidateTime, "linear");
+    candidateTimes_s, "linear");
 % Cheap point, collision, and reachability filters avoid launching Dijkstra for
 % interception states that cannot possibly succeed.
-inside = candidatePosition(:, 1) >= limits.azimuth_deg(1) & ...
-    candidatePosition(:, 1) <= limits.azimuth_deg(2) & ...
-    candidatePosition(:, 2) >= limits.elevation_deg(1) & ...
-    candidatePosition(:, 2) <= limits.elevation_deg(2);
-blocked = true(size(candidateTime));
-blocked(inside) = queryAzElTimeObstacle(obstacleField, ...
-    candidatePosition(inside, 1), candidatePosition(inside, 2), ...
-    candidateTime(inside), struct( ...
+candidateAzimuth_deg = candidatePositions_deg(:, 1);
+candidateElevation_deg = candidatePositions_deg(:, 2);
+aboveMinimumAzimuth = candidateAzimuth_deg >= limits.azimuth_deg(1);
+belowMaximumAzimuth = candidateAzimuth_deg <= limits.azimuth_deg(2);
+aboveMinimumElevation = candidateElevation_deg >= limits.elevation_deg(1);
+belowMaximumElevation = candidateElevation_deg <= limits.elevation_deg(2);
+candidatesInsideLimits = aboveMinimumAzimuth & belowMaximumAzimuth & ...
+    aboveMinimumElevation & belowMaximumElevation;
+candidatesBlocked = true(size(candidateTimes_s));
+candidatesBlocked(candidatesInsideLimits) = queryAzElTimeObstacle( ...
+    obstacleField, ...
+    candidatePositions_deg(candidatesInsideLimits, 1), ...
+    candidatePositions_deg(candidatesInsideLimits, 2), ...
+    candidateTimes_s(candidatesInsideLimits), struct( ...
     "SafetyMarginDeg", options.SafetyMargin_deg, ...
     "TimePaddingSamples", 1));
 candidateDisplacement_deg = abs( ...
-    candidatePosition - initialState.position_deg);
+    candidatePositions_deg - initialState.position_deg);
 if allowAzimuthWrap
     azimuthSpan_deg = diff(limits.azimuth_deg);
     candidateDisplacement_deg(:, 1) = abs(mod( ...
-        candidatePosition(:, 1) - initialState.position_deg(1) + ...
+        candidatePositions_deg(:, 1) - initialState.position_deg(1) + ...
         azimuthSpan_deg / 2, azimuthSpan_deg) - azimuthSpan_deg / 2);
 end
 minimumVelocityTime_s = max(candidateDisplacement_deg ./ ...
@@ -226,26 +238,32 @@ minimumAccelerationTime_s = max(sqrt( ...
     limits.maxAcceleration_deg_s2), [], 2);
 minimumReachTime_s = max( ...
     minimumVelocityTime_s, minimumAccelerationTime_s);
-availableReachTime_s = candidateTime - initialState.time_s + 1e-9;
-reachable = minimumReachTime_s <= availableReachTime_s;
+availableReachTime_s = candidateTimes_s - initialState.time_s + 1e-9;
+candidatesReachable = minimumReachTime_s <= availableReachTime_s;
 if options.MatchTargetVelocity
     maximumCandidateVelocity_deg_s = limits.maxVelocity_deg_s + 1e-9;
-    velocityInsideLimits = abs(candidateVelocity) <= maximumCandidateVelocity_deg_s;
-    reachable = reachable & all(velocityInsideLimits, 2);
+    velocityMagnitudes_deg_s = abs(candidateVelocities_deg_s);
+    velocityInsideLimits = le( ...
+        velocityMagnitudes_deg_s, maximumCandidateVelocity_deg_s);
+    allVelocityAxesReachable = all(velocityInsideLimits, 2);
+    candidatesReachable = candidatesReachable & allVelocityAxesReachable;
 end
 if options.MatchTargetAcceleration
     maximumCandidateAcceleration_deg_s2 = limits.maxAcceleration_deg_s2 + 1e-9;
-    accelerationInsideLimits = ...
-        abs(candidateAcceleration) <= ...
-        maximumCandidateAcceleration_deg_s2;
-    reachable = reachable & all(accelerationInsideLimits, 2);
+    accelerationMagnitudes_deg_s2 = abs(candidateAccelerations_deg_s2);
+    accelerationInsideLimits = le( ...
+        accelerationMagnitudes_deg_s2, maximumCandidateAcceleration_deg_s2);
+    allAccelerationAxesReachable = all(accelerationInsideLimits, 2);
+    candidatesReachable = candidatesReachable & allAccelerationAxesReachable;
 end
-eligible = inside & ~blocked & reachable;
-eligibleIndex = find(eligible);
-if numel(eligibleIndex) > options.MaximumInterceptAttempts
-    selected = unique(round(linspace( ...
-        1, numel(eligibleIndex), options.MaximumInterceptAttempts)));
-    eligibleIndex = eligibleIndex(selected);
+eligibleCandidates = candidatesInsideLimits & ...
+    ~candidatesBlocked & candidatesReachable;
+eligibleCandidateIndices = find(eligibleCandidates);
+if numel(eligibleCandidateIndices) > options.MaximumInterceptAttempts
+    selectedCandidateRows = unique(round(linspace( ...
+        1, numel(eligibleCandidateIndices), ...
+        options.MaximumInterceptAttempts)));
+    eligibleCandidateIndices = eligibleCandidateIndices(selectedCandidateRows);
 end
 
 attemptTemplate = struct( ...
@@ -255,24 +273,26 @@ attemptTemplate = struct( ...
     "success", false, ...
     "elapsed_s", 0, ...
     "message", "");
-attempts = repmat(attemptTemplate, numel(eligibleIndex), 1);
+interceptAttempts = repmat( ...
+    attemptTemplate, numel(eligibleCandidateIndices), 1);
 attemptCount = 0;
-timer = tic;
+interceptSearchTimer = tic;
 % Earliest-first attempts make the first accepted plan the earliest sampled
 % rendezvous. Every attempt has its own bounded search budget.
-for attemptCandidateIndex = 1:numel(eligibleIndex)
-    candidateIndex = eligibleIndex(attemptCandidateIndex);
+for attemptCandidateIndex = 1:numel(eligibleCandidateIndices)
+    candidateIndex = eligibleCandidateIndices(attemptCandidateIndex);
     goalVelocity_deg_s = [0 0];
     goalAcceleration_deg_s2 = [0 0];
     if options.MatchTargetVelocity
-        goalVelocity_deg_s = candidateVelocity(candidateIndex, :);
+        goalVelocity_deg_s = candidateVelocities_deg_s(candidateIndex, :);
     end
     if options.MatchTargetAcceleration
-        goalAcceleration_deg_s2 = candidateAcceleration(candidateIndex, :);
+        goalAcceleration_deg_s2 = candidateAccelerations_deg_s2( ...
+            candidateIndex, :);
     end
     goalState = struct( ...
-        "time_s", candidateTime(candidateIndex), ...
-        "position_deg", candidatePosition(candidateIndex, :), ...
+        "time_s", candidateTimes_s(candidateIndex), ...
+        "position_deg", candidatePositions_deg(candidateIndex, :), ...
         "velocity_deg_s", goalVelocity_deg_s, ...
         "acceleration_deg_s2", goalAcceleration_deg_s2);
     plannerOptions = options;
@@ -287,73 +307,75 @@ for attemptCandidateIndex = 1:numel(eligibleIndex)
         options.PerAttemptMaxSearchTime_s));
     plannerOptions.PrintFailureSuggestions = false;
     attemptTimer = tic;
-    candidate = planAzElDijkstra( ...
+    candidatePlan = planAzElDijkstra( ...
         obstacleField, initialState, goalState, limits, plannerOptions);
     attemptCount = attemptCount + 1;
-    attempts(attemptCount, 1) = struct( ...
-        "time_s", candidateTime(candidateIndex), ...
-        "position_deg", candidatePosition(candidateIndex, :), ...
-        "velocity_deg_s", candidateVelocity(candidateIndex, :), ...
-        "success", candidate.success, ...
+    interceptAttempts(attemptCount, 1) = struct( ...
+        "time_s", candidateTimes_s(candidateIndex), ...
+        "position_deg", candidatePositions_deg(candidateIndex, :), ...
+        "velocity_deg_s", candidateVelocities_deg_s(candidateIndex, :), ...
+        "success", candidatePlan.success, ...
         "elapsed_s", toc(attemptTimer), ...
-        "message", string(candidate.message));
-    if ~candidate.success
+        "message", string(candidatePlan.message));
+    if ~candidatePlan.success
         continue;
     end
     % Re-evaluate target kinematics at the reported catch time. This catches
     % interpolation, wrapping, and profile-sampling inconsistencies.
-    targetAtCatchUnwrapped = interp1( ...
+    targetAtCatchUnwrapped_deg = interp1( ...
         target.time_s, target.positionUnwrapped_deg, ...
-        candidate.time_s(end), "linear");
-    targetAtCatch = canonicalPosition( ...
-        targetAtCatchUnwrapped, limits, options);
-    targetVelocityAtCatch = interp1( ...
+        candidatePlan.time_s(end), "linear");
+    targetAtCatch_deg = canonicalPosition( ...
+        targetAtCatchUnwrapped_deg, limits, options);
+    targetVelocityAtCatch_deg_s = interp1( ...
         target.time_s, target.velocity_deg_s, ...
-        candidate.time_s(end), "linear");
-    targetAccelerationAtCatch = interp1( ...
+        candidatePlan.time_s(end), "linear");
+    targetAccelerationAtCatch_deg_s2 = interp1( ...
         target.time_s, target.acceleration_deg_s2, ...
-        candidate.time_s(end), "linear");
-    catchError = hypot( ...
-        candidate.position_deg(end, 1) - targetAtCatch(1), ...
-        candidate.position_deg(end, 2) - targetAtCatch(2));
-    if catchError > options.CatchTolerance_deg + 1e-9
+        candidatePlan.time_s(end), "linear");
+    catchPositionError_deg = hypot( ...
+        candidatePlan.position_deg(end, 1) - targetAtCatch_deg(1), ...
+        candidatePlan.position_deg(end, 2) - targetAtCatch_deg(2));
+    if catchPositionError_deg > options.CatchTolerance_deg + 1e-9
         continue;
     end
-    velocityError = hypot( ...
-        candidate.velocity_deg_s(end, 1) - targetVelocityAtCatch(1), ...
-        candidate.velocity_deg_s(end, 2) - targetVelocityAtCatch(2));
-    if options.MatchTargetVelocity && ...
-            velocityError > ...
-            options.CatchVelocityTolerance_deg_s + 1e-9
+    catchVelocityError_deg_s = hypot( ...
+        candidatePlan.velocity_deg_s(end, 1) - ...
+        targetVelocityAtCatch_deg_s(1), ...
+        candidatePlan.velocity_deg_s(end, 2) - ...
+        targetVelocityAtCatch_deg_s(2));
+    velocityCatchFailed = catchVelocityError_deg_s > ...
+        options.CatchVelocityTolerance_deg_s + 1e-9;
+    if options.MatchTargetVelocity && velocityCatchFailed
         continue;
     end
-    accelerationError = hypot( ...
-        candidate.acceleration_deg_s2(end, 1) - ...
-            targetAccelerationAtCatch(1), ...
-        candidate.acceleration_deg_s2(end, 2) - ...
-            targetAccelerationAtCatch(2));
-    if options.MatchTargetAcceleration && ...
-            accelerationError > ...
-            options.CatchAccelerationTolerance_deg_s2 + 1e-9
+    catchAccelerationError_deg_s2 = hypot( ...
+        candidatePlan.acceleration_deg_s2(end, 1) - ...
+            targetAccelerationAtCatch_deg_s2(1), ...
+        candidatePlan.acceleration_deg_s2(end, 2) - ...
+            targetAccelerationAtCatch_deg_s2(2));
+    accelerationCatchFailed = catchAccelerationError_deg_s2 > ...
+        options.CatchAccelerationTolerance_deg_s2 + 1e-9;
+    if options.MatchTargetAcceleration && accelerationCatchFailed
         continue;
     end
-    plan = candidate;
+    plan = candidatePlan;
     % The wrapper owns the returned option contract; the nested planner
     % receives only its subset to avoid leaking wrapper-only fields.
     plan.options = options;
     plan.interceptSuccess = true;
-    plan.interceptTime_s = candidate.time_s(end);
-    plan.interceptPosition_deg = candidate.position_deg(end, :);
-    plan.targetPositionAtIntercept_deg = targetAtCatch;
-    plan.targetVelocityAtIntercept_deg_s = targetVelocityAtCatch;
-    plan.targetAccelerationAtIntercept_deg_s2 = targetAccelerationAtCatch;
-    plan.catchError_deg = catchError;
-    plan.catchVelocityError_deg_s = velocityError;
-    plan.catchAccelerationError_deg_s2 = accelerationError;
+    plan.interceptTime_s = candidatePlan.time_s(end);
+    plan.interceptPosition_deg = candidatePlan.position_deg(end, :);
+    plan.targetPositionAtIntercept_deg = targetAtCatch_deg;
+    plan.targetVelocityAtIntercept_deg_s = targetVelocityAtCatch_deg_s;
+    plan.targetAccelerationAtIntercept_deg_s2 = targetAccelerationAtCatch_deg_s2;
+    plan.catchError_deg = catchPositionError_deg;
+    plan.catchVelocityError_deg_s = catchVelocityError_deg_s;
+    plan.catchAccelerationError_deg_s2 = catchAccelerationError_deg_s2;
     plan.targetTrajectory = target;
-    plan.interceptAttempts = attempts(1:attemptCount);
-    plan.interceptCandidateCount = nnz(eligible);
-    plan.interceptSearchElapsed_s = toc(timer);
+    plan.interceptAttempts = interceptAttempts(1:attemptCount);
+    plan.interceptCandidateCount = nnz(eligibleCandidates);
+    plan.interceptSearchElapsed_s = toc(interceptSearchTimer);
 
     % --- Follow The Target Until The First Unsafe Sample ------------------
     plan.trackingRequested = options.ContinueTrackingAfterIntercept;
@@ -539,98 +561,107 @@ plan = struct( ...
     "targetTrajectory", target, ...
     "limits", limits, ...
     "options", options, ...
-    "interceptAttempts", attempts(1:attemptCount), ...
-    "interceptCandidateCount", nnz(eligible), ...
+    "interceptAttempts", interceptAttempts(1:attemptCount), ...
+    "interceptCandidateCount", nnz(eligibleCandidates), ...
     "interceptFilter", struct( ...
-        "sampleCount", numel(candidateTime), ...
-        "insideLimitCount", nnz(inside), ...
-        "safeCount", nnz(inside & ~blocked), ...
-        "reachableCount", nnz(inside & ~blocked & reachable), ...
-        "eligibleCount", nnz(eligible)), ...
-    "interceptSearchElapsed_s", toc(timer));
+        "sampleCount", numel(candidateTimes_s), ...
+        "insideLimitCount", nnz(candidatesInsideLimits), ...
+        "safeCount", nnz(candidatesInsideLimits & ~candidatesBlocked), ...
+        "reachableCount", nnz(candidatesInsideLimits & ...
+        ~candidatesBlocked & candidatesReachable), ...
+        "eligibleCount", nnz(eligibleCandidates)), ...
+    "interceptSearchElapsed_s", toc(interceptSearchTimer));
 plan = finalizeAzElPlanFailure(plan);
 plan = normalizeAzElInterceptPlanSchema(plan);
 end
 
 %% Section 5: Local Functions
-function values = normalizeTargetSamples(values, sampleCount, name)
+function targetSamples = normalizeTargetSamples( ...
+        targetSamples, sampleCount, argumentName)
 %% Section 0: Header & Readme
 % SYNTAX
-%   values = normalizeTargetSamples(values, sampleCount, name)
+%   targetSamples = normalizeTargetSamples( ...
+%       targetSamples, sampleCount, argumentName)
 %**************************************************************************
 % PURPOSE
 %   - Enforce the shared finite N-by-2 target-kinematics shape.
 %**************************************************************************
 % INPUTS
-%   - values (numeric matrix)
+%   - targetSamples (numeric matrix)
 %       Target samples.
 %   - sampleCount (positive integer)
 %       Required row count.
-%   - name (text)
+%   - argumentName (text)
 %       Diagnostic argument name.
 %**************************************************************************
 % OUTPUTS
-%   - values (double matrix)
+%   - targetSamples (double matrix)
 %       Validated target samples.
 %**************************************************************************
 % UNITS
 %   - Units are carried by name.
-% Supplied velocity and acceleration arrays share this shape contract.
-validateattributes(values, {'numeric'}, ...
+% Supplied velocity and acceleration arrays share this contract, so keeping
+% the validator shared prevents the two optional inputs from drifting.
+validateattributes(targetSamples, {'numeric'}, ...
     {'2d', 'nrows', sampleCount, 'ncols', 2, ...
-    'real', 'finite'}, mfilename, name);
-values = double(values);
+    'real', 'finite'}, mfilename, argumentName);
+targetSamples = double(targetSamples);
 end
 
-function derivative = sampledDerivative(values, time_s)
+function derivativeSamples = sampledDerivative(sampledValues, time_s)
 %% Section 0: Header & Readme
 % SYNTAX
-%   derivative = sampledDerivative(values, time_s)
+%   derivativeSamples = sampledDerivative(sampledValues, time_s)
 %**************************************************************************
 % PURPOSE
 %   - Differentiate sampled two-axis target data with consistent endpoints.
 %**************************************************************************
 % INPUTS
-%   - values (numeric matrix)
+%   - sampledValues (numeric matrix)
 %       N-by-2 sampled quantity.
 %   - time_s (numeric vector)
 %       Strictly increasing sample times.
 %**************************************************************************
 % OUTPUTS
-%   - derivative (numeric matrix)
+%   - derivativeSamples (numeric matrix)
 %       Endpoint one-sided and interior centered differences.
 %**************************************************************************
 % UNITS
 %   - Divides the units of values by seconds.
-% Position and velocity differentiation must use identical endpoint and
-% centered-difference conventions.
-derivative = zeros(size(values));
+% Position and velocity differentiation both call this routine; sharing the
+% endpoint convention avoids a false acceleration spike at either boundary.
+derivativeSamples = zeros(size(sampledValues));
 sampleCount = numel(time_s);
 if sampleCount == 1
     return;
 end
-derivative(1, :) = (values(2, :) - values(1, :)) / ...
+derivativeSamples(1, :) = ( ...
+    sampledValues(2, :) - sampledValues(1, :)) / ...
     (time_s(2) - time_s(1));
-derivative(end, :) = (values(end, :) - values(end - 1, :)) / ...
+derivativeSamples(end, :) = ( ...
+    sampledValues(end, :) - sampledValues(end - 1, :)) / ...
     (time_s(end) - time_s(end - 1));
 if sampleCount > 2
     % Centered differences reduce phase bias for interior target samples.
-    duration = time_s(3:end) - time_s(1:end - 2);
-    derivative(2:end - 1, :) = ( ...
-        values(3:end, :) - values(1:end - 2, :)) ./ duration;
+    centeredDuration_s = time_s(3:end) - time_s(1:end - 2);
+    derivativeSamples(2:end - 1, :) = ( ...
+        sampledValues(3:end, :) - sampledValues(1:end - 2, :)) ./ ...
+        centeredDuration_s;
 end
 end
 
-function position = canonicalPosition(position, limits, options)
+function canonicalPositions_deg = canonicalPosition( ...
+        positions_deg, limits, options)
 %% Section 0: Header & Readme
 % SYNTAX
-%   position = canonicalPosition(position, limits, options)
+%   canonicalPositions_deg = canonicalPosition( ...
+%       positions_deg, limits, options)
 %**************************************************************************
 % PURPOSE
 %   - Map azimuth samples into the configured canonical interval.
 %**************************************************************************
 % INPUTS
-%   - position (numeric N-by-2 matrix)
+%   - positions_deg (numeric N-by-2 matrix)
 %       Possibly unwrapped positions.
 %   - limits (scalar struct)
 %       Azimuth bounds.
@@ -638,7 +669,7 @@ function position = canonicalPosition(position, limits, options)
 %       Optional AllowAzimuthWrap setting.
 %**************************************************************************
 % OUTPUTS
-%   - position (numeric N-by-2 matrix)
+%   - canonicalPositions_deg (numeric N-by-2 matrix)
 %       Canonical positions.
 %**************************************************************************
 % UNITS
@@ -647,28 +678,32 @@ function position = canonicalPosition(position, limits, options)
 % interval while preserving a separate unwrapped derivative history.
 allowWrap = fieldOr(options, "AllowAzimuthWrap", ...
     diff(limits.azimuth_deg) >= 360 - 1e-9);
+canonicalPositions_deg = positions_deg;
 if allowWrap
-    span = diff(limits.azimuth_deg);
-    position(:, 1) = mod( ...
-        position(:, 1) - limits.azimuth_deg(1), span) + ...
+    azimuthSpan_deg = diff(limits.azimuth_deg);
+    canonicalPositions_deg(:, 1) = mod( ...
+        canonicalPositions_deg(:, 1) - limits.azimuth_deg(1), ...
+        azimuthSpan_deg) + ...
         limits.azimuth_deg(1);
 end
 end
 
-function reason = trackingFailureReason(blocked, inside, dynamicsValid)
+function reason = trackingFailureReason( ...
+        isBlocked, isInsideLimits, hasValidDynamics)
 %% Section 0: Header & Readme
 % SYNTAX
-%   reason = trackingFailureReason(blocked, inside, dynamicsValid)
+%   reason = trackingFailureReason( ...
+%       isBlocked, isInsideLimits, hasValidDynamics)
 %**************************************************************************
 % PURPOSE
 %   - Apply one precedence rule to tracking-termination diagnostics.
 %**************************************************************************
 % INPUTS
-%   - blocked (logical scalar)
+%   - isBlocked (logical scalar)
 %       The obstacle field blocks the sample.
-%   - inside (logical scalar)
+%   - isInsideLimits (logical scalar)
 %       The sample is inside pointing limits.
-%   - dynamicsValid (logical scalar)
+%   - hasValidDynamics (logical scalar)
 %       Target rates and accelerations are feasible.
 %**************************************************************************
 % OUTPUTS
@@ -679,44 +714,50 @@ function reason = trackingFailureReason(blocked, inside, dynamicsValid)
 %   - All inputs and output are dimensionless.
 % Both first-sample and later tracking failures use the same diagnostic
 % precedence so obstacle termination cannot be misreported.
-if blocked
+if isBlocked
     reason = "obstacle";
-elseif ~inside
+elseif ~isInsideLimits
     reason = "outsidePointingLimits";
-elseif ~dynamicsValid
+elseif ~hasValidDynamics
     reason = "targetExceedsDynamicLimits";
 else
     reason = "trackingStopped";
 end
 end
 
-function value = fieldOr(input, name, fallback)
+function fieldValue = fieldOr(optionsStruct, fieldName, fallbackValue)
 %% Section 0: Header & Readme
 % SYNTAX
-%   value = fieldOr(input, name, fallback)
+%   fieldValue = fieldOr(optionsStruct, fieldName, fallbackValue)
 %**************************************************************************
 % PURPOSE
 %   - Read optional planner controls with one empty-as-missing policy.
 %**************************************************************************
 % INPUTS
-%   - input (scalar struct)
+%   - optionsStruct (scalar struct)
 %       Options record.
-%   - name (text)
+%   - fieldName (text)
 %       Field name.
-%   - fallback (any)
+%   - fallbackValue (any)
 %       Value used when absent or empty.
 %**************************************************************************
 % OUTPUTS
-%   - value (any)
+%   - fieldValue (any)
 %       Stored or fallback value.
 %**************************************************************************
 % UNITS
 %   - Units follow the selected value.
 % Optional planner and target controls share one empty-as-missing policy.
-if isfield(input, name) && ~isempty(input.(name))
-    value = input.(name);
+hasField = isfield(optionsStruct, fieldName);
+if hasField
+    fieldIsPopulated = ~isempty(optionsStruct.(fieldName));
 else
-    value = fallback;
+    fieldIsPopulated = false;
+end
+if fieldIsPopulated
+    fieldValue = optionsStruct.(fieldName);
+else
+    fieldValue = fallbackValue;
 end
 end
 
