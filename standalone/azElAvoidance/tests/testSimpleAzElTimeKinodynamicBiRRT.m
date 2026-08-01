@@ -95,6 +95,10 @@ verifyTrue(testCase, plan.success, plan.message);
 verifyTrue(testCase, plan.forwardDynamicsValidated);
 verifyTrue(testCase, plan.exactCollisionValidated);
 verifyFalse(testCase, plan.continuousCollisionGuaranteed);
+verifyEqual(testCase, plan.workspace.Format, ...
+    "AzElTimeObstacleWorkspace");
+verifyEqual(testCase, plan.obstacleField.Format, ...
+    "AzElTimeObstacleWorkspace");
 verifyGreaterThan(testCase, plan.connectionNodeIndices(1), 0);
 verifyGreaterThan(testCase, plan.connectionNodeIndices(2), 0);
 verifyEqual(testCase, plan.time_s, (0:5).');
