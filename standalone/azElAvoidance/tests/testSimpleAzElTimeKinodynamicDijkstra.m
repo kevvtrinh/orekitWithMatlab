@@ -490,6 +490,90 @@ verifyLessThanOrEqual(testCase, ...
     baselinePlan.expandedStateCount);
 end
 
+function testStaticTopologyTieBreakerPreservesDijkstraCost(testCase)
+%% Section 0: Header & Readme
+% SYNTAX
+%   testStaticTopologyTieBreakerPreservesDijkstraCost(testCase)
+%**************************************************************************
+% PURPOSE
+%   - Verify goal-rooted static topology orders only equal-cost states and
+%     preserves the successful seven-coordinate Dijkstra trajectory cost.
+%   - Verify the exposed static route follows nonincreasing cost-to-go.
+%**************************************************************************
+% INPUTS
+%   - testCase (matlab.unittest.FunctionTestCase)
+%       Active verification fixture.
+%**************************************************************************
+% OUTPUTS
+%   - None.
+%**************************************************************************
+% UNITS
+%   - Position and topology costs are degrees. Time is seconds.
+time_s = (0:6).';
+azElData = emptyObstacleData(time_s);
+[initialState, destinationState, limits, baselineOptions] = ...
+    standardProblem(4);
+topologyOptions = baselineOptions;
+topologyOptions.equalCostTieBreaker = "staticTopology";
+
+baselinePlan = planSimpleAzElTimeKinodynamicDijkstra( ...
+    azElData, initialState, destinationState, limits, baselineOptions);
+topologyPlan = planSimpleAzElTimeKinodynamicDijkstra( ...
+    azElData, initialState, destinationState, limits, topologyOptions);
+
+verifyTrue(testCase, topologyPlan.success, topologyPlan.message);
+verifyEqual(testCase, topologyPlan.totalCost, baselinePlan.totalCost);
+verifyEqual(testCase, topologyPlan.equalCostTieBreaker, ...
+    "staticTopology");
+verifyTrue(testCase, topologyPlan.staticTopology.Used);
+verifyTrue(testCase, topologyPlan.staticTopology.GeometryIsStatic);
+verifyTrue(testCase, ...
+    topologyPlan.staticTopology.AppliedAsEqualCostTieBreaker);
+verifyTrue(testCase, topologyPlan.staticTopology.Success, ...
+    topologyPlan.staticTopology.Message);
+
+pathSubscripts = double( ...
+    topologyPlan.staticTopology.InitialPathSubscripts);
+pathPositionIndices = sub2ind( ...
+    size(topologyPlan.staticTopology.CostToGoal_deg), ...
+    pathSubscripts(:, 2), pathSubscripts(:, 1));
+pathCostToGoal_deg = ...
+    topologyPlan.staticTopology.CostToGoal_deg(pathPositionIndices);
+verifyGreaterThan(testCase, numel(pathCostToGoal_deg), 1);
+verifyLessThanOrEqual(testCase, max(diff(pathCostToGoal_deg)), 0);
+verifyEqual(testCase, pathCostToGoal_deg(end), 0);
+end
+
+function testStaticTopologyForbidsDiagonalCornerCutting(testCase)
+%% Section 0: Header & Readme
+% SYNTAX
+%   testStaticTopologyForbidsDiagonalCornerCutting(testCase)
+%**************************************************************************
+% PURPOSE
+%   - Verify a diagonal topology edge cannot pass between two occupied
+%     cardinal neighbor cells.
+%**************************************************************************
+% INPUTS
+%   - testCase (matlab.unittest.FunctionTestCase)
+%       Active verification fixture.
+%**************************************************************************
+% OUTPUTS
+%   - None.
+%**************************************************************************
+% UNITS
+%   - Position and topology costs are degrees.
+occupiedPosition = false(3, 3);
+occupiedPosition(1, 2) = true;
+occupiedPosition(2, 1) = true;
+topology = buildSimpleAzElStaticTopologyDijkstra( ...
+    occupiedPosition, 0:2, 0:2, 1, 1, 3, 3, false);
+
+verifyTrue(testCase, topology.Used);
+verifyFalse(testCase, topology.Success);
+verifyEqual(testCase, topology.InitialCostToGoal_deg, Inf);
+verifyEmpty(testCase, topology.InitialPathSubscripts);
+end
+
 function [initialState, destinationState, limits, options] = ...
         standardProblem(destinationTime_s)
 %% Section 0: Header & Readme

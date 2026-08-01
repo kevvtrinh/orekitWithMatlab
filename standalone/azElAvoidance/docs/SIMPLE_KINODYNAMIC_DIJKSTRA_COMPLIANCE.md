@@ -27,7 +27,7 @@ It describes the state of the implementation on the `simpledjistra` branch.
 | Search and trajectory visualization | Complete | `plotSimpleAzElTimeKinodynamicDijkstra` shows generated/settled states, occupied space-time cells, the path, velocity, acceleration, jerk, and true holds. |
 | Small runnable example | Complete | `examples/example_simple_azEl_time_kinodynamic_dijkstra.m` uses a moving full-height gate and asserts that a true hold occurs. |
 | Focused verification | Complete | MATLAB tests cover baseline propagation, moving obstacles, wrapping, position/time refinement, frontier equivalence, equal-cost ordering, lattice-compatible jerk, and intermediate limit enforcement. |
-| Excluded advanced methods | Complete | No safe intervals, A*, cost-changing heuristics, motion primitives, smoothing, optimization, topology refinement, caching, or parallel processing was added. The optional heap and equal-cost ordering preserve Dijkstra cost semantics and are disabled by default. |
+| Baseline separation from advanced methods | Complete | The default path has no safe intervals, A*, cost-changing heuristics, motion primitives, smoothing, optimization, topology guidance, caching, or parallel processing. Optional post-baseline features are disabled by default and mapped below. |
 
 ## Post-baseline feature: position-grid refinement
 
@@ -65,11 +65,18 @@ and measured legacy-example results are recorded in
   final time slice before allocation.
 - `pruneDynamicallyUnreachableStates` builds obstacle-free per-axis backward
   lattice tables and removes states with no remaining discrete jerk sequence.
+- `equalCostTieBreaker = "staticTopology"` runs a separate reverse Dijkstra
+  over time-invariant position occupancy and orders only exactly equal-cost
+  seven-state scan candidates by its cost-to-go map.
 
 The scan frontier, state-index ties, one `timeStep_s`, and maximum-magnitude
 default jerk remain the public defaults. The optional frontier and tie-order
 experiments did not improve compatibility-suite outcomes and are not described
 as performance improvements.
+
+The implementation sites, focused tests, and per-stage rerun tables for new
+advanced features are maintained in
+[`SIMPLE_DIJKSTRA_FEATURE_STAGES.md`](SIMPLE_DIJKSTRA_FEATURE_STAGES.md).
 
 ## Deliberate first-version limitations
 
@@ -105,12 +112,12 @@ The implementation was checked against both the original specification and
 | Public and diagnostic field casing | Complete: public `plan.*` fields use lower camel case; nested diagnostic records use PascalCase. |
 | Visible Dijkstra implementation | Complete: minimum unsettled-state selection, propagation, collision checks, cost relaxation, parent storage, and reconstruction remain inline; no graph toolbox black box is used. |
 | Local-function scope | Complete: local functions are limited to defaults and validation, one refinement responsibility, complete-transition checking, and parent reconstruction. No nested functions are used. |
-| MATLAB Code Analyzer | Complete: `checkcode` reports zero findings for all four implementation and verification files. |
+| MATLAB Code Analyzer | Complete: `checkcode` reports zero findings for the planner, static-topology builder, focused tests, and compatibility runner. |
 
 ## Verification record
 
-MATLAB `checkcode` reports zero findings for the planner and both new
-compatibility/focused test files. The focused test suite contains eleven passing
+MATLAB `checkcode` reports zero findings for the planner, static-topology
+builder, and both compatibility/focused test files. The focused suite contains thirteen passing
 tests:
 
 1. rest-to-rest kinodynamic propagation and dynamic limits;
@@ -129,6 +136,9 @@ tests:
 10. exact final-slice pruning preserving solution/cost with fewer states;
 11. backward dynamic-reachability pruning preserving solution/cost with a
     positive prune count and fewer generated states.
+12. static goal-rooted topology tie breaking preserving successful Dijkstra
+    cost while exposing a monotonically decreasing position route;
+13. rejection of a diagonal topology edge through occupied corner cells.
 
 ## Legacy spiral regression status
 

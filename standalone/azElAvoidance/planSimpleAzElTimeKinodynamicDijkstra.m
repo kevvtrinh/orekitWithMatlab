@@ -44,7 +44,9 @@ function plan = planSimpleAzElTimeKinodynamicDijkstra( ...
 %       .frontierMethod is "scan" for the original visible minimum scan or
 %       "binaryHeap" for the stable indexed priority-queue feature.
 %       .equalCostTieBreaker is "stateIndex" for baseline ordering or
-%       "destinationDistance" to order only exactly equal-cost scan states.
+%       "destinationDistance" or "staticTopology" to order only exactly
+%       equal-cost scan states. Static topology requires time-invariant
+%       occupancy and runs a separate goal-rooted position-grid Dijkstra.
 %       .pruneNonterminalFinalStates discards states on the exact final time
 %       slice that do not satisfy the complete destination tolerances.
 %       .pruneDynamicallyUnreachableStates uses an obstacle-free backward
@@ -68,6 +70,7 @@ function plan = planSimpleAzElTimeKinodynamicDijkstra( ...
 %       .bestKnownCost, .parentStateIndex, .parentJerk_deg_s3, and the
 %       generated-state arrays expose the Dijkstra search.
 %       .gridRefinement contains PascalCase per-level diagnostics.
+%       .staticTopology exposes the optional goal-rooted position search.
 %       State subscripts use [azimuth, elevation, time, azimuth velocity,
 %       elevation velocity, azimuth acceleration, elevation acceleration].
 %**************************************************************************
@@ -305,7 +308,26 @@ if specifiedDestinationStateIsOccupied
         "The specified destination state is occupied.");
 end
 
-%% Section 6: Define The Discrete Jerk Commands
+%% Section 6: Build Optional Static Goal-Rooted Topology
+staticTopology = buildSimpleAzElStaticTopologyDijkstra();
+if options.equalCostTieBreaker == "staticTopology"
+    geometryIsStatic = all( ...
+        occupancy == occupancy(:, :, 1), "all");
+    if ~geometryIsStatic
+        error("planSimpleAzElTimeKinodynamicDijkstra:" + ...
+            "StaticTopologyRequiresStaticOccupancy", ...
+            ["equalCostTieBreaker='staticTopology' requires identical " ...
+            "position occupancy at every search time."]);
+    end
+    staticTopology = buildSimpleAzElStaticTopologyDijkstra( ...
+        occupancy(:, :, 1), azimuthGrid_deg, elevationGrid_deg, ...
+        initialAzimuthIndex, initialElevationIndex, ...
+        destinationAzimuthIndex, destinationElevationIndex, ...
+        options.allowAzimuthWrap);
+    staticTopology.AppliedAsEqualCostTieBreaker = true;
+end
+
+%% Section 7: Define The Discrete Jerk Commands
 if isempty(options.jerkCommands_deg_s3)
     if options.jerkCommandMode == "maximum"
         jerkMagnitude_deg_s3 = limits.maxJerk_deg_s3;
@@ -365,7 +387,7 @@ else
     elevationCanReachDestination = false(0, 0, 0, 0);
 end
 
-%% Section 7: Initialize Dijkstra
+%% Section 8: Initialize Dijkstra
 maximumGeneratedStates = options.maximumGeneratedStates;
 stateSubscripts = zeros(maximumGeneratedStates, 7, "uint32");
 statePosition_deg = nan(maximumGeneratedStates, 2);
@@ -414,7 +436,7 @@ if options.frontierMethod == "binaryHeap"
         frontierLocationByStateIndex, frontierCount, 1, 0);
 end
 
-%% Section 8: Propagate Candidate Kinodynamic States
+%% Section 9: Propagate Candidate Kinodynamic States
 while true
     if options.frontierMethod == "scan"
         unsettledStateIndices = find( ...
@@ -459,6 +481,20 @@ while true
                 sum((accelerationError_deg_s2 ./ ...
                 options.accelerationStep_deg_s2).^2, 2);
             [~, equalCostChoice] = min(tieBreakScore);
+            minimumCostLocation = ...
+                minimumCostLocations(equalCostChoice);
+        elseif options.equalCostTieBreaker == "staticTopology" && ...
+                numel(minimumCostLocations) > 1
+            equalCostStateIndices = ...
+                unsettledStateIndices(minimumCostLocations);
+            equalCostSubscripts = double( ...
+                stateSubscripts(equalCostStateIndices, 1:2));
+            equalCostPositionIndices = sub2ind( ...
+                size(staticTopology.CostToGoal_deg), ...
+                equalCostSubscripts(:, 2), equalCostSubscripts(:, 1));
+            tieBreakScore_deg = ...
+                staticTopology.CostToGoal_deg(equalCostPositionIndices);
+            [~, equalCostChoice] = min(tieBreakScore_deg);
             minimumCostLocation = ...
                 minimumCostLocations(equalCostChoice);
         else
@@ -537,7 +573,7 @@ while true
             0.5 * currentAcceleration_deg_s2 * timeStep_s^2 + ...
             (1 / 6) * appliedJerk_deg_s3 * timeStep_s^3;
 
-        % --- Section 9: Check Limits And Collision -----------------------
+        % --- Section 10: Check Limits And Collision ----------------------
         % A dashed stage keeps the search loop uninterrupted while making
         % the requested limit and collision responsibility easy to locate.
         dynamicsAreInsideLimits = ...
@@ -699,7 +735,7 @@ while true
 
         % An exact-time nonterminal state on the final slice has no outgoing
         % transition and can never become a solution. Optional pruning here
-        % is exact: it applies the same complete terminal test as Section 8
+        % is exact: it applies the same complete terminal test as Section 9
         % before the state consumes generated-state storage.
         if options.pruneNonterminalFinalStates && ...
                 neighborTimeIndex == numel(timeGrid_s)
@@ -796,7 +832,7 @@ while true
                 timeGrid_s(neighborTimeIndex);
         end
 
-        % --- Section 10: Relax Dijkstra Costs ----------------------------
+        % --- Section 11: Relax Dijkstra Costs ----------------------------
         transitionCost = timeStep_s + ...
             options.accelerationWeight * ...
             sum(nextAcceleration_deg_s2.^2) * timeStep_s + ...
@@ -825,7 +861,7 @@ while true
     end
 end
 
-%% Section 11: Reconstruct The Trajectory
+%% Section 12: Reconstruct The Trajectory
 if destinationStateIndex > 0
     trajectoryStateIndices = reconstructSimpleDijkstraParents( ...
         parentStateIndex, destinationStateIndex);
@@ -882,7 +918,7 @@ else
     trajectoryIsWaiting = false(0, 1);
 end
 
-%% Section 12: Package The Result
+%% Section 13: Package The Result
 if destinationStateIndex > 0
     success = true;
     message = "Exact-time kinodynamic Dijkstra trajectory found.";
@@ -918,6 +954,7 @@ plan = struct( ...
     "generatedStateCount", generatedStateCount, ...
     "frontierMethod", options.frontierMethod, ...
     "equalCostTieBreaker", options.equalCostTieBreaker, ...
+    "staticTopology", staticTopology, ...
     "dynamicReachabilityPrunedStateCount", ...
     dynamicReachabilityPrunedStateCount, ...
     "azimuthGrid_deg", azimuthGrid_deg, ...
@@ -982,7 +1019,7 @@ plan = struct( ...
     "options", options);
 end
 
-%% Section 13: Local Functions
+%% Section 14: Local Functions
 function options = defaultSimpleDijkstraOptions()
 %% Section 0: Header & Readme
 % SYNTAX
@@ -1205,13 +1242,14 @@ options.frontierMethod = validatestring( ...
     options.frontierMethod, ["scan", "binaryHeap"]);
 options.frontierMethod = string(options.frontierMethod);
 options.equalCostTieBreaker = validatestring( ...
-    options.equalCostTieBreaker, ["stateIndex", "destinationDistance"]);
+    options.equalCostTieBreaker, ...
+    ["stateIndex", "destinationDistance", "staticTopology"]);
 options.equalCostTieBreaker = string(options.equalCostTieBreaker);
 if options.frontierMethod == "binaryHeap" && ...
         options.equalCostTieBreaker ~= "stateIndex"
     error("planSimpleAzElTimeKinodynamicDijkstra:InvalidFrontierOptions", ...
-        ["destinationDistance equal-cost tie breaking is implemented " ...
-        "only for the visible scan frontier."]);
+        ["Non-default equal-cost tie breaking is implemented only for " ...
+        "the visible scan frontier."]);
 end
 validateattributes(options.pruneNonterminalFinalStates, ...
     {'logical', 'numeric'}, {'scalar'});

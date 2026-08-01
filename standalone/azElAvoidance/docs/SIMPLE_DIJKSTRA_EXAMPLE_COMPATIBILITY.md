@@ -169,6 +169,37 @@ first three numbered-example passes:
 These are direct simple-planner results. Rotating slots and alternating slalom
 are both explicitly present: rotating slots remains red, while slalom is green.
 
+### Static goal-rooted topology Dijkstra
+
+The feature is selected with
+`options.equalCostTieBreaker = "staticTopology"`. Planner Section 6 verifies
+that every occupancy slice is identical and calls the separately inspectable
+`buildSimpleAzElStaticTopologyDijkstra` implementation. That function runs
+first-principles reverse Dijkstra on the eight-connected position grid,
+supports wrapped azimuth neighbors, and forbids diagonal obstacle-corner
+cutting. Planner Section 9 uses the resulting exact static-lattice cost only
+after selecting the minimum seven-state Dijkstra cost, so it never promotes a
+higher-cost state. The full record is returned as `plan.staticTopology`.
+
+Two focused tests verify unchanged successful trajectory cost and diagonal
+corner blocking. All thirteen focused tests passed, and Code Analyzer reported
+zero findings. The affected static cases were rerun at doubled budgets:
+
+| Example | Expanded | Generated | Result |
+| --- | ---: | ---: | --- |
+| 01 plan from `azElData` | 9,224 | 20,000 | generated-state cap |
+| 02 Vietnam-China avoidance | 9,443 | 20,000 | generated-state cap |
+| 03 kinodynamic detour | 13,939 | 20,000 | generated-state cap |
+| 05 five-turn spiral | 23,733 | 60,000 | time levels failed; finest hit cap |
+| 07 wrapped azimuth seam | 15,054 | 40,000 | generated-state cap |
+| 08 alternating slalom | 50,859 | 50,859 | **passed** |
+| 09 U-trap escape | 1 | 1 | initial lattice state dynamically unreachable |
+
+No new numbered example passed. Slalom remained green. The topology feature
+therefore remains an optional, documented ordering aid rather than a claimed
+performance improvement. Its code and results are also mapped in
+[`SIMPLE_DIJKSTRA_FEATURE_STAGES.md`](SIMPLE_DIJKSTRA_FEATURE_STAGES.md).
+
 ## Rerunning
 
 Run every case at its base budget:
