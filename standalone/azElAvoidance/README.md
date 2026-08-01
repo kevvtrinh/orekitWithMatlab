@@ -4,6 +4,15 @@ This folder is self-contained. It starts with `azElData` and does not use
 Orekit, a satellite scenario, or any repository startup function.
 Library edits follow the inline-first conventions in [`STYLE.md`](STYLE.md).
 
+The learning-oriented baseline is
+[`planSimpleAzElTimeKinodynamicDijkstra.m`](planSimpleAzElTimeKinodynamicDijkstra.m).
+Its preserved specification and implementation audit are in
+[`SIMPLE_KINODYNAMIC_DIJKSTRA_SPEC.md`](docs/SIMPLE_KINODYNAMIC_DIJKSTRA_SPEC.md)
+and
+[`SIMPLE_KINODYNAMIC_DIJKSTRA_COMPLIANCE.md`](docs/SIMPLE_KINODYNAMIC_DIJKSTRA_COMPLIANCE.md).
+Set `options.positionStepSchedule_deg = [4 2 1 0.5]` to run independent
+coarse-to-fine position lattices and return the finest successful result.
+
 Every numbered entry point in `examples` opens the synchronized combined animation:
 the current 2-D azimuth/elevation geometry is shown beside the accumulating
 3-D azimuth/elevation/time obstacle volume and steering path.
