@@ -1,14 +1,24 @@
 function result = example10RotatingSlots(viewOptions)
-%EXAMPLE10ROTATINGSLOTS Plan and animate four timed slot crossings.
-%
-% result = example10RotatingSlots()
-% result = example10RotatingSlots(viewOptions)
-%
-% Four independently rotating C-shaped barriers surround the goal. The
-% boresight waits in the safe annular chambers until each moving slot offers
-% a valid rate- and acceleration-limited passage. With no viewOptions, the
-% combined animation is visible and plays at a smooth interactive pace.
+%% Section 0: Header & Readme
+% SYNTAX
+%   result = example10RotatingSlots()
+%   result = example10RotatingSlots(viewOptions)
+%**************************************************************************
+% PURPOSE
+%   - Plan and animate four timed slot crossings with chamber waiting.
+%**************************************************************************
+% INPUTS
+%   - viewOptions (scalar struct, optional)
+%       Partial animation options.
+%**************************************************************************
+% OUTPUTS
+%   - result (scalar struct)
+%       Generated problem, successful plan, diagnostics, and view handles.
+%**************************************************************************
+% UNITS
+%   - Angular quantities are degrees; temporal quantities are seconds.
 
+%% Section 1: Resolve The Animation & Generate The Problem
 if nargin < 1
     viewOptions = struct();
 end
@@ -21,6 +31,8 @@ viewOptions = defaultAzElAnimationOptions(viewOptions, struct( ...
     "ObstacleFaceAlpha", 0.06));
 
 problem = makeRotatingSlotGauntlet();
+
+%% Section 2: Plan & Verify Ring Crossings
 plan = planAzElDijkstra( ...
     problem.azElData, problem.startState, problem.stopState, ...
     problem.limits, problem.options);
@@ -49,6 +61,7 @@ if nnz(diagnostics.chamberWait_s >= 10) < 2
         "The plan did not wait in at least two safe chambers.");
 end
 
+%% Section 3: Animate, Package & Report The Result
 view = animateAzElAvoidancePlan( ...
     problem.azElData, plan, viewOptions);
 result = problem;

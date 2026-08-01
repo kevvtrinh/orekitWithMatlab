@@ -1,8 +1,24 @@
 function files = generateDijkstraDocumentationFigures()
-%GENERATEADAPTIVEASTARDOCUMENTATIONFIGURES Rebuild guide illustrations.
+%% Section 0: Header & Readme
+% SYNTAX
+%   files = generateDijkstraDocumentationFigures()
+%**************************************************************************
+% PURPOSE
+%   - Rebuild the four deterministic figures used by the Dijkstra guide.
+%**************************************************************************
+% INPUTS
+%   - None.
+%**************************************************************************
+% OUTPUTS
+%   - files (string column vector)
+%       Absolute paths of the generated PNG files in display order.
+%**************************************************************************
+% UNITS
+%   - Figure quantities use degrees and seconds as labeled.
 
-root = fileparts(fileparts(mfilename("fullpath")));
-addpath(genpath(root));
+%% Section 1: Resolve Paths & Output Names
+packageRoot = fileparts(fileparts(mfilename("fullpath")));
+addpath(genpath(packageRoot));
 outputFolder = fullfile(fileparts(mfilename("fullpath")), "figures");
 if ~isfolder(outputFolder)
     mkdir(outputFolder);
@@ -14,24 +30,31 @@ files(2) = fullfile(outputFolder, "02_progressive_static_search.png");
 files(3) = fullfile(outputFolder, "03_dynamic_safe_intervals.png");
 files(4) = fullfile(outputFolder, "04_rest_to_rest_edge.png");
 
+%% Section 2: Render Every Documentation Figure
 makeWorkspaceTransformationFigure(files(1));
 makeProgressiveStaticFigure(files(2));
 makeDynamicSafeIntervalFigure(files(3));
 makeMotionEdgeFigure(files(4));
 end
 
-function makeWorkspaceTransformationFigure(file)
+%% Section 3: Local Figure Functions
+% Each figure builder owns one complete illustration and is kept separate so
+% plotting details do not conceal the ordered document-generation workflow.
+function makeWorkspaceTransformationFigure(outputFile)
+%% Section 0: Header & Readme
+% Show canonical slices, their space-time interpretation, and packed arrays.
 time_s = [0; 5; 10];
-azimuth = cell(3, 1);
-elevation = cell(3, 1);
-for k = 1:3
-    center = -3 + 3 * (k - 1);
-    azimuth{k} = center + [-1; 1; 1; -1; -1];
-    elevation{k} = [-2; -2; 2; 2; -2];
+azimuth_deg = cell(3, 1);
+elevation_deg = cell(3, 1);
+for sliceIndex = 1:3
+    centerAzimuth_deg = -3 + 3 * (sliceIndex - 1);
+    azimuth_deg{sliceIndex} = centerAzimuth_deg + ...
+        [-1; 1; 1; -1; -1];
+    elevation_deg{sliceIndex} = [-2; -2; 2; 2; -2];
 end
-data = makeAzElObstacleData( ...
-    "Moving forbidden region", time_s, azimuth, elevation);
-obstacleField = buildAzElTimeObstacleField(data);
+azElData = makeAzElObstacleData( ...
+    "Moving forbidden region", time_s, azimuth_deg, elevation_deg);
+obstacleField = buildAzElTimeObstacleField(azElData);
 
 figureHandle = figure( ...
     "Color", "w", "Visible", "off", ...
@@ -42,11 +65,12 @@ colors = lines(3);
 
 ax = nexttile(layout);
 hold(ax, "on");
-for k = 1:3
-    patch(ax, azimuth{k}, elevation{k}, colors(k, :), ...
-        "FaceAlpha", 0.14, "EdgeColor", colors(k, :), ...
+for sliceIndex = 1:3
+    patch(ax, azimuth_deg{sliceIndex}, elevation_deg{sliceIndex}, ...
+        colors(sliceIndex, :), ...
+        "FaceAlpha", 0.14, "EdgeColor", colors(sliceIndex, :), ...
         "LineWidth", 1.8, ...
-        "DisplayName", sprintf("t = %g s", time_s(k)));
+        "DisplayName", sprintf("t = %g s", time_s(sliceIndex)));
 end
 plot(ax, [-5 5], [0 0], "k:", "HandleVisibility", "off");
 axis(ax, "equal");
@@ -60,10 +84,11 @@ legend(ax, "Location", "southoutside", "Orientation", "horizontal");
 
 ax = nexttile(layout);
 hold(ax, "on");
-for k = 1:3
-    patch(ax, azimuth{k}, elevation{k}, ...
-        repmat(time_s(k), size(azimuth{k})), colors(k, :), ...
-        "FaceAlpha", 0.18, "EdgeColor", colors(k, :), ...
+for sliceIndex = 1:3
+    patch(ax, azimuth_deg{sliceIndex}, elevation_deg{sliceIndex}, ...
+        repmat(time_s(sliceIndex), size(azimuth_deg{sliceIndex})), ...
+        colors(sliceIndex, :), ...
+        "FaceAlpha", 0.18, "EdgeColor", colors(sliceIndex, :), ...
         "LineWidth", 1.5);
 end
 grid(ax, "on");
@@ -85,8 +110,9 @@ plot(ax, vertexIndex, obstacle.ElevationDeg, "-s", ...
     "Color", [0.82 0.28 0.13], "MarkerSize", 3, ...
     "DisplayName", "Packed elevation");
 offsets = double(obstacle.SliceOffsets);
-for k = 1:numel(offsets)
-    xline(ax, offsets(k), ":", "Color", [0.25 0.25 0.25], ...
+for offsetIndex = 1:numel(offsets)
+    xline(ax, offsets(offsetIndex), ":", ...
+        "Color", [0.25 0.25 0.25], ...
         "HandleVisibility", "off");
 end
 grid(ax, "on");
@@ -98,15 +124,17 @@ legend(ax, "Location", "southoutside", "Orientation", "horizontal");
 title(layout, ...
     "Workspace transformation: geometry is packed, not voxelized", ...
     "FontWeight", "bold");
-exportgraphics(figureHandle, file, "Resolution", 180);
+exportgraphics(figureHandle, outputFile, "Resolution", 180);
 close(figureHandle);
 end
 
-function makeProgressiveStaticFigure(file)
+function makeProgressiveStaticFigure(outputFile)
+%% Section 0: Header & Readme
+% Show coarse-to-fine static occupancy, contenders, and the selected route.
 time_s = (0:1:30).';
 azimuthBoundary = [-1.5; 1.5; 1.5; -1.5; -1.5];
 elevationBoundary = [-4; -4; 4; 4; -4];
-data = makeAzElObstacleData( ...
+azElData = makeAzElObstacleData( ...
     "Static blocker", time_s, azimuthBoundary, elevationBoundary);
 initialState = restState(0, [-8 0]);
 goalState = restState(30, [8 0]);
@@ -118,7 +146,7 @@ options = struct( ...
     "SafetyMargin_deg", 0.25, ...
     "MaxSearchTime_s", 30);
 plan = planAzElDijkstra( ...
-    data, initialState, goalState, limits, options);
+    azElData, initialState, goalState, limits, options);
 assert(plan.success, "Static documentation example did not plan.");
 
 figureHandle = figure( ...
@@ -128,13 +156,13 @@ layout = tiledlayout(figureHandle, 2, 2, ...
     "TileSpacing", "compact", "Padding", "compact");
 attempts = plan.resolutionAttempts;
 obstacleField = plan.obstacleField;
-for k = 1:numel(attempts)
+for attemptIndex = 1:numel(attempts)
     ax = nexttile(layout);
     hold(ax, "on");
-    step = attempts(k).GridStep_deg;
-    azimuthValues = limits.azimuth_deg(1):step:limits.azimuth_deg(2);
-    elevationValues = ...
-        limits.elevation_deg(1):step:limits.elevation_deg(2);
+    gridStep_deg = attempts(attemptIndex).GridStep_deg;
+    azimuthValues = limits.azimuth_deg(1):gridStep_deg:limits.azimuth_deg(2);
+    elevationValues = limits.elevation_deg(1):gridStep_deg: ...
+        limits.elevation_deg(2);
     [azimuthGrid, elevationGrid] = ...
         meshgrid(azimuthValues, elevationValues);
     blocked = queryAzElTimeObstacle(obstacleField, ...
@@ -151,8 +179,8 @@ for k = 1:numel(attempts)
         [0.85 0.25 0.18], "FaceAlpha", 0.12, ...
         "EdgeColor", [0.55 0.08 0.05], "LineWidth", 1.5, ...
         "DisplayName", "Exact polygon");
-    if attempts(k).Success
-        if attempts(k).Selected
+    if attempts(attemptIndex).Success
+        if attempts(attemptIndex).Selected
             color = [0.03 0.28 0.72];
             style = "-";
             width = 2.8;
@@ -163,8 +191,8 @@ for k = 1:numel(attempts)
             width = 1.8;
             routeName = "Valid contender";
         end
-        plot(ax, attempts(k).CandidatePosition_deg(:, 1), ...
-            attempts(k).CandidatePosition_deg(:, 2), style, ...
+        plot(ax, attempts(attemptIndex).CandidatePosition_deg(:, 1), ...
+            attempts(attemptIndex).CandidatePosition_deg(:, 2), style, ...
             "Color", color, "LineWidth", width, ...
             "DisplayName", routeName);
     end
@@ -182,13 +210,14 @@ for k = 1:numel(attempts)
     grid(ax, "on");
     xlabel(ax, "Azimuth (deg)");
     ylabel(ax, "Elevation (deg)");
-    if attempts(k).Success
-        resultText = sprintf("%.2f deg", attempts(k).ObjectiveCost);
+    if attempts(attemptIndex).Success
+        resultText = sprintf( ...
+            "%.2f deg", attempts(attemptIndex).ObjectiveCost);
     else
         resultText = "no route";
     end
-    title(ax, sprintf("h = %.1f deg: %s", step, resultText));
-    if k == 1
+    title(ax, sprintf("h = %.1f deg: %s", gridStep_deg, resultText));
+    if attemptIndex == 1
         legend(ax, "Location", "southoutside", ...
             "Orientation", "horizontal");
     end
@@ -196,21 +225,24 @@ end
 title(layout, ...
     "Static mode: progressively finer Dijkstra grids, exact polygon checks", ...
     "FontWeight", "bold");
-exportgraphics(figureHandle, file, "Resolution", 180);
+exportgraphics(figureHandle, outputFile, "Resolution", 180);
 close(figureHandle);
 end
 
-function makeDynamicSafeIntervalFigure(file)
+function makeDynamicSafeIntervalFigure(outputFile)
+%% Section 0: Header & Readme
+% Show safe-interval compression and valid routes through space-time.
 time_s = (0:0.5:30).';
-azimuth = cell(numel(time_s), 1);
-elevation = cell(numel(time_s), 1);
-for k = 1:numel(time_s)
-    center = 3.2 * sin(2 * pi * time_s(k) / 15);
-    azimuth{k} = [-1; 1; 1; -1; -1];
-    elevation{k} = center + [-1.2; -1.2; 1.2; 1.2; -1.2];
+azimuth_deg = cell(numel(time_s), 1);
+elevation_deg = cell(numel(time_s), 1);
+for sampleIndex = 1:numel(time_s)
+    centerElevation_deg = 3.2 * sin(2 * pi * time_s(sampleIndex) / 15);
+    azimuth_deg{sampleIndex} = [-1; 1; 1; -1; -1];
+    elevation_deg{sampleIndex} = centerElevation_deg + ...
+        [-1.2; -1.2; 1.2; 1.2; -1.2];
 end
-data = makeAzElObstacleData( ...
-    "Oscillating gate", time_s, azimuth, elevation);
+azElData = makeAzElObstacleData( ...
+    "Oscillating gate", time_s, azimuth_deg, elevation_deg);
 initialState = restState(0, [-6 0]);
 goalState = restState(30, [6 0]);
 limits = standardLimits([-8 8], [-6 6], [2 2], [1 1]);
@@ -221,17 +253,17 @@ options = struct( ...
     "SafetyMargin_deg", 0.15, ...
     "MaxSearchTime_s", 20);
 plan = planAzElDijkstra( ...
-    data, initialState, goalState, limits, options);
+    azElData, initialState, goalState, limits, options);
 assert(plan.success, "Dynamic documentation example did not plan.");
 obstacleField = plan.obstacleField;
 
 probeElevation = [-4; 0; 4];
 queryTime = time_s;
 blocked = false(numel(probeElevation), numel(queryTime));
-for k = 1:numel(probeElevation)
-    blocked(k, :) = queryAzElTimeObstacle(obstacleField, ...
+for probeIndex = 1:numel(probeElevation)
+    blocked(probeIndex, :) = queryAzElTimeObstacle(obstacleField, ...
         zeros(numel(queryTime), 1), ...
-        repmat(probeElevation(k), numel(queryTime), 1), ...
+        repmat(probeElevation(probeIndex), numel(queryTime), 1), ...
         queryTime, struct( ...
         "SafetyMarginDeg", options.SafetyMargin_deg)).';
 end
@@ -261,19 +293,21 @@ ax = nexttile(layout);
 hold(ax, "on");
 sliceIndex = unique(round(linspace( ...
     1, numel(time_s), min(18, numel(time_s)))));
-for k = sliceIndex
-    patch(ax, azimuth{k}, elevation{k}, ...
-        repmat(time_s(k), size(azimuth{k})), ...
+for displaySliceIndex = sliceIndex
+    patch(ax, azimuth_deg{displaySliceIndex}, ...
+        elevation_deg{displaySliceIndex}, ...
+        repmat(time_s(displaySliceIndex), ...
+        size(azimuth_deg{displaySliceIndex})), ...
         [0.80 0.18 0.15], ...
         "FaceAlpha", 0.05, "EdgeColor", [0.65 0.18 0.16], ...
         "LineWidth", 0.55, "HandleVisibility", "off");
 end
 attempts = plan.resolutionAttempts;
-for k = 1:numel(attempts)
-    if ~attempts(k).Success
+for attemptIndex = 1:numel(attempts)
+    if ~attempts(attemptIndex).Success
         continue;
     end
-    if attempts(k).Selected
+    if attempts(attemptIndex).Selected
         color = [0.02 0.25 0.72];
         style = "-";
         width = 2.8;
@@ -284,9 +318,9 @@ for k = 1:numel(attempts)
         width = 1.5;
         name = "Valid contender";
     end
-    plot3(ax, attempts(k).CandidatePosition_deg(:, 1), ...
-        attempts(k).CandidatePosition_deg(:, 2), ...
-        attempts(k).CandidateTime_s, style, ...
+    plot3(ax, attempts(attemptIndex).CandidatePosition_deg(:, 1), ...
+        attempts(attemptIndex).CandidatePosition_deg(:, 2), ...
+        attempts(attemptIndex).CandidateTime_s, style, ...
         "Color", color, "LineWidth", width, ...
         "DisplayName", name);
 end
@@ -305,15 +339,15 @@ legend(ax, "Location", "southoutside", "Orientation", "horizontal");
 title(layout, ...
     "Dynamic mode: one node represents a spatial state and a safe interval", ...
     "FontWeight", "bold");
-exportgraphics(figureHandle, file, "Resolution", 180);
+exportgraphics(figureHandle, outputFile, "Resolution", 180);
 close(figureHandle);
 end
 
-function makeMotionEdgeFigure(file)
-[triangularTime, triangular] = ...
-    motionProfile(4, 10, 2, 0.02);
-[trapezoidalTime, trapezoidal] = ...
-    motionProfile(12, 3, 1, 0.02);
+function makeMotionEdgeFigure(outputFile)
+%% Section 0: Header & Readme
+% Compare triangular and trapezoidal rest-to-rest slew profiles.
+[triangularTime_s, triangularProfile] = motionProfile(4, 10, 2, 0.02);
+[trapezoidalTime_s, trapezoidalProfile] = motionProfile(12, 3, 1, 0.02);
 
 figureHandle = figure( ...
     "Color", "w", "Visible", "off", ...
@@ -321,8 +355,8 @@ figureHandle = figure( ...
 layout = tiledlayout(figureHandle, 3, 2, ...
     "TileSpacing", "compact", "Padding", "compact");
 names = ["Triangular edge", "Trapezoidal edge"];
-times = {triangularTime, trapezoidalTime};
-profiles = {triangular, trapezoidal};
+times = {triangularTime_s, trapezoidalTime_s};
+profiles = {triangularProfile, trapezoidalProfile};
 labels = ["Position (deg)", "Velocity (deg/s)", ...
     "Acceleration (deg/s^2)"];
 fields = ["Position", "Velocity", "Acceleration"];
@@ -343,73 +377,85 @@ end
 title(layout, ...
     "Each graph edge is retimed as an acceleration-limited rest-to-rest slew", ...
     "FontWeight", "bold");
-exportgraphics(figureHandle, file, "Resolution", 180);
+exportgraphics(figureHandle, outputFile, "Resolution", 180);
 close(figureHandle);
 end
 
 function [time_s, profile] = motionProfile( ...
-        distance, maximumVelocity, maximumAcceleration, step)
-switchDistance = maximumVelocity^2 / maximumAcceleration;
-if distance <= switchDistance
-    accelerationTime = sqrt(distance / maximumAcceleration);
-    cruiseTime = 0;
-    peakVelocity = maximumAcceleration * accelerationTime;
+        distance_deg, maximumVelocity_deg_s, ...
+        maximumAcceleration_deg_s2, sampleStep_s)
+%% Section 0: Header & Readme
+% Build the exact one-axis rest-to-rest profile illustrated in the guide.
+switchDistance_deg = maximumVelocity_deg_s^2 / ...
+    maximumAcceleration_deg_s2;
+if distance_deg <= switchDistance_deg
+    accelerationTime_s = sqrt(distance_deg / maximumAcceleration_deg_s2);
+    cruiseTime_s = 0;
+    peakVelocity_deg_s = maximumAcceleration_deg_s2 * accelerationTime_s;
 else
-    accelerationTime = maximumVelocity / maximumAcceleration;
-    cruiseTime = ...
-        (distance - switchDistance) / maximumVelocity;
-    peakVelocity = maximumVelocity;
+    accelerationTime_s = maximumVelocity_deg_s / maximumAcceleration_deg_s2;
+    cruiseTime_s = (distance_deg - switchDistance_deg) / ...
+        maximumVelocity_deg_s;
+    peakVelocity_deg_s = maximumVelocity_deg_s;
 end
-duration = 2 * accelerationTime + cruiseTime;
-time_s = (0:step:duration).';
-if time_s(end) < duration
-    time_s(end + 1, 1) = duration;
+duration_s = 2 * accelerationTime_s + cruiseTime_s;
+time_s = (0:sampleStep_s:duration_s).';
+if time_s(end) < duration_s
+    time_s(end + 1, 1) = duration_s;
 end
-position = zeros(size(time_s));
-velocity = zeros(size(time_s));
-acceleration = zeros(size(time_s));
-cruiseEnd = accelerationTime + cruiseTime;
-accelerationDistance = ...
-    0.5 * maximumAcceleration * accelerationTime^2;
-for k = 1:numel(time_s)
-    t = time_s(k);
-    if t < accelerationTime
-        acceleration(k) = maximumAcceleration;
-        velocity(k) = maximumAcceleration * t;
-        position(k) = 0.5 * maximumAcceleration * t^2;
-    elseif t < cruiseEnd
-        velocity(k) = peakVelocity;
-        position(k) = accelerationDistance + ...
-            peakVelocity * (t - accelerationTime);
-    elseif t < duration
-        remaining = duration - t;
-        acceleration(k) = -maximumAcceleration;
-        velocity(k) = maximumAcceleration * remaining;
-        position(k) = distance - ...
-            0.5 * maximumAcceleration * remaining^2;
+position_deg = zeros(size(time_s));
+velocity_deg_s = zeros(size(time_s));
+acceleration_deg_s2 = zeros(size(time_s));
+cruiseEndTime_s = accelerationTime_s + cruiseTime_s;
+accelerationDistance_deg = 0.5 * maximumAcceleration_deg_s2 * ...
+    accelerationTime_s^2;
+for sampleIndex = 1:numel(time_s)
+    sampleTime_s = time_s(sampleIndex);
+    if sampleTime_s < accelerationTime_s
+        acceleration_deg_s2(sampleIndex) = maximumAcceleration_deg_s2;
+        velocity_deg_s(sampleIndex) = maximumAcceleration_deg_s2 * ...
+            sampleTime_s;
+        position_deg(sampleIndex) = 0.5 * ...
+            maximumAcceleration_deg_s2 * sampleTime_s^2;
+    elseif sampleTime_s < cruiseEndTime_s
+        velocity_deg_s(sampleIndex) = peakVelocity_deg_s;
+        position_deg(sampleIndex) = accelerationDistance_deg + ...
+            peakVelocity_deg_s * (sampleTime_s - accelerationTime_s);
+    elseif sampleTime_s < duration_s
+        remainingTime_s = duration_s - sampleTime_s;
+        acceleration_deg_s2(sampleIndex) = -maximumAcceleration_deg_s2;
+        velocity_deg_s(sampleIndex) = maximumAcceleration_deg_s2 * ...
+            remainingTime_s;
+        position_deg(sampleIndex) = distance_deg - 0.5 * ...
+            maximumAcceleration_deg_s2 * remainingTime_s^2;
     else
-        position(k) = distance;
+        position_deg(sampleIndex) = distance_deg;
     end
 end
 profile = struct( ...
-    "Position", position, ...
-    "Velocity", velocity, ...
-    "Acceleration", acceleration);
+    "Position", position_deg, ...
+    "Velocity", velocity_deg_s, ...
+    "Acceleration", acceleration_deg_s2);
 end
 
-function state = restState(time_s, position)
+function state = restState(time_s, position_deg)
+%% Section 0: Header & Readme
+% Keep the identical rest-state schema shared by both planner figures.
 state = struct( ...
     "time_s", time_s, ...
-    "position_deg", position, ...
+    "position_deg", position_deg, ...
     "velocity_deg_s", [0 0], ...
     "acceleration_deg_s2", [0 0]);
 end
 
 function limits = standardLimits( ...
-        azimuth, elevation, velocity, acceleration)
+        azimuthLimits_deg, elevationLimits_deg, ...
+        maximumVelocity_deg_s, maximumAcceleration_deg_s2)
+%% Section 0: Header & Readme
+% Keep the identical limit schema shared by both planner figures.
 limits = struct( ...
-    "azimuth_deg", azimuth, ...
-    "elevation_deg", elevation, ...
-    "maxVelocity_deg_s", velocity, ...
-    "maxAcceleration_deg_s2", acceleration);
+    "azimuth_deg", azimuthLimits_deg, ...
+    "elevation_deg", elevationLimits_deg, ...
+    "maxVelocity_deg_s", maximumVelocity_deg_s, ...
+    "maxAcceleration_deg_s2", maximumAcceleration_deg_s2);
 end

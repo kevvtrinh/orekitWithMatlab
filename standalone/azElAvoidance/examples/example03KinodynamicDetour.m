@@ -1,9 +1,27 @@
 function [result, handles] = example03KinodynamicDetour(viewOptions)
-%EXAMPLE03KINODYNAMICDETOUR Use Dijkstra around a static block.
-%
-% The fixed endpoint and obstacle are deliberately simple, but the returned
-% command must still satisfy rate, acceleration, time, and collision limits.
+%% Section 0: Header & Readme
+% SYNTAX
+%   [result, handles] = example03KinodynamicDetour()
+%   [result, handles] = example03KinodynamicDetour(viewOptions)
+%**************************************************************************
+% PURPOSE
+%   - Demonstrate a static Dijkstra detour that still obeys time, rate,
+%     acceleration, and exact collision constraints.
+%**************************************************************************
+% INPUTS
+%   - viewOptions (scalar struct, optional)
+%       Partial animation options.
+%**************************************************************************
+% OUTPUTS
+%   - result (scalar struct)
+%       Successful plan plus animation handles.
+%   - handles (scalar struct)
+%       Figure and axes handles from animateAzElAvoidancePlan.
+%**************************************************************************
+% UNITS
+%   - Angular quantities are degrees; temporal quantities are seconds.
 
+%% Section 1: Build The Static Planning Problem
 if nargin < 1
     viewOptions = struct();
 end
@@ -13,8 +31,16 @@ obstacleAzimuth = [-1; 1; 1; -1; -1];
 obstacleElevation = [43; 43; 47; 47; 43];
 azElData = makeAzElObstacleData( ...
     "Central blocker", time_s, obstacleAzimuth, obstacleElevation);
-startState = boundaryState(0, [-6, 45]);
-stopState = boundaryState(40, [6, 45]);
+startState = struct( ...
+    "time_s", 0, ...
+    "position_deg", [-6, 45], ...
+    "velocity_deg_s", [0, 0], ...
+    "acceleration_deg_s2", [0, 0]);
+stopState = struct( ...
+    "time_s", 40, ...
+    "position_deg", [6, 45], ...
+    "velocity_deg_s", [0, 0], ...
+    "acceleration_deg_s2", [0, 0]);
 limits = struct( ...
     "azimuth_deg", [-180, 180], ...
     "elevation_deg", [40, 50], ...
@@ -26,6 +52,7 @@ options = struct( ...
     "SafetyMargin_deg", 0.1, ...
     "MaxSearchTime_s", 60);
 
+%% Section 2: Plan & Independently Validate The Command
 result = planAzElDijkstra( ...
     azElData, startState, stopState, limits, options);
 if ~result.success
@@ -43,6 +70,7 @@ if any(blocked)
         "The returned command contains %d blocked samples.", nnz(blocked));
 end
 
+%% Section 3: Animate & Report The Result
 handles = animateAzElAvoidancePlan( ...
     azElData, result, defaultAzElAnimationOptions( ...
     viewOptions, struct( ...
@@ -52,12 +80,4 @@ result.animationHandles = handles;
 fprintf("Dijkstra detour: %.3f deg, %.3f s, %d expansions.\n", ...
     result.angularPathLength_deg, result.searchElapsed_s, ...
     result.expandedNodeCount);
-end
-
-function state = boundaryState(time_s, position_deg)
-state = struct( ...
-    "time_s", time_s, ...
-    "position_deg", position_deg, ...
-    "velocity_deg_s", [0, 0], ...
-    "acceleration_deg_s2", [0, 0]);
 end

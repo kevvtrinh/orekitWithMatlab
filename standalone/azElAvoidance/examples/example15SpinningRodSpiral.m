@@ -1,13 +1,25 @@
 function result = example15SpinningRodSpiral(viewOptions)
-%EXAMPLE15SPINNINGRODSPIRAL Time a faster rod through a notched spiral.
-%
-% result = example15SpinningRodSpiral()
-% result = example15SpinningRodSpiral(viewOptions)
-%
-% A fast sector-shaped rod repeatedly sweeps a two-turn spiral. Three
-% recessed, rod-protected notches let the boresight stop safely until the
-% rod passes. The Dijkstra planner receives no guide path or corridor.
+%% Section 0: Header & Readme
+% SYNTAX
+%   result = example15SpinningRodSpiral()
+%   result = example15SpinningRodSpiral(viewOptions)
+%**************************************************************************
+% PURPOSE
+%   - Plan through a notched spiral swept by a faster rotating rod.
+%   - Verify unguided winding and protected waiting in the notches.
+%**************************************************************************
+% INPUTS
+%   - viewOptions (scalar struct, optional)
+%       Partial animation options.
+%**************************************************************************
+% OUTPUTS
+%   - result (scalar struct)
+%       Generated problem, successful plan, diagnostics, and view handles.
+%**************************************************************************
+% UNITS
+%   - Angular quantities are degrees; temporal quantities are seconds.
 
+%% Section 1: Resolve The Animation & Generate The Problem
 if nargin < 1
     viewOptions = struct();
 end
@@ -20,6 +32,8 @@ viewOptions = defaultAzElAnimationOptions(viewOptions, struct( ...
     "ShowFuturePath", true));
 
 problem = makeSpinningRodSpiralGauntlet();
+
+%% Section 2: Plan & Verify Winding, Waiting & Safety
 plan = planAzElDijkstra( ...
     problem.azElData, problem.startState, problem.stopState, ...
     problem.limits, problem.options);
@@ -56,6 +70,8 @@ if isfield(plan.options, "GuidePath_deg") || ...
     error("example15SpinningRodSpiral:ExternalGuideUsed", ...
         "The spinning-rod spiral must use unguided Dijkstra.");
 end
+
+%% Section 3: Animate, Annotate & Report The Result
 view = animateAzElAvoidancePlan( ...
     problem.azElData, plan, viewOptions);
 view = addNotchOverlays(view, problem);
@@ -71,29 +87,33 @@ fprintf([ ...
     diagnostics.waitingNotchCount, plan.searchElapsed_s);
 end
 
+%% Section 4: Local Visualization Functions
 function view = addNotchOverlays(view, problem)
-centers = problem.geometry.notchCenters_deg;
-radius = problem.geometry.notchSafeRadius_deg;
-angle = linspace(0, 2 * pi, 49).';
-view.NotchBoundaries2D = gobjects(size(centers, 1), 1);
-view.NotchColumns3D = gobjects(size(centers, 1), 1);
-for notch = 1:size(centers, 1)
-    x = centers(notch, 1) + radius * cos(angle);
-    y = centers(notch, 2) + radius * sin(angle);
-    label = "";
-    visibility = "off";
-    if notch == 1
-        label = "Protected notch";
-        visibility = "on";
+notchCenters_deg = problem.geometry.notchCenters_deg;
+notchRadius_deg = problem.geometry.notchSafeRadius_deg;
+circleAngle_rad = linspace(0, 2 * pi, 49).';
+view.NotchBoundaries2D = gobjects(size(notchCenters_deg, 1), 1);
+view.NotchColumns3D = gobjects(size(notchCenters_deg, 1), 1);
+for notchIndex = 1:size(notchCenters_deg, 1)
+    notchAzimuth_deg = notchCenters_deg(notchIndex, 1) + ...
+        notchRadius_deg * cos(circleAngle_rad);
+    notchElevation_deg = notchCenters_deg(notchIndex, 2) + ...
+        notchRadius_deg * sin(circleAngle_rad);
+    displayName = "";
+    handleVisibility = "off";
+    if notchIndex == 1
+        displayName = "Protected notch";
+        handleVisibility = "on";
     end
-    view.NotchBoundaries2D(notch) = plot( ...
-        view.AzElAxes, x, y, ":", ...
+    view.NotchBoundaries2D(notchIndex) = plot( ...
+        view.AzElAxes, notchAzimuth_deg, notchElevation_deg, ":", ...
         "Color", [0.10 0.55 0.25], "LineWidth", 1.8, ...
-        "DisplayName", label, "HandleVisibility", visibility);
-    view.NotchColumns3D(notch) = plot3( ...
+        "DisplayName", displayName, ...
+        "HandleVisibility", handleVisibility);
+    view.NotchColumns3D(notchIndex) = plot3( ...
         view.ObstacleFieldAxes, ...
-        centers(notch, 1) * [1 1], ...
-        centers(notch, 2) * [1 1], ...
+        notchCenters_deg(notchIndex, 1) * [1 1], ...
+        notchCenters_deg(notchIndex, 2) * [1 1], ...
         [problem.startState.time_s problem.stopState.time_s], ":", ...
         "Color", [0.10 0.55 0.25], "LineWidth", 1.2, ...
         "HandleVisibility", "off");

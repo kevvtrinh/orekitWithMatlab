@@ -1,11 +1,24 @@
 function problem = makeSpinningRodSpiralGauntlet()
-%MAKESPINNINGRODSPIRALGAUNTLET Build a notched spiral and rotating sweeper.
-%
-% The spiral wall contains three recessed shelters. A faster rotating sector
-% sweeps the traversable spiral corridor, but is geometrically clipped out
-% inside each shelter. The planner receives only canonical azElData and must
-% discover both the winding route and all wait locations autonomously.
+%% Section 0: Header & Readme
+% SYNTAX
+%   problem = makeSpinningRodSpiralGauntlet()
+%**************************************************************************
+% PURPOSE
+%   - Build a notched two-turn spiral and a faster rotating two-arm sector.
+%   - Preserve safe recesses where the boresight can wait for the rod.
+%**************************************************************************
+% INPUTS
+%   - None.
+%**************************************************************************
+% OUTPUTS
+%   - problem (scalar struct)
+%       Canonical obstacles, endpoint states, limits, options, and geometry.
+%**************************************************************************
+% UNITS
+%   - Angular quantities are degrees except fields ending in _rad.
+%   - Temporal quantities are seconds.
 
+%% Section 1: Define The Time Base & Geometry
 activeTime_s = (0:0.25:15.50).';
 time_s = [activeTime_s; 240];
 geometry = struct( ...
@@ -27,21 +40,31 @@ geometry = struct( ...
     "rodActiveEnd_s", 15, ...
     "rodNotchCutHalfWidth_deg", 1.30);
 
-[wallAzimuth, wallElevation, notchCenters] = ...
-    notchedSpiralWall(geometry);
-geometry.notchCenters_deg = notchCenters;
-[rodAzimuth, rodElevation] = spinningRodSlices( ...
+%% Section 2: Build The Static Spiral & Moving Rod
+[wallAzimuth_deg, wallElevation_deg, notchCenters_deg] = notchedSpiralWall( ...
+    geometry);
+geometry.notchCenters_deg = notchCenters_deg;
+[rodAzimuth_deg, rodElevation_deg] = spinningRodSlices( ...
     time_s, geometry);
 
 wall = makeAzElObstacleData( ...
     "Notched two-turn spiral wall", time_s([1 end]), ...
-    wallAzimuth, wallElevation);
+    wallAzimuth_deg, wallElevation_deg);
 rod = makeAzElObstacleData( ...
-    "Fast spinning rod", time_s, rodAzimuth, rodElevation);
+    "Fast spinning rod", time_s, rodAzimuth_deg, rodElevation_deg);
 azElData = combineAzElObstacles(wall, rod);
 
-startState = boundaryState(0, notchCenters(1, :));
-stopState = boundaryState(240, [0 0]);
+%% Section 3: Assemble The Planning Problem
+startState = struct( ...
+    "time_s", 0, ...
+    "position_deg", notchCenters_deg(1, :), ...
+    "velocity_deg_s", [0 0], ...
+    "acceleration_deg_s2", [0 0]);
+stopState = struct( ...
+    "time_s", 240, ...
+    "position_deg", [0 0], ...
+    "velocity_deg_s", [0 0], ...
+    "acceleration_deg_s2", [0 0]);
 limits = struct( ...
     "azimuth_deg", [-18 18], ...
     "elevation_deg", [-18 18], ...
@@ -72,171 +95,198 @@ problem = struct( ...
     "geometry", geometry);
 end
 
-function [azimuth, elevation, notchCenters] = ...
-        notchedSpiralWall(geometry)
-theta = linspace( ...
+%% Section 4: Local Geometry Functions
+% These routines share the spiral/rod geometric invariants. Keeping them
+% local prevents the scenario assembly above from becoming a vertex-level
+% implementation while avoiding extra single-purpose files.
+function [azimuth_deg, elevation_deg, notchCenters_deg] = notchedSpiralWall(geometry)
+theta_rad = linspace( ...
     0, 2 * pi * geometry.turnCount, ...
     geometry.wallSampleCount).';
-radius = geometry.innerRadius_deg + ...
-    geometry.turnSpacing_deg * theta / (2 * pi);
-baseAzimuth = radius .* cos(theta);
-baseElevation = radius .* sin(theta);
+radius_deg = geometry.innerRadius_deg + ...
+    geometry.turnSpacing_deg * theta_rad / (2 * pi);
+baseAzimuth_deg = radius_deg .* cos(theta_rad);
+baseElevation_deg = radius_deg .* sin(theta_rad);
 [normalAzimuth, normalElevation] = curveNormals( ...
-    baseAzimuth, baseElevation);
+    baseAzimuth_deg, baseElevation_deg);
 
-notchCenters = zeros(numel(geometry.notchTheta_rad), 2);
-normalShift = zeros(size(theta));
-for notch = 1:numel(geometry.notchTheta_rad)
-    centerTheta = geometry.notchTheta_rad(notch);
-    bump = exp(-0.5 * ((theta - centerTheta) ./ ...
+notchCenters_deg = zeros(numel(geometry.notchTheta_rad), 2);
+normalShift_deg = zeros(size(theta_rad));
+for notchIndex = 1:numel(geometry.notchTheta_rad)
+    notchCenterTheta_rad = geometry.notchTheta_rad(notchIndex);
+    notchWeight = exp(-0.5 * ((theta_rad - notchCenterTheta_rad) ./ ...
         geometry.notchAngularSigma_rad).^2);
-    normalShift = normalShift + geometry.notchDepth_deg * bump;
-    centerRadius = geometry.innerRadius_deg + ...
-        geometry.turnSpacing_deg * centerTheta / (2 * pi);
-    notchCenters(notch, :) = ...
-        centerRadius * [cos(centerTheta) sin(centerTheta)];
+    normalShift_deg = normalShift_deg + ...
+        geometry.notchDepth_deg * notchWeight;
+    notchCenterRadius_deg = geometry.innerRadius_deg + ...
+        geometry.turnSpacing_deg * notchCenterTheta_rad / (2 * pi);
+    notchCenters_deg(notchIndex, :) = notchCenterRadius_deg * ...
+        [cos(notchCenterTheta_rad) sin(notchCenterTheta_rad)];
 end
 
 % Shift the wall toward the inner neighboring turn. On the traversed side,
 % this produces a smooth recess without opening a shortcut through the wall.
-centerAzimuth = baseAzimuth + normalShift .* normalAzimuth;
-centerElevation = baseElevation + normalShift .* normalElevation;
+centerAzimuth_deg = baseAzimuth_deg + normalShift_deg .* normalAzimuth;
+centerElevation_deg = baseElevation_deg + normalShift_deg .* normalElevation;
 [shiftedNormalAzimuth, shiftedNormalElevation] = curveNormals( ...
-    centerAzimuth, centerElevation);
-halfWidth = geometry.wallHalfWidth_deg;
-leftAzimuth = centerAzimuth + halfWidth * shiftedNormalAzimuth;
-leftElevation = centerElevation + halfWidth * shiftedNormalElevation;
-rightAzimuth = centerAzimuth - halfWidth * shiftedNormalAzimuth;
-rightElevation = centerElevation - halfWidth * shiftedNormalElevation;
-azimuth = [leftAzimuth; flipud(rightAzimuth); leftAzimuth(1)];
-elevation = [leftElevation; flipud(rightElevation); leftElevation(1)];
+    centerAzimuth_deg, centerElevation_deg);
+wallHalfWidth_deg = geometry.wallHalfWidth_deg;
+leftAzimuth_deg = centerAzimuth_deg + ...
+    wallHalfWidth_deg * shiftedNormalAzimuth;
+leftElevation_deg = centerElevation_deg + ...
+    wallHalfWidth_deg * shiftedNormalElevation;
+rightAzimuth_deg = centerAzimuth_deg - ...
+    wallHalfWidth_deg * shiftedNormalAzimuth;
+rightElevation_deg = centerElevation_deg - ...
+    wallHalfWidth_deg * shiftedNormalElevation;
+azimuth_deg = [ ...
+    leftAzimuth_deg; flipud(rightAzimuth_deg); leftAzimuth_deg(1)];
+elevation_deg = [ ...
+    leftElevation_deg; flipud(rightElevation_deg); leftElevation_deg(1)];
 end
 
 function [normalAzimuth, normalElevation] = curveNormals( ...
-        azimuth, elevation)
-deltaAzimuth = gradient(azimuth);
-deltaElevation = gradient(elevation);
-lengthValue = max(hypot(deltaAzimuth, deltaElevation), eps);
-normalAzimuth = -deltaElevation ./ lengthValue;
-normalElevation = deltaAzimuth ./ lengthValue;
+        azimuth_deg, elevation_deg)
+tangentAzimuth_deg = gradient(azimuth_deg);
+tangentElevation_deg = gradient(elevation_deg);
+tangentMagnitude_deg = max( ...
+    hypot(tangentAzimuth_deg, tangentElevation_deg), eps);
+normalAzimuth = -tangentElevation_deg ./ tangentMagnitude_deg;
+normalElevation = tangentAzimuth_deg ./ tangentMagnitude_deg;
 end
 
-function [azimuth, elevation] = spinningRodSlices(time_s, geometry)
-azimuth = cell(numel(time_s), 1);
-elevation = cell(numel(time_s), 1);
-for sample = 1:numel(time_s)
-    if time_s(sample) < geometry.rodActiveStart_s || ...
-            time_s(sample) > geometry.rodActiveEnd_s
-        azimuth{sample} = zeros(0, 1);
-        elevation{sample} = zeros(0, 1);
+function [azimuth_deg, elevation_deg] = spinningRodSlices( ...
+        time_s, geometry)
+azimuth_deg = cell(numel(time_s), 1);
+elevation_deg = cell(numel(time_s), 1);
+for sampleIndex = 1:numel(time_s)
+    rodIsInactive = time_s(sampleIndex) < geometry.rodActiveStart_s || ...
+        time_s(sampleIndex) > geometry.rodActiveEnd_s;
+    if rodIsInactive
+        azimuth_deg{sampleIndex} = zeros(0, 1);
+        elevation_deg{sampleIndex} = zeros(0, 1);
         continue;
     end
-    centerAngle_deg = geometry.rodPhase_deg + ...
-        geometry.rodAngularRate_deg_s * time_s(sample);
-    [azimuth{sample}, elevation{sample}] = ...
-        clippedRodSector(centerAngle_deg, geometry);
+    rodCenterAngle_deg = geometry.rodPhase_deg + ...
+        geometry.rodAngularRate_deg_s * time_s(sampleIndex);
+    [azimuth_deg{sampleIndex}, elevation_deg{sampleIndex}] = clippedRodSector( ...
+        rodCenterAngle_deg, geometry);
 end
 end
 
-function [azimuth, elevation] = clippedRodSector( ...
+function [azimuth_deg, elevation_deg] = clippedRodSector( ...
         centerAngle_deg, geometry)
-[firstAzimuth, firstElevation] = clippedRodArm( ...
+[firstAzimuth_deg, firstElevation_deg] = clippedRodArm( ...
     centerAngle_deg, geometry);
-[secondAzimuth, secondElevation] = clippedRodArm( ...
+[secondAzimuth_deg, secondElevation_deg] = clippedRodArm( ...
     centerAngle_deg + 180, geometry);
-azimuth = [firstAzimuth; NaN; secondAzimuth];
-elevation = [firstElevation; NaN; secondElevation];
+azimuth_deg = [firstAzimuth_deg; NaN; secondAzimuth_deg];
+elevation_deg = [firstElevation_deg; NaN; secondElevation_deg];
 end
 
-function [azimuth, elevation] = clippedRodArm( ...
+function [azimuth_deg, elevation_deg] = clippedRodArm( ...
         centerAngle_deg, geometry)
-angle = deg2rad(centerAngle_deg);
-intervals = [geometry.rodHubRadius_deg geometry.rodOuterRadius_deg];
-for notch = 1:size(geometry.notchCenters_deg, 1)
-    center = geometry.notchCenters_deg(notch, :);
-    notchRadius = hypot(center(1), center(2));
-    notchAngle = atan2(center(2), center(1));
-    angularAllowance = deg2rad(geometry.rodHalfAngle_deg) + ...
-        asin(min(1, geometry.notchSafeRadius_deg / notchRadius));
-    if abs(wrapRadians(notchAngle - angle)) <= angularAllowance
-        cut = notchRadius + ...
+centerAngle_rad = deg2rad(centerAngle_deg);
+radialIntervals_deg = [ ...
+    geometry.rodHubRadius_deg geometry.rodOuterRadius_deg];
+for notchIndex = 1:size(geometry.notchCenters_deg, 1)
+    notchCenter_deg = geometry.notchCenters_deg(notchIndex, :);
+    notchRadius_deg = hypot(notchCenter_deg(1), notchCenter_deg(2));
+    notchAngle_rad = atan2(notchCenter_deg(2), notchCenter_deg(1));
+    angularAllowance_rad = deg2rad(geometry.rodHalfAngle_deg) + ...
+        asin(min(1, geometry.notchSafeRadius_deg / notchRadius_deg));
+    notchIntersectsArm = abs(wrapRadians( ...
+        notchAngle_rad - centerAngle_rad)) <= angularAllowance_rad;
+    if notchIntersectsArm
+        cutInterval_deg = notchRadius_deg + ...
             geometry.rodNotchCutHalfWidth_deg * [-1 1];
-        intervals = subtractInterval(intervals, cut);
+        radialIntervals_deg = subtractInterval( ...
+            radialIntervals_deg, cutInterval_deg);
     end
 end
 
-azimuthParts = cell(size(intervals, 1), 1);
-elevationParts = cell(size(intervals, 1), 1);
-for part = 1:size(intervals, 1)
-    [azimuthParts{part}, elevationParts{part}] = annularSector( ...
-        intervals(part, 1), intervals(part, 2), ...
+azimuthParts_deg = cell(size(radialIntervals_deg, 1), 1);
+elevationParts_deg = cell(size(radialIntervals_deg, 1), 1);
+for intervalIndex = 1:size(radialIntervals_deg, 1)
+    [azimuthParts_deg{intervalIndex}, ...
+            elevationParts_deg{intervalIndex}] = annularSector( ...
+        radialIntervals_deg(intervalIndex, 1), ...
+        radialIntervals_deg(intervalIndex, 2), ...
         centerAngle_deg, geometry.rodHalfAngle_deg);
 end
-[azimuth, elevation] = joinRegions(azimuthParts, elevationParts);
+[azimuth_deg, elevation_deg] = joinRegions( ...
+    azimuthParts_deg, elevationParts_deg);
 end
 
-function output = subtractInterval(input, cut)
-parts = zeros(0, 2);
-for k = 1:size(input, 1)
-    first = input(k, 1);
-    last = input(k, 2);
-    if cut(2) <= first || cut(1) >= last
-        parts(end + 1, :) = [first last]; %#ok<AGROW>
+function remainingIntervals_deg = subtractInterval( ...
+        inputIntervals_deg, cutInterval_deg)
+remainingIntervals_deg = zeros(0, 2);
+for intervalIndex = 1:size(inputIntervals_deg, 1)
+    intervalFirst_deg = inputIntervals_deg(intervalIndex, 1);
+    intervalLast_deg = inputIntervals_deg(intervalIndex, 2);
+    intervalsDoNotOverlap = cutInterval_deg(2) <= intervalFirst_deg || ...
+        cutInterval_deg(1) >= intervalLast_deg;
+    if intervalsDoNotOverlap
+        remainingIntervals_deg(end + 1, :) = [ ...
+            intervalFirst_deg intervalLast_deg]; %#ok<AGROW>
         continue;
     end
-    if cut(1) > first
-        parts(end + 1, :) = [first min(cut(1), last)]; %#ok<AGROW>
+    if cutInterval_deg(1) > intervalFirst_deg
+        remainingIntervals_deg(end + 1, :) = [ ...
+            intervalFirst_deg, ...
+            min(cutInterval_deg(1), intervalLast_deg)]; %#ok<AGROW>
     end
-    if cut(2) < last
-        parts(end + 1, :) = [max(cut(2), first) last]; %#ok<AGROW>
+    if cutInterval_deg(2) < intervalLast_deg
+        remainingIntervals_deg(end + 1, :) = [ ...
+            max(cutInterval_deg(2), intervalFirst_deg), ...
+            intervalLast_deg]; %#ok<AGROW>
     end
 end
-output = parts(diff(parts, 1, 2) > 1e-6, :);
+intervalHasLength = diff(remainingIntervals_deg, 1, 2) > 1e-6;
+remainingIntervals_deg = remainingIntervals_deg(intervalHasLength, :);
 end
 
-function [azimuth, elevation] = annularSector( ...
-        innerRadius, outerRadius, centerAngle_deg, halfAngle_deg)
-angle = deg2rad(linspace( ...
+function [azimuth_deg, elevation_deg] = annularSector( ...
+        innerRadius_deg, outerRadius_deg, centerAngle_deg, halfAngle_deg)
+angle_rad = deg2rad(linspace( ...
     centerAngle_deg - halfAngle_deg, ...
     centerAngle_deg + halfAngle_deg, 7)).';
-outerAzimuth = outerRadius * cos(angle);
-outerElevation = outerRadius * sin(angle);
-innerAngle = flipud(angle);
-innerAzimuth = innerRadius * cos(innerAngle);
-innerElevation = innerRadius * sin(innerAngle);
-azimuth = [outerAzimuth; innerAzimuth; outerAzimuth(1)];
-elevation = [outerElevation; innerElevation; outerElevation(1)];
+outerAzimuth_deg = outerRadius_deg * cos(angle_rad);
+outerElevation_deg = outerRadius_deg * sin(angle_rad);
+innerAngle_rad = flipud(angle_rad);
+innerAzimuth_deg = innerRadius_deg * cos(innerAngle_rad);
+innerElevation_deg = innerRadius_deg * sin(innerAngle_rad);
+azimuth_deg = [ ...
+    outerAzimuth_deg; innerAzimuth_deg; outerAzimuth_deg(1)];
+elevation_deg = [ ...
+    outerElevation_deg; innerElevation_deg; outerElevation_deg(1)];
 end
 
-function [azimuth, elevation] = joinRegions( ...
-        azimuthParts, elevationParts)
-if isempty(azimuthParts)
-    azimuth = zeros(0, 1);
-    elevation = zeros(0, 1);
+function [azimuth_deg, elevation_deg] = joinRegions( ...
+        azimuthParts_deg, elevationParts_deg)
+if isempty(azimuthParts_deg)
+    azimuth_deg = zeros(0, 1);
+    elevation_deg = zeros(0, 1);
     return;
 end
-regionCount = numel(azimuthParts);
-total = sum(cellfun(@numel, azimuthParts)) + regionCount - 1;
-azimuth = nan(total, 1);
-elevation = nan(total, 1);
-cursor = 1;
-for region = 1:regionCount
-    count = numel(azimuthParts{region});
-    output = cursor:cursor + count - 1;
-    azimuth(output) = azimuthParts{region};
-    elevation(output) = elevationParts{region};
-    cursor = cursor + count + 1;
+regionCount = numel(azimuthParts_deg);
+regionVertexCount = zeros(regionCount, 1);
+for regionIndex = 1:regionCount
+    regionVertexCount(regionIndex) = numel(azimuthParts_deg{regionIndex});
+end
+packedVertexCount = sum(regionVertexCount) + regionCount - 1;
+azimuth_deg = nan(packedVertexCount, 1);
+elevation_deg = nan(packedVertexCount, 1);
+nextOutputRow = 1;
+for regionIndex = 1:regionCount
+    outputRows = nextOutputRow:( ...
+        nextOutputRow + regionVertexCount(regionIndex) - 1);
+    azimuth_deg(outputRows) = azimuthParts_deg{regionIndex};
+    elevation_deg(outputRows) = elevationParts_deg{regionIndex};
+    nextOutputRow = outputRows(end) + 2;
 end
 end
 
-function angle = wrapRadians(angle)
-angle = mod(angle + pi, 2 * pi) - pi;
-end
-
-function state = boundaryState(time_s, position_deg)
-state = struct( ...
-    "time_s", time_s, ...
-    "position_deg", position_deg, ...
-    "velocity_deg_s", [0 0], ...
-    "acceleration_deg_s2", [0 0]);
+function wrappedAngle_rad = wrapRadians(angle_rad)
+wrappedAngle_rad = mod(angle_rad + pi, 2 * pi) - pi;
 end

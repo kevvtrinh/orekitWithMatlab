@@ -1,52 +1,79 @@
 function diagnostics = analyzeSpinningRodSpiralGauntlet(problem, plan)
-%ANALYZESPINNINGRODSPIRALGAUNTLET Measure winding and protected waits.
+%% Section 0: Header & Readme
+% SYNTAX
+%   diagnostics = analyzeSpinningRodSpiralGauntlet(problem, plan)
+%**************************************************************************
+% PURPOSE
+%   - Measure spiral winding, notch use, protected waits, and rod-relative
+%     motion for a completed spinning-rod plan.
+%**************************************************************************
+% INPUTS
+%   - problem (scalar struct)
+%       Spiral geometry, notch metadata, rod rate, and planner options.
+%   - plan (scalar struct)
+%       Successful Dijkstra plan through the moving obstacle field.
+%**************************************************************************
+% OUTPUTS
+%   - diagnostics (scalar struct)
+%       Winding, waiting, notch, angular-rate, and collision metrics.
+%**************************************************************************
+% UNITS
+%   - Positions and angular rates use degrees and seconds.
 
+%% Section 1: Validate The Successful Plan
 if ~isstruct(plan) || ~isfield(plan, "success") || ~plan.success
     error("analyzeSpinningRodSpiralGauntlet:InvalidPlan", ...
         "plan must be a successful spinning-rod spiral plan.");
 end
 
-position = plan.position_deg;
-radius = hypot(position(:, 1), position(:, 2));
-inside = radius >= 0.8;
-pathAngle = unwrap(atan2(position(inside, 2), position(inside, 1)));
-windingTurns = abs(pathAngle(end) - pathAngle(1)) / (2 * pi);
+%% Section 2: Measure Spiral Winding
+boresightPosition_deg = plan.position_deg;
+boresightRadius_deg = hypot( ...
+    boresightPosition_deg(:, 1), boresightPosition_deg(:, 2));
+isOutsideCenter = boresightRadius_deg >= 0.8;
+pathAngle_rad = unwrap(atan2( ...
+    boresightPosition_deg(isOutsideCenter, 2), ...
+    boresightPosition_deg(isOutsideCenter, 1)));
+windingTurns = abs(pathAngle_rad(end) - pathAngle_rad(1)) / (2 * pi);
 
+%% Section 3: Measure Protected Waiting In Notches
 sampleStep_s = median(diff(plan.time_s));
-notchCenters = problem.geometry.notchCenters_deg;
-notchRadius = problem.geometry.notchSafeRadius_deg + ...
+notchCenters_deg = problem.geometry.notchCenters_deg;
+notchRadius_deg = problem.geometry.notchSafeRadius_deg + ...
     problem.options.SafetyMargin_deg;
-notchWait_s = zeros(1, size(notchCenters, 1));
+notchWait_s = zeros(1, size(notchCenters_deg, 1));
 notchVisited = false(size(notchWait_s));
-waitInAnyNotch = false(size(plan.isWaiting));
-for notch = 1:size(notchCenters, 1)
-    distance = hypot( ...
-        position(:, 1) - notchCenters(notch, 1), ...
-        position(:, 2) - notchCenters(notch, 2));
-    insideNotch = distance <= notchRadius;
-    notchVisited(notch) = any(insideNotch);
-    notchWait = plan.isWaiting & insideNotch;
-    notchWait_s(notch) = sampleStep_s * nnz(notchWait);
-    waitInAnyNotch = waitInAnyNotch | notchWait;
+isWaitingInAnyNotch = false(size(plan.isWaiting));
+for notchIndex = 1:size(notchCenters_deg, 1)
+    notchDistance_deg = hypot( ...
+        boresightPosition_deg(:, 1) - notchCenters_deg(notchIndex, 1), ...
+        boresightPosition_deg(:, 2) - notchCenters_deg(notchIndex, 2));
+    isInsideNotch = notchDistance_deg <= notchRadius_deg;
+    notchVisited(notchIndex) = any(isInsideNotch);
+    isWaitingInNotch = plan.isWaiting & isInsideNotch;
+    notchWait_s(notchIndex) = sampleStep_s * nnz(isWaitingInNotch);
+    isWaitingInAnyNotch = isWaitingInAnyNotch | isWaitingInNotch;
 end
 
-moving = ~plan.isWaiting & radius >= 1.5;
+%% Section 4: Compare Boresight & Rod Angular Rates
+isMovingOutsideCenter = ~plan.isWaiting & boresightRadius_deg >= 1.5;
 unwrappedAngle_deg = rad2deg(unwrap(atan2( ...
-    position(:, 2), position(:, 1))));
+    boresightPosition_deg(:, 2), boresightPosition_deg(:, 1))));
 angularRate_deg_s = zeros(size(plan.time_s));
 angularRate_deg_s(2:end) = abs(diff(unwrappedAngle_deg) ./ ...
     diff(plan.time_s));
-maximumBoresightAngularRate_deg_s = ...
-    max(angularRate_deg_s(moving), [], "omitmissing");
+maximumBoresightAngularRate_deg_s = max( ...
+    angularRate_deg_s(isMovingOutsideCenter), [], "omitmissing");
 
-blocked = queryAzElTimeObstacle(plan.obstacleField, ...
-    position(:, 1), position(:, 2), plan.time_s, ...
+%% Section 5: Recheck Exact Polygon Safety & Assemble Diagnostics
+blockedSamples = queryAzElTimeObstacle(plan.obstacleField, ...
+    boresightPosition_deg(:, 1), boresightPosition_deg(:, 2), plan.time_s, ...
     struct( ...
     "SafetyMarginDeg", problem.options.SafetyMargin_deg, ...
     "TimePaddingSamples", plan.options.TimePaddingSamples));
 waitEpisodes = nnz(diff([false; plan.isWaiting; false]) == 1);
 protectedWaitEpisodes = nnz(diff( ...
-    [false; waitInAnyNotch; false]) == 1);
+    [false; isWaitingInAnyNotch; false]) == 1);
 diagnostics = struct( ...
     "windingTurns", windingTurns, ...
     "notchVisited", notchVisited, ...
@@ -54,12 +81,12 @@ diagnostics = struct( ...
     "visitedNotchCount", nnz(notchVisited), ...
     "waitingNotchCount", nnz(notchWait_s >= sampleStep_s), ...
     "totalWaiting_s", sampleStep_s * nnz(plan.isWaiting), ...
-    "protectedWaiting_s", sampleStep_s * nnz(waitInAnyNotch), ...
+    "protectedWaiting_s", sampleStep_s * nnz(isWaitingInAnyNotch), ...
     "waitingEpisodeCount", waitEpisodes, ...
     "protectedWaitingEpisodeCount", protectedWaitEpisodes, ...
     "maximumBoresightAngularRate_deg_s", ...
         maximumBoresightAngularRate_deg_s, ...
     "rodAngularRate_deg_s", ...
         problem.geometry.rodAngularRate_deg_s, ...
-    "blockedSampleCount", nnz(blocked));
+    "blockedSampleCount", nnz(blockedSamples));
 end

@@ -1,10 +1,29 @@
 function result = example13RandomBlinkingIntercept( ...
         seed, viewOptions)
-%EXAMPLE13RANDOMBLINKINGINTERCEPT Catch a stochastic moving point.
-%
-% Leave seed empty for a new case on every run. The printed seed replays
-% the exact board and moving endpoint if a failure needs investigation.
+%% Section 0: Header & Readme
+% SYNTAX
+%   result = example13RandomBlinkingIntercept()
+%   result = example13RandomBlinkingIntercept(seed)
+%   result = example13RandomBlinkingIntercept(seed, viewOptions)
+%**************************************************************************
+% PURPOSE
+%   - Intercept a moving target on one stochastic blinking board.
+%   - Preserve the printed seed for exact failure replay.
+%**************************************************************************
+% INPUTS
+%   - seed (positive integer or empty, optional)
+%       Empty generates a fresh case.
+%   - viewOptions (scalar struct, optional)
+%       Partial animation options.
+%**************************************************************************
+% OUTPUTS
+%   - result (scalar struct)
+%       Generated problem, successful intercept, diagnostics, and view.
+%**************************************************************************
+% UNITS
+%   - Angular quantities are degrees; temporal quantities are seconds.
 
+%% Section 1: Resolve Inputs & Generate The Board
 if nargin < 1
     seed = [];
 end
@@ -12,6 +31,8 @@ if nargin < 2
     viewOptions = struct();
 end
 problem = makeRandomBlinkingChessboardGauntlet(seed);
+
+%% Section 2: Plan & Verify The Interception
 plan = planAzElMovingTargetIntercept( ...
     problem.azElData, problem.startState, problem.target, ...
     problem.limits, problem.options);
@@ -38,6 +59,7 @@ if diagnostics.cellTransferCount < 2
         uint32(problem.seed));
 end
 
+%% Section 3: Animate, Package & Report The Result
 viewOptions = defaultAzElAnimationOptions(viewOptions, struct( ...
     "MaximumAnimationFrames", 260, ...
     "MaximumDisplayedSlices", 20, ...

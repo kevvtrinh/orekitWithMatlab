@@ -1,9 +1,25 @@
 function result = example12SynchronizedWindmills(viewOptions)
-%EXAMPLE12SYNCHRONIZEDWINDMILLS Animate a level-6-inspired run.
-%
-% Coins are intentionally omitted. Eight dotted windmills share one angular
-% rate, and the boresight must time their gaps through an S-shaped corridor.
+%% Section 0: Header & Readme
+% SYNTAX
+%   result = example12SynchronizedWindmills()
+%   result = example12SynchronizedWindmills(viewOptions)
+%**************************************************************************
+% PURPOSE
+%   - Traverse an S corridor through eight synchronized dotted windmills.
+%   - Verify gap timing and windmill-following without coin constraints.
+%**************************************************************************
+% INPUTS
+%   - viewOptions (scalar struct, optional)
+%       Partial animation options.
+%**************************************************************************
+% OUTPUTS
+%   - result (scalar struct)
+%       Generated problem, successful plan, diagnostics, and view handles.
+%**************************************************************************
+% UNITS
+%   - Angular quantities are degrees; temporal quantities are seconds.
 
+%% Section 1: Resolve The Animation & Generate The Problem
 if nargin < 1
     viewOptions = struct();
 end
@@ -14,6 +30,8 @@ viewOptions = defaultAzElAnimationOptions(viewOptions, struct( ...
     "ObstacleFaceAlpha", 0.045));
 
 problem = makeWorldsHardestWindmillGauntlet();
+
+%% Section 2: Plan & Verify Corridor Traversal
 plan = planAzElDijkstra( ...
     problem.azElData, problem.startState, problem.stopState, ...
     problem.limits, problem.options);
@@ -42,6 +60,7 @@ if diagnostics.maximumFollowAngle_deg < 35
         "The path did not follow any windmill long enough to find a gap.");
 end
 
+%% Section 3: Animate, Package & Report The Result
 view = animateAzElAvoidancePlan( ...
     problem.azElData, plan, viewOptions);
 result = problem;

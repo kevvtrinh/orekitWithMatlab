@@ -1,16 +1,40 @@
 function result = example09UTrapEscape()
-%EXAMPLE09UTRAPESCAPE Move away from the goal to escape a U-trap.
+%% Section 0: Header & Readme
+% SYNTAX
+%   result = example09UTrapEscape()
+%**************************************************************************
+% PURPOSE
+%   - Verify that Dijkstra backtracks away from the goal to escape a U-trap.
+%**************************************************************************
+% INPUTS
+%   - None.
+%**************************************************************************
+% OUTPUTS
+%   - result (scalar struct)
+%       Planned example, animation handles, and backtracking diagnostics.
+%**************************************************************************
+% UNITS
+%   - Angular quantities are degrees; temporal quantities are seconds.
 
+%% Section 1: Build The U-Shaped Obstacle
 time_s = (0:0.5:60).';
 regions = { ...
     [3, -6; 6, -6; 6, 6; 3, 6; 3, -6], ...
     [-6, 5; 6, 5; 6, 6; -6, 6; -6, 5], ...
     [-6, -6; 6, -6; 6, -5; -6, -5; -6, -6]};
-[azimuth, elevation] = joinRegions(regions);
+[azimuth_deg, elevation_deg] = joinRegions(regions);
 azElData = makeAzElObstacleData( ...
-    "U-shaped trap", time_s, azimuth, elevation);
-initialState = boundaryState(0, [0, 0]);
-goalState = boundaryState(60, [15, 0]);
+    "U-shaped trap", time_s, azimuth_deg, elevation_deg);
+initialState = struct( ...
+    "time_s", 0, ...
+    "position_deg", [0, 0], ...
+    "velocity_deg_s", [0, 0], ...
+    "acceleration_deg_s2", [0, 0]);
+goalState = struct( ...
+    "time_s", 60, ...
+    "position_deg", [15, 0], ...
+    "velocity_deg_s", [0, 0], ...
+    "acceleration_deg_s2", [0, 0]);
 limits = struct( ...
     "azimuth_deg", [-10, 18], ...
     "elevation_deg", [-10, 10], ...
@@ -26,6 +50,7 @@ options = struct( ...
     "MaxSearchTime_s", 60, ...
     "MaxExpansions", 1000000);
 
+%% Section 2: Plan & Verify Backtracking Quality
 result = runAzElGauntletCase( ...
     "Gauntlet 5", ...
     "U-trap escape by backtracking", ...
@@ -51,25 +76,22 @@ fprintf("  Compact wall-hugging escape length: %.3f deg.\n", ...
     result.plan.angularPathLength_deg);
 end
 
-function [azimuth, elevation] = joinRegions(regions)
-rowCount = sum(cellfun(@(region) size(region, 1), regions)) + ...
-    numel(regions) - 1;
-combined = nan(rowCount, 2);
-cursor = 1;
-for regionIndex = 1:numel(regions)
-    region = regions{regionIndex};
-    output = cursor:cursor + size(region, 1) - 1;
-    combined(output, :) = region;
-    cursor = output(end) + 2;
+%% Section 3: Local Geometry Functions
+function [azimuth_deg, elevation_deg] = joinRegions(regions_deg)
+regionCount = numel(regions_deg);
+regionRowCount = zeros(regionCount, 1);
+for regionIndex = 1:regionCount
+    regionRowCount(regionIndex) = size(regions_deg{regionIndex}, 1);
 end
-azimuth = combined(:, 1);
-elevation = combined(:, 2);
+packedRowCount = sum(regionRowCount) + regionCount - 1;
+combinedBoundary_deg = nan(packedRowCount, 2);
+nextOutputRow = 1;
+for regionIndex = 1:regionCount
+    outputRows = nextOutputRow:( ...
+        nextOutputRow + regionRowCount(regionIndex) - 1);
+    combinedBoundary_deg(outputRows, :) = regions_deg{regionIndex};
+    nextOutputRow = outputRows(end) + 2;
 end
-
-function state = boundaryState(time_s, position_deg)
-state = struct( ...
-    "time_s", time_s, ...
-    "position_deg", position_deg, ...
-    "velocity_deg_s", [0, 0], ...
-    "acceleration_deg_s2", [0, 0]);
+azimuth_deg = combinedBoundary_deg(:, 1);
+elevation_deg = combinedBoundary_deg(:, 2);
 end

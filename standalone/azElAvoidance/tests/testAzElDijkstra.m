@@ -1,10 +1,27 @@
 function tests = testAzElDijkstra
+%% Section 0: Header & Readme
+% SYNTAX
+%   results = runtests("testAzElDijkstra.m")
+%**************************************************************************
+% PURPOSE
+%   - Verify maintained static/dynamic Dijkstra behavior and public schemas.
+%**************************************************************************
+% INPUTS
+%   - None; MATLAB supplies local function-test fixtures.
+%**************************************************************************
+% OUTPUTS
+%   - tests (matlab.unittest.FunctionTestCase array)
+%       Local tests discovered by functiontests.
+%**************************************************************************
+% UNITS
+%   - Test quantities follow the planner's degree/second conventions.
+%% Section 1: Register Local Tests
 tests = functiontests(localfunctions);
 end
 
 function setupOnce(~)
-root = fileparts(fileparts(mfilename("fullpath")));
-addpath(genpath(root));
+packageRoot = fileparts(fileparts(mfilename("fullpath")));
+addpath(genpath(packageRoot));
 end
 
 function testDirectPathUsesExactCertificate(testCase)
@@ -30,10 +47,11 @@ function testMovingWallProducesDynamicDetour(testCase)
 time_s = (0:20).';
 azimuth = cell(numel(time_s), 1);
 elevation = cell(numel(time_s), 1);
-for k = 1:numel(time_s)
-    center = 0.35 * sin(time_s(k) / 3);
-    azimuth{k} = [-1; 1; 1; -1; -1];
-    elevation{k} = center + [-2; -2; 2; 2; -2];
+for sampleIndex = 1:numel(time_s)
+    centerElevation_deg = 0.35 * sin(time_s(sampleIndex) / 3);
+    azimuth{sampleIndex} = [-1; 1; 1; -1; -1];
+    elevation{sampleIndex} = centerElevation_deg + ...
+        [-2; -2; 2; 2; -2];
 end
 data = makeAzElObstacleData( ...
     "Moving wall", time_s, azimuth, elevation);

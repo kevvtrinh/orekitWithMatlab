@@ -1,19 +1,46 @@
 function result = example08AlternatingSlalom()
-%EXAMPLE08ALTERNATINGSLALOM Weave through alternating barriers.
+%% Section 0: Header & Readme
+% SYNTAX
+%   result = example08AlternatingSlalom()
+%**************************************************************************
+% PURPOSE
+%   - Verify alternating pass-side decisions through four static barriers.
+%**************************************************************************
+% INPUTS
+%   - None.
+%**************************************************************************
+% OUTPUTS
+%   - result (scalar struct)
+%       Planned example, animation handles, and crossing diagnostics.
+%**************************************************************************
+% UNITS
+%   - Angular quantities are degrees; temporal quantities are seconds.
 
+%% Section 1: Build The Alternating Barriers
 time_s = (0:0.5:60).';
-centers = [-9, -3, 3, 9];
-passAbove = [true, false, true, false];
-obstacles = cell(numel(centers), 1);
-for obstacleIndex = 1:numel(centers)
-    [azimuth, elevation] = slalomBarrier( ...
-        centers(obstacleIndex), passAbove(obstacleIndex));
+barrierCenters_deg = [-9, -3, 3, 9];
+passesAboveBarrier = [true, false, true, false];
+obstacles = cell(numel(barrierCenters_deg), 1);
+for obstacleIndex = 1:numel(barrierCenters_deg)
+    [azimuth_deg, elevation_deg] = slalomBarrier( ...
+        barrierCenters_deg(obstacleIndex), ...
+        passesAboveBarrier(obstacleIndex));
     obstacles{obstacleIndex} = makeAzElObstacleData( ...
-        "Slalom " + obstacleIndex, time_s, azimuth, elevation);
+        "Slalom " + obstacleIndex, time_s, azimuth_deg, elevation_deg);
 end
 azElData = combineAzElObstacles(obstacles);
-startState = boundaryState(0, [-15, 0]);
-stopState = boundaryState(60, [15, 0]);
+
+%% Section 2: Define The Planning Request
+startState = struct( ...
+    "time_s", 0, ...
+    "position_deg", [-15, 0], ...
+    "velocity_deg_s", [0, 0], ...
+    "acceleration_deg_s2", [0, 0]);
+stopState = struct( ...
+    "time_s", 60, ...
+    "position_deg", [15, 0], ...
+    "velocity_deg_s", [0, 0], ...
+    "acceleration_deg_s2", [0, 0]);
 limits = struct( ...
     "azimuth_deg", [-17, 17], ...
     "elevation_deg", [-7, 7], ...
@@ -28,40 +55,37 @@ options = struct( ...
     "MaxSearchTime_s", 75, ...
     "MaxExpansions", 1000000);
 
+%% Section 3: Plan & Verify Each Crossing Side
 result = runAzElGauntletCase( ...
     "Gauntlet 4", ...
     "four-barrier alternating slalom", ...
     azElData, startState, stopState, limits, options);
-path = result.plan.positionUnwrapped_deg;
-crossingElevation = zeros(size(centers));
-for obstacleIndex = 1:numel(centers)
-    [~, sample] = min(abs(path(:, 1) - centers(obstacleIndex)));
-    crossingElevation(obstacleIndex) = path(sample, 2);
+routePosition_deg = result.plan.positionUnwrapped_deg;
+crossingElevation_deg = zeros(size(barrierCenters_deg));
+for obstacleIndex = 1:numel(barrierCenters_deg)
+    [~, nearestSample] = min(abs( ...
+        routePosition_deg(:, 1) - barrierCenters_deg(obstacleIndex)));
+    crossingElevation_deg(obstacleIndex) = routePosition_deg( ...
+        nearestSample, 2);
 end
-result.diagnostics.crossingElevation_deg = crossingElevation;
+result.diagnostics.crossingElevation_deg = crossingElevation_deg;
 expectedSign = [1, -1, 1, -1];
-if any(sign(crossingElevation) ~= expectedSign) || ...
-        any(abs(crossingElevation) < 1.25)
+if any(sign(crossingElevation_deg) ~= expectedSign) || ...
+        any(abs(crossingElevation_deg) < 1.25)
     error("example08AlternatingSlalom:WrongPassSide", ...
         "The route did not alternate through all four slalom openings.");
 end
 fprintf("  Crossing elevations: %s deg\n", ...
-    mat2str(crossingElevation, 3));
+    mat2str(crossingElevation_deg, 3));
 end
 
-function [azimuth, elevation] = slalomBarrier(center, passAbove)
-azimuth = center + 1.25 * [-1; 1; 1; -1; -1];
+%% Section 4: Local Geometry Functions
+function [azimuth_deg, elevation_deg] = slalomBarrier( ...
+        centerAzimuth_deg, passAbove)
+azimuth_deg = centerAzimuth_deg + 1.25 * [-1; 1; 1; -1; -1];
 if passAbove
-    elevation = [-7; -7; 1; 1; -7];
+    elevation_deg = [-7; -7; 1; 1; -7];
 else
-    elevation = [-1; -1; 7; 7; -1];
+    elevation_deg = [-1; -1; 7; 7; -1];
 end
-end
-
-function state = boundaryState(time_s, position)
-state = struct( ...
-    "time_s", time_s, ...
-    "position_deg", position, ...
-    "velocity_deg_s", [0, 0], ...
-    "acceleration_deg_s2", [0, 0]);
 end

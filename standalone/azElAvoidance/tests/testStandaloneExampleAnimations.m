@@ -1,10 +1,27 @@
 function tests = testStandaloneExampleAnimations
+%% Section 0: Header & Readme
+% SYNTAX
+%   results = runtests("testStandaloneExampleAnimations.m")
+%**************************************************************************
+% PURPOSE
+%   - Verify numbered examples, unified-planner use, and 2-D/3-D animation.
+%**************************************************************************
+% INPUTS
+%   - None; MATLAB supplies local function-test fixtures.
+%**************************************************************************
+% OUTPUTS
+%   - tests (matlab.unittest.FunctionTestCase array)
+%       Local tests discovered by functiontests.
+%**************************************************************************
+% UNITS
+%   - Test quantities follow the planner's degree/second conventions.
+%% Section 1: Register Local Tests
 tests = functiontests(localfunctions);
 end
 
 function setupOnce(~)
-root = fileparts(fileparts(mfilename("fullpath")));
-addpath(genpath(root));
+packageRoot = fileparts(fileparts(mfilename("fullpath")));
+addpath(genpath(packageRoot));
 end
 
 function teardown(~)
@@ -17,13 +34,14 @@ folder = fullfile(root, "examples");
 examples = dir(fullfile(folder, "example*.m"));
 names = sort(string({examples.name}));
 numbers = zeros(numel(names), 1);
-for k = 1:numel(names)
-    token = regexp(names(k), "^example(\d\d).+\.m$", ...
+for exampleIndex = 1:numel(names)
+    numberToken = regexp(names(exampleIndex), "^example(\d\d).+\.m$", ...
         "tokens", "once");
-    verifyNotEmpty(testCase, token, ...
-        sprintf('%s does not use the exampleNNName convention.', names(k)));
-    numbers(k) = str2double(token{1});
-    functionName = erase(names(k), ".m");
+    verifyNotEmpty(testCase, numberToken, ...
+        sprintf('%s does not use the exampleNNName convention.', ...
+        names(exampleIndex)));
+    numbers(exampleIndex) = str2double(numberToken{1});
+    functionName = erase(names(exampleIndex), ".m");
     verifyNotEmpty(testCase, which(functionName), ...
         sprintf('%s is not callable.', functionName));
 end
@@ -35,12 +53,14 @@ root = fileparts(fileparts(mfilename("fullpath")));
 folder = fullfile(root, "examples");
 examples = dir(fullfile(folder, "example*.m"));
 verifyGreaterThan(testCase, numel(examples), 0);
-for k = 1:numel(examples)
-    source = string(fileread(fullfile(folder, examples(k).name)));
+for exampleIndex = 1:numel(examples)
+    source = string(fileread( ...
+        fullfile(folder, examples(exampleIndex).name)));
     usesAnimator = contains(source, "animateAzElAvoidancePlan");
     usesGauntletRunner = contains(source, "runAzElGauntletCase");
     verifyTrue(testCase, usesAnimator || usesGauntletRunner, ...
-        sprintf('%s has no 2-D/3-D animation path.', examples(k).name));
+        sprintf('%s has no 2-D/3-D animation path.', ...
+        examples(exampleIndex).name));
 end
 end
 
@@ -48,16 +68,18 @@ function testEveryExampleUsesUnifiedDijkstraPlanner(testCase)
 root = fileparts(fileparts(mfilename("fullpath")));
 folder = fullfile(root, "examples");
 examples = dir(fullfile(folder, "example*.m"));
-for k = 1:numel(examples)
+for exampleIndex = 1:numel(examples)
     source = string(fileread( ...
-        fullfile(examples(k).folder, examples(k).name)));
+        fullfile(examples(exampleIndex).folder, ...
+        examples(exampleIndex).name)));
     usesPlanner = contains(source, "planAzElDijkstra");
     usesRunner = contains(source, "runAzElGauntletCase");
     usesInterceptWrapper = contains( ...
         source, "planAzElMovingTargetIntercept");
     verifyTrue(testCase, ...
         usesPlanner || usesRunner || usesInterceptWrapper, ...
-        sprintf('%s bypasses the unified Dijkstra planner.', examples(k).name));
+        sprintf('%s bypasses the unified Dijkstra planner.', ...
+        examples(exampleIndex).name));
 end
 end
 
@@ -109,8 +131,8 @@ time_s = (0:1).';
 empty = repmat({zeros(0, 1)}, numel(time_s), 1);
 data = repmat(makeAzElObstacleData( ...
     "Obstacle", time_s, empty, empty), 7, 1);
-for k = 1:numel(data)
-    data(k).targetName = "Obstacle " + k;
+for obstacleIndex = 1:numel(data)
+    data(obstacleIndex).targetName = "Obstacle " + obstacleIndex;
 end
 plan = struct( ...
     "success", true, ...
@@ -198,14 +220,15 @@ files = [ ...
     dir(fullfile(supportFolder, "make*Gauntlet.m"))];
 [~, uniqueIndex] = unique({files.name}, "stable");
 files = files(uniqueIndex);
-for k = 1:numel(files)
-    source = string(fileread(fullfile(files(k).folder, files(k).name)));
+for fileIndex = 1:numel(files)
+    source = string(fileread( ...
+        fullfile(files(fileIndex).folder, files(fileIndex).name)));
     verifyEmpty(testCase, regexp(source, ...
         """GuidePath_deg""\s*,|""StateCorridor""\s*,|" + ...
         """ReferencePath[^""]*""\s*,|""GoalBias""\s*,|" + ...
         """DirectionAngles_deg""\s*,", ...
         "match"), sprintf('%s injects a route or search corridor.', ...
-        files(k).name));
+        files(fileIndex).name));
 end
 end
 

@@ -1,20 +1,46 @@
 function result = example06StopGoGates()
-%EXAMPLE06STOPGOGATES Pass three sequentially opening gates.
+%% Section 0: Header & Readme
+% SYNTAX
+%   result = example06StopGoGates()
+%**************************************************************************
+% PURPOSE
+%   - Verify explicit stop-go behavior through three sequentially open gates.
+%**************************************************************************
+% INPUTS
+%   - None.
+%**************************************************************************
+% OUTPUTS
+%   - result (scalar struct)
+%       Planned example, animation handles, and waiting diagnostics.
+%**************************************************************************
+% UNITS
+%   - Angular quantities are degrees; temporal quantities are seconds.
 
+%% Section 1: Sample The Timed Gates
 time_s = (0:0.5:45).';
-gateCenters = [-6, 0, 6];
-openWindows = [8, 12; 20, 24; 32, 36];
+gateCenters_deg = [-6, 0, 6];
+openWindows_s = [8, 12; 20, 24; 32, 36];
 obstacles = cell(3, 1);
 for gateIndex = 1:3
-    [azimuth, elevation] = temporalGate( ...
-        time_s, gateCenters(gateIndex), ...
-        openWindows(gateIndex, :));
+    [azimuth_deg, elevation_deg] = temporalGate( ...
+        time_s, gateCenters_deg(gateIndex), ...
+        openWindows_s(gateIndex, :));
     obstacles{gateIndex} = makeAzElObstacleData( ...
-        "Gate " + gateIndex, time_s, azimuth, elevation);
+        "Gate " + gateIndex, time_s, azimuth_deg, elevation_deg);
 end
 azElData = combineAzElObstacles(obstacles);
-startState = boundaryState(0, [-12, 0]);
-stopState = boundaryState(45, [12, 0]);
+
+%% Section 2: Define The Planning Request
+startState = struct( ...
+    "time_s", 0, ...
+    "position_deg", [-12, 0], ...
+    "velocity_deg_s", [0, 0], ...
+    "acceleration_deg_s2", [0, 0]);
+stopState = struct( ...
+    "time_s", 45, ...
+    "position_deg", [12, 0], ...
+    "velocity_deg_s", [0, 0], ...
+    "acceleration_deg_s2", [0, 0]);
 limits = struct( ...
     "azimuth_deg", [-14, 14], ...
     "elevation_deg", [-1, 1], ...
@@ -29,6 +55,7 @@ options = struct( ...
     "MaxSearchTime_s", 60, ...
     "MaxExpansions", 750000);
 
+%% Section 3: Plan & Verify Stop-Go Behavior
 result = runAzElGauntletCase( ...
     "Gauntlet 2", ...
     "stop-go-stop-go through timed gates", ...
@@ -50,7 +77,7 @@ if result.diagnostics.waitingEpisodeCount < 3
         result.diagnostics.waitingEpisodeCount);
 end
 waitedAfterFinalGate = waiting & ...
-    result.plan.time_s > openWindows(end, 2) & ...
+    result.plan.time_s > openWindows_s(end, 2) & ...
     result.plan.time_s < result.diagnostics.firstSettledGoalTime_s;
 if any(waitedAfterFinalGate) || ...
         result.diagnostics.firstSettledGoalTime_s > 37.5 + 1e-9
@@ -63,29 +90,24 @@ fprintf("  Final gate cleared and goal settled at %.1f s.\n", ...
     result.diagnostics.firstSettledGoalTime_s);
 end
 
-function [azimuth, elevation] = temporalGate( ...
-        time_s, centerAzimuth, openWindow)
+%% Section 4: Local Geometry Functions
+function [azimuth_deg, elevation_deg] = temporalGate( ...
+        time_s, centerAzimuth_deg, openWindow_s)
 sampleCount = numel(time_s);
-azimuth = cell(sampleCount, 1);
-elevation = cell(sampleCount, 1);
-closedAzimuth = centerAzimuth + 0.75 * [-1; 1; 1; -1; -1];
-closedElevation = [-2; -2; 2; 2; -2];
-for sample = 1:sampleCount
-    if time_s(sample) >= openWindow(1) && ...
-            time_s(sample) <= openWindow(2)
-        azimuth{sample} = zeros(0, 1);
-        elevation{sample} = zeros(0, 1);
+azimuth_deg = cell(sampleCount, 1);
+elevation_deg = cell(sampleCount, 1);
+closedAzimuth_deg = centerAzimuth_deg + ...
+    0.75 * [-1; 1; 1; -1; -1];
+closedElevation_deg = [-2; -2; 2; 2; -2];
+for sampleIndex = 1:sampleCount
+    isInsideOpenWindow = time_s(sampleIndex) >= openWindow_s(1) && ...
+        time_s(sampleIndex) <= openWindow_s(2);
+    if isInsideOpenWindow
+        azimuth_deg{sampleIndex} = zeros(0, 1);
+        elevation_deg{sampleIndex} = zeros(0, 1);
     else
-        azimuth{sample} = closedAzimuth;
-        elevation{sample} = closedElevation;
+        azimuth_deg{sampleIndex} = closedAzimuth_deg;
+        elevation_deg{sampleIndex} = closedElevation_deg;
     end
 end
-end
-
-function state = boundaryState(time_s, position)
-state = struct( ...
-    "time_s", time_s, ...
-    "position_deg", position, ...
-    "velocity_deg_s", [0, 0], ...
-    "acceleration_deg_s2", [0, 0]);
 end

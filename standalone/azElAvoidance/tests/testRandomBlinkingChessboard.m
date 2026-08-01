@@ -1,10 +1,27 @@
 function tests = testRandomBlinkingChessboard
+%% Section 0: Header & Readme
+% SYNTAX
+%   results = runtests("testRandomBlinkingChessboard.m")
+%**************************************************************************
+% PURPOSE
+%   - Verify randomized-board reproducibility and unfiltered stress behavior.
+%**************************************************************************
+% INPUTS
+%   - None; MATLAB supplies local function-test fixtures.
+%**************************************************************************
+% OUTPUTS
+%   - tests (matlab.unittest.FunctionTestCase array)
+%       Local tests discovered by functiontests.
+%**************************************************************************
+% UNITS
+%   - Test quantities follow the planner's degree/second conventions.
+%% Section 1: Register Local Tests
 tests = functiontests(localfunctions);
 end
 
 function setupOnce(~)
-root = fileparts(fileparts(mfilename("fullpath")));
-addpath(genpath(root));
+packageRoot = fileparts(fileparts(mfilename("fullpath")));
+addpath(genpath(packageRoot));
 end
 
 function teardown(~)

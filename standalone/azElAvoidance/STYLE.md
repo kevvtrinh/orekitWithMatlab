@@ -128,6 +128,14 @@ Target about 78 characters per line. Continue long expressions with `...` and
 indent continuations four spaces. Replace long multi-line conditions with named
 intermediate assertions when that improves debugging and readability.
 
+Do not end a line with an assignment or comparison operator followed only by
+`...`. Put the first meaningful term on that line or name an intermediate
+quantity. This keeps the operation visible when scanning vertically.
+
+Do not use `cellfun` or `arrayfun` in this folder. Prefer a vectorized operation
+when it remains readable; otherwise use an explicit loop with a diagnostic
+index name such as `sampleIndex`, `obstacleIndex`, or `regionIndex`.
+
 ## 10. Renaming and migration
 
 A public rename keeps the previous spelling for one release. New plans expose
@@ -147,3 +155,18 @@ Keep packed obstacles and planner results as structures. Hoist packed arrays
 into local variables before inner loops rather than repeatedly dereferencing
 structure fields. Visualization consumes the same packed obstacle field used by
 collision checking so displayed geometry and collision geometry cannot diverge.
+
+## 12. Examples, benchmarks, and tests
+
+Numbered examples follow one visible progression: construct canonical data,
+define the planning request, run the maintained planner, independently validate
+the command, then animate and report. Fold one-call state/default constructors
+into this progression. Retain a geometry helper only when its vertex-level
+details would obscure the scenario flow, and state that reason beside it.
+
+Randomized generators preserve seeded draw order during readability changes.
+Never regenerate a case because planning failed. Benchmarks report both the
+seed or input scale and the evidence needed to reproduce a result.
+
+Test entry points use the same Section 0 contract. Individual local test cases
+remain ordinary function-based tests; descriptive test names are their header.

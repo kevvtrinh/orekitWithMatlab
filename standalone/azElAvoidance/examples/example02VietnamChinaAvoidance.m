@@ -1,15 +1,31 @@
 function plan = example02VietnamChinaAvoidance( ...
         vietnamAzElData, chinaAzElData, viewOptions)
-%EXAMPLE02VIETNAMCHINAAVOIDANCE Avoid Vietnam and China together.
-%
-% plan = example02VietnamChinaAvoidance(vietnam, china)
-%
-% vietnam and china are independent calculateAreaTargetAzEl-style structs.
-% With no inputs, bundled ADM0 latitude/longitude boundaries are mapped by
-% azimuth = longitude - 110 degrees and elevation = latitude. This
-% translation-only map preserves the geographic outlines for a standalone
-% visualization, but it is not a physical sensor-frame projection.
+%% Section 0: Header & Readme
+% SYNTAX
+%   plan = example02VietnamChinaAvoidance()
+%   plan = example02VietnamChinaAvoidance(vietnam, china)
+%   plan = example02VietnamChinaAvoidance(vietnam, china, viewOptions)
+%**************************************************************************
+% PURPOSE
+%   - Plan around independent Vietnam and China obstacle records.
+%   - Demonstrate bundled geographic outlines when no data is supplied.
+%**************************************************************************
+% INPUTS
+%   - vietnam, china (canonical scalar obstacle structs, optional)
+%       Independent calculateAreaTargetAzEl-style records.
+%   - viewOptions (scalar struct, optional)
+%       Partial animation options.
+%**************************************************************************
+% OUTPUTS
+%   - plan (scalar struct)
+%       Successful Dijkstra plan plus animation handles.
+%**************************************************************************
+% UNITS
+%   - Boundaries and commands are degrees; times are seconds.
+%   - The no-input longitude/latitude translation is illustrative, not a
+%     physical sensor-frame projection.
 
+%% Section 1: Resolve Example Inputs
 if nargin == 0
     [vietnamAzElData, chinaAzElData] = demoCountryProjections();
     viewOptions = struct();
@@ -20,6 +36,7 @@ elseif nargin ~= 3
         "Provide both Vietnam and China azElData structs, or no inputs.");
 end
 
+%% Section 2: Normalize Obstacles & Their Shared Time Window
 azElData = combineAzElObstacles( ...
     vietnamAzElData, chinaAzElData);
 if numel(azElData) ~= 2
@@ -27,18 +44,31 @@ if numel(azElData) ~= 2
         "The example requires exactly one Vietnam and one China obstacle.");
 end
 
-startTime_s = max(arrayfun( ...
-    @(item) item.time_s(1), azElData));
-stopTime_s = min(arrayfun( ...
-    @(item) item.time_s(end), azElData));
+obstacleStartTime_s = zeros(numel(azElData), 1);
+obstacleStopTime_s = zeros(numel(azElData), 1);
+for obstacleIndex = 1:numel(azElData)
+    obstacleStartTime_s(obstacleIndex) = azElData(obstacleIndex).time_s(1);
+    obstacleStopTime_s(obstacleIndex) = azElData(obstacleIndex).time_s(end);
+end
+startTime_s = max(obstacleStartTime_s);
+stopTime_s = min(obstacleStopTime_s);
 if stopTime_s - startTime_s < 150
     error("example02VietnamChinaAvoidance:ShortOverlap", ...
         ["Vietnam and China must have at least 150 seconds of " ...
         "overlapping azElData."]);
 end
 
-startState = boundaryState(startTime_s, [-30, 0]);
-stopState = boundaryState(stopTime_s, [80, 80]);
+%% Section 3: Define & Run The Planning Request
+startState = struct( ...
+    "time_s", startTime_s, ...
+    "position_deg", [-30, 0], ...
+    "velocity_deg_s", [0, 0], ...
+    "acceleration_deg_s2", [0, 0]);
+stopState = struct( ...
+    "time_s", stopTime_s, ...
+    "position_deg", [80, 80], ...
+    "velocity_deg_s", [0, 0], ...
+    "acceleration_deg_s2", [0, 0]);
 limits = struct( ...
     "azimuth_deg", [-180, 180], ...
     "elevation_deg", [-90, 90], ...
@@ -64,8 +94,9 @@ if plan.obstacleField.ObstacleCount ~= 2
         "Expected two independently packed obstacles.");
 end
 
-names = string({plan.obstacleField.Obstacles.Name});
-fprintf("Packed obstacles: %s\n", strjoin(names, ", "));
+%% Section 4: Report & Animate The Validated Plan
+obstacleNames = string({plan.obstacleField.Obstacles.Name});
+fprintf("Packed obstacles: %s\n", strjoin(obstacleNames, ", "));
 fprintf("Path length: %.3f deg (<= %.3fx global optimum).\n", ...
     plan.angularPathLength_deg, plan.suboptimalityBound);
 animationHandles = animateAzElAvoidancePlan( ...
@@ -78,14 +109,9 @@ title(animationHandles.AzElAxes, ...
 plan.animationHandles = animationHandles;
 end
 
-function state = boundaryState(time_s, position_deg)
-state = struct( ...
-    "time_s", time_s, ...
-    "position_deg", position_deg, ...
-    "velocity_deg_s", [0, 0], ...
-    "acceleration_deg_s2", [0, 0]);
-end
-
+%% Section 5: Local Demonstration Functions
+% These helpers own the optional geographic demo path. They do not alter
+% caller-supplied azElData or participate in planning.
 function [vietnam, china] = demoCountryProjections()
 time_s = (2700:1:3000).';
 vietnamBoundary = loadCountryBoundaryLatLon("Vietnam");

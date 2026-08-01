@@ -11,6 +11,13 @@ The maintained implementation still has one public entry point:
 `planAzElDijkstra`. No alternate educational planner, generic graph layer,
 heuristic, or toolbox shortest-path call was added.
 
+A follow-up pass applies the same readability contract to every other MATLAB
+file in `standalone/azElAvoidance`. This includes public obstacle/visualization
+APIs, numbered examples, scenario support, benchmarks, the documentation
+figure generator, and test entry points. Scenario equations, random draw order,
+planner options, validation thresholds, and public result schemas remain the
+behavioral source of truth.
+
 ## Actual execution map
 
 ```text
@@ -152,6 +159,23 @@ The final full-suite result is recorded here after verification:
 The final randomized blinking campaign passed all 5 fresh seeds. The stop/go,
 Crossy Road, and spinning-rod spiral animation checks also passed.
 
+The folder-wide follow-up produced the following additional evidence:
+
+```text
+MATLAB files with Section 0 headers: 51 of 51
+MATLAB Code Analyzer messages:       0 across 51 files
+Complete test suite:                 37 passed, 0 failed, 0 incomplete
+Fresh randomized blinking batch:     5 of 5 passed
+Five-turn spiral path length:        241.439 deg
+Five-turn spiral winding:            4.09 turns
+Five-turn spiral motion completion:  117.0 s
+```
+
+The follow-up did not modify `planAzElDijkstra` after its dedicated pass. The
+remaining public runtime APIs already conformed to the Section 0, execution
+section, naming, and helper-placement rules and were audited rather than
+rewritten gratuitously.
+
 ## Behavioral-preservation checklist
 
 - [x] Public function name and argument order unchanged.
@@ -174,6 +198,16 @@ Crossy Road, and spinning-rod spiral animation checks also passed.
   map.
 - `STATIC_DIJKSTRA.md`: implementation-stage and frontier behavior map.
 - `REFACTOR_DIJKSTRA.md`: scope, decisions, evidence, and checklist.
+- `examples/*.m`: ordered scenario/planning/validation/animation sections,
+  inline one-call state/default constructors, and diagnostic variable names.
+- `examples/support/*.m`: explicit generator and diagnostic stages; the
+  randomized board generator now exposes its full seeded construction inline.
+- `benchmarks/*.m`: reproducible input, measurement, and report stages.
+- `docs/generateDijkstraDocumentationFigures.m`: explicit figure intent,
+  sample/attempt names, and unit-bearing motion-profile variables.
+- `tests/*.m`: documented test entry points and diagnostic loop names.
+- `STYLE.md`: folder-wide continuation, loop, randomized-case, example, and
+  test conventions.
 
 ## Suspected bugs and unresolved items
 

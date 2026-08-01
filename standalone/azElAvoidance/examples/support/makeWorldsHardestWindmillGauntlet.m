@@ -1,11 +1,23 @@
 function problem = makeWorldsHardestWindmillGauntlet()
-%MAKEWORLDSHARDESTWINDMILLGAUNTLET Create a level-6-inspired S corridor.
-%
-% Eight dotted four-blade windmills rotate at one common angular rate.
-% There are no coin or collection constraints. The boresight must traverse
-% the upper corridor, turn through the right connector, and return through
-% the lower corridor while timing the moving gaps.
+%% Section 0: Header & Readme
+% SYNTAX
+%   problem = makeWorldsHardestWindmillGauntlet()
+%**************************************************************************
+% PURPOSE
+%   - Create a level-6-inspired S corridor with eight synchronized dotted
+%     windmills and no coin-collection constraints.
+%**************************************************************************
+% INPUTS
+%   - None.
+%**************************************************************************
+% OUTPUTS
+%   - problem (scalar struct)
+%       Canonical obstacles, endpoint states, limits, options, and geometry.
+%**************************************************************************
+% UNITS
+%   - Angular quantities are degrees; temporal quantities are seconds.
 
+%% Section 1: Define The Corridor & Windmill Motion
 time_s = (0:1:100).';
 angularRate_deg_s = 12;
 topCenters = [-12 4; -4 4; 4 4; 12 4];
@@ -13,29 +25,40 @@ bottomCenters = [12 -4; 4 -4; -4 -4; -12 -4];
 centers_deg = [topCenters; bottomCenters];
 phase_deg = [0 22.5 45 67.5 67.5 45 22.5 0];
 
-[wallAzimuth, wallElevation] = corridorWalls();
+%% Section 2: Build Static Corridor Walls
+[wallAzimuth_deg, wallElevation_deg] = corridorWalls();
 walls = makeAzElObstacleData( ...
     "Level 6 corridor walls", time_s, ...
-    wallAzimuth, wallElevation);
+    wallAzimuth_deg, wallElevation_deg);
 
+%% Section 3: Sample The Synchronized Windmills
 windmills = cell(1, size(centers_deg, 1));
-for windmill = 1:size(centers_deg, 1)
-    azimuth = cell(numel(time_s), 1);
-    elevation = cell(numel(time_s), 1);
-    for sample = 1:numel(time_s)
-        angle = phase_deg(windmill) + ...
-            angularRate_deg_s * time_s(sample);
-        [azimuth{sample}, elevation{sample}] = windmillBoundary( ...
-            centers_deg(windmill, :), angle);
+for windmillIndex = 1:size(centers_deg, 1)
+    azimuth_deg = cell(numel(time_s), 1);
+    elevation_deg = cell(numel(time_s), 1);
+    for sampleIndex = 1:numel(time_s)
+        windmillAngle_deg = phase_deg(windmillIndex) + ...
+            angularRate_deg_s * time_s(sampleIndex);
+        [azimuth_deg{sampleIndex}, elevation_deg{sampleIndex}] = windmillBoundary( ...
+            centers_deg(windmillIndex, :), windmillAngle_deg);
     end
-    windmills{windmill} = makeAzElObstacleData( ...
-        sprintf('Windmill %d', windmill), ...
-        time_s, azimuth, elevation);
+    windmills{windmillIndex} = makeAzElObstacleData( ...
+        sprintf('Windmill %d', windmillIndex), ...
+        time_s, azimuth_deg, elevation_deg);
 end
 azElData = [{walls}, windmills];
 
-startState = boundaryState(0, [-16 4]);
-stopState = boundaryState(100, [-16 -4]);
+%% Section 4: Assemble The Planning Problem
+startState = struct( ...
+    "time_s", 0, ...
+    "position_deg", [-16 4], ...
+    "velocity_deg_s", [0 0], ...
+    "acceleration_deg_s2", [0 0]);
+stopState = struct( ...
+    "time_s", 100, ...
+    "position_deg", [-16 -4], ...
+    "velocity_deg_s", [0 0], ...
+    "acceleration_deg_s2", [0 0]);
 limits = struct( ...
     "azimuth_deg", [-18 18], ...
     "elevation_deg", [-8 8], ...
@@ -72,70 +95,73 @@ problem = struct( ...
     "geometry", geometry);
 end
 
-function [azimuth, elevation] = corridorWalls()
+%% Section 5: Local Geometry Functions
+% The retained helpers define reusable geometric invariants within this
+% generator; keeping them here leaves the time-sampling stages readable.
+function [azimuth_deg, elevation_deg] = corridorWalls()
 regions = { ...
     rectangleVertices([-18 18], [7 8]), ...
     rectangleVertices([-18 18], [-8 -7]), ...
     rectangleVertices([-18 -17], [-7 7]), ...
     rectangleVertices([17 18], [-7 7]), ...
     rectangleVertices([-17 14], [-1 1])};
-[azimuth, elevation] = joinRegions(regions);
+[azimuth_deg, elevation_deg] = joinRegions(regions);
 end
 
-function [azimuth, elevation] = windmillBoundary(center, angle_deg)
+function [azimuth_deg, elevation_deg] = windmillBoundary( ...
+        center_deg, angle_deg)
 bladeCount = 4;
-bladeRadii = [0.75 1.5 2.25];
-dotRadius = 0.34;
+bladeRadii_deg = [0.75 1.5 2.25];
+dotRadius_deg = 0.34;
 diskVertexCount = 10;
-regions = cell(1, 1 + bladeCount * numel(bladeRadii));
-regions{1} = diskVertices(center, dotRadius, diskVertexCount);
-write = 1;
-for blade = 0:bladeCount - 1
-    bladeAngle = deg2rad(angle_deg + blade * 360 / bladeCount);
-    direction = [cos(bladeAngle), sin(bladeAngle)];
-    for radius = bladeRadii
-        write = write + 1;
-        regions{write} = diskVertices( ...
-            center + radius * direction, ...
-            dotRadius, diskVertexCount);
+regions = cell(1, 1 + bladeCount * numel(bladeRadii_deg));
+regions{1} = diskVertices(center_deg, dotRadius_deg, diskVertexCount);
+regionWriteIndex = 1;
+for bladeIndex = 0:bladeCount - 1
+    bladeAngle_rad = deg2rad( ...
+        angle_deg + bladeIndex * 360 / bladeCount);
+    bladeDirection = [cos(bladeAngle_rad), sin(bladeAngle_rad)];
+    for bladeRadius_deg = bladeRadii_deg
+        regionWriteIndex = regionWriteIndex + 1;
+        regions{regionWriteIndex} = diskVertices( ...
+            center_deg + bladeRadius_deg * bladeDirection, ...
+            dotRadius_deg, diskVertexCount);
     end
 end
-[azimuth, elevation] = joinRegions(regions);
+[azimuth_deg, elevation_deg] = joinRegions(regions);
 end
 
-function vertices = diskVertices(center, radius, count)
-angle = linspace(0, 2 * pi, count + 1).';
-vertices = center + radius * [cos(angle), sin(angle)];
+function vertices_deg = diskVertices(center_deg, radius_deg, vertexCount)
+angle_rad = linspace(0, 2 * pi, vertexCount + 1).';
+vertices_deg = center_deg + ...
+    radius_deg * [cos(angle_rad), sin(angle_rad)];
 end
 
-function vertices = rectangleVertices(xLimits, yLimits)
-vertices = [ ...
-    xLimits(1), yLimits(1); ...
-    xLimits(2), yLimits(1); ...
-    xLimits(2), yLimits(2); ...
-    xLimits(1), yLimits(2); ...
-    xLimits(1), yLimits(1)];
+function vertices_deg = rectangleVertices( ...
+        azimuthLimits_deg, elevationLimits_deg)
+vertices_deg = [ ...
+    azimuthLimits_deg(1), elevationLimits_deg(1); ...
+    azimuthLimits_deg(2), elevationLimits_deg(1); ...
+    azimuthLimits_deg(2), elevationLimits_deg(2); ...
+    azimuthLimits_deg(1), elevationLimits_deg(2); ...
+    azimuthLimits_deg(1), elevationLimits_deg(1)];
 end
 
-function [azimuth, elevation] = joinRegions(regions)
-rowCount = sum(cellfun(@(item) size(item, 1), regions)) + ...
-    numel(regions) - 1;
-combined = nan(rowCount, 2);
-cursor = 1;
-for region = 1:numel(regions)
-    count = size(regions{region}, 1);
-    output = cursor:cursor + count - 1;
-    combined(output, :) = regions{region};
-    cursor = output(end) + 2;
+function [azimuth_deg, elevation_deg] = joinRegions(regions_deg)
+regionCount = numel(regions_deg);
+regionRowCount = zeros(regionCount, 1);
+for regionIndex = 1:regionCount
+    regionRowCount(regionIndex) = size(regions_deg{regionIndex}, 1);
 end
-azimuth = combined(:, 1);
-elevation = combined(:, 2);
+packedRowCount = sum(regionRowCount) + regionCount - 1;
+combinedBoundary_deg = nan(packedRowCount, 2);
+nextOutputRow = 1;
+for regionIndex = 1:regionCount
+    regionRows = nextOutputRow:( ...
+        nextOutputRow + regionRowCount(regionIndex) - 1);
+    combinedBoundary_deg(regionRows, :) = regions_deg{regionIndex};
+    nextOutputRow = regionRows(end) + 2;
 end
-
-function state = boundaryState(time_s, position)
-state = struct( ...
-    "time_s", time_s, ...
-    "position_deg", position, ...
-    "velocity_deg_s", [0 0], ...
-    "acceleration_deg_s2", [0 0]);
+azimuth_deg = combinedBoundary_deg(:, 1);
+elevation_deg = combinedBoundary_deg(:, 2);
 end

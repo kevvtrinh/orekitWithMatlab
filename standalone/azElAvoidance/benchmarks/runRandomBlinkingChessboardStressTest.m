@@ -1,26 +1,46 @@
 function report = runRandomBlinkingChessboardStressTest( ...
         caseCount, rootSeed)
-%RUNRANDOMBLINKINGCHESSBOARDSTRESSTEST Run unfiltered stochastic cases.
-%
-% No failed case is discarded or replaced. Leave rootSeed empty for a new
-% batch; replay a reported root seed to reproduce every generated case.
+%% Section 0: Header & Readme
+% SYNTAX
+%   report = runRandomBlinkingChessboardStressTest()
+%   report = runRandomBlinkingChessboardStressTest(caseCount)
+%   report = runRandomBlinkingChessboardStressTest(caseCount, rootSeed)
+%**************************************************************************
+% PURPOSE
+%   - Run an unfiltered batch of randomized moving-target interception cases.
+%   - Preserve every failure and its seed rather than regenerating easy cases.
+%**************************************************************************
+% INPUTS
+%   - caseCount (positive integer, optional)
+%       Number of generated cases; defaults to five.
+%   - rootSeed (positive integer or empty, optional)
+%       Reproduces every per-case seed in the batch.
+%**************************************************************************
+% OUTPUTS
+%   - report (scalar struct)
+%       Root/case seeds, per-case evidence, and aggregate pass rate.
+%**************************************************************************
+% UNITS
+%   - Angular errors are degrees; search and intercept times are seconds.
 
+%% Section 1: Resolve The Batch Size & Reproducible Seeds
 if nargin < 1 || isempty(caseCount)
     caseCount = 5;
 end
 validateattributes(caseCount, {'numeric'}, ...
     {'scalar', 'integer', 'positive'});
 if nargin < 2 || isempty(rootSeed)
-    previous = rng;
+    callerRandomState = rng;
     rng("shuffle");
     rootSeed = randi([1, intmax("int32")]);
-    rng(previous);
+    rng(callerRandomState);
 end
 validateattributes(rootSeed, {'numeric'}, ...
     {'scalar', 'integer', 'positive', '<=', intmax("int32")});
-stream = RandStream("mt19937ar", "Seed", double(rootSeed));
-caseSeeds = randi(stream, intmax("int32"), caseCount, 1);
+randomStream = RandStream("mt19937ar", "Seed", double(rootSeed));
+caseSeeds = randi(randomStream, intmax("int32"), caseCount, 1);
 
+%% Section 2: Preallocate Stable Per-Case Records
 template = struct( ...
     "seed", 0, ...
     "success", false, ...
@@ -33,26 +53,32 @@ template = struct( ...
     "searchElapsed_s", 0, ...
     "message", "");
 cases = repmat(template, caseCount, 1);
+
+%% Section 3: Generate, Plan & Record Every Case
 for caseIndex = 1:caseCount
-    seed = double(caseSeeds(caseIndex));
-    timer = tic;
+    caseSeed = double(caseSeeds(caseIndex));
+    caseTimer = tic;
     try
-        problem = makeRandomBlinkingChessboardGauntlet(seed);
+        problem = makeRandomBlinkingChessboardGauntlet(caseSeed);
         plan = planAzElMovingTargetIntercept( ...
             problem.azElData, problem.startState, problem.target, ...
             problem.limits, problem.options);
         if plan.success
             diagnostics = analyzeBlinkingChessboardIntercept( ...
                 problem, plan);
-            success = ...
-                diagnostics.blockedBoresightSampleCount == 0 && ...
-                diagnostics.catchError_deg <= ...
-                problem.options.CatchTolerance_deg && ...
-                diagnostics.cellTransferCount >= 2 && ...
-                diagnostics.blockedTargetSampleCount > 0;
+            blockedBoresightSampleCount = diagnostics.blockedBoresightSampleCount;
+            commandIsCollisionFree = blockedBoresightSampleCount == 0;
+            catchMargin_deg = problem.options.CatchTolerance_deg - ...
+                diagnostics.catchError_deg;
+            targetWasCaught = catchMargin_deg >= 0;
+            boardWasTraversed = diagnostics.cellTransferCount >= 2;
+            blockedTargetSampleCount = diagnostics.blockedTargetSampleCount;
+            targetCrossedBlockedCells = blockedTargetSampleCount > 0;
+            passedAllChecks = commandIsCollisionFree && targetWasCaught && ...
+                boardWasTraversed && targetCrossedBlockedCells;
             cases(caseIndex) = struct( ...
-                "seed", seed, ...
-                "success", success, ...
+                "seed", caseSeed, ...
+                "success", passedAllChecks, ...
                 "interceptTime_s", ...
                     diagnostics.interceptTime_s, ...
                 "catchError_deg", diagnostics.catchError_deg, ...
@@ -63,25 +89,31 @@ for caseIndex = 1:caseCount
                 "cellTransferCount", ...
                     diagnostics.cellTransferCount, ...
                 "attemptCount", diagnostics.attemptCount, ...
-                "searchElapsed_s", toc(timer), ...
+                "searchElapsed_s", toc(caseTimer), ...
                 "message", string(plan.message));
         else
-            cases(caseIndex).seed = seed;
+            cases(caseIndex).seed = caseSeed;
             cases(caseIndex).attemptCount = ...
                 numel(plan.interceptAttempts);
-            cases(caseIndex).searchElapsed_s = toc(timer);
+            cases(caseIndex).searchElapsed_s = toc(caseTimer);
             cases(caseIndex).message = string(plan.message);
         end
     catch exception
-        cases(caseIndex).seed = seed;
-        cases(caseIndex).searchElapsed_s = toc(timer);
+        cases(caseIndex).seed = caseSeed;
+        cases(caseIndex).searchElapsed_s = toc(caseTimer);
         cases(caseIndex).message = string(exception.message);
     end
+    if cases(caseIndex).success
+        statusText = "PASS";
+    else
+        statusText = "FAIL";
+    end
     fprintf("  Case %d/%d seed %u: %s (%.2f s)\n", ...
-        caseIndex, caseCount, uint32(seed), ...
-        passFail(cases(caseIndex).success), ...
+        caseIndex, caseCount, uint32(caseSeed), statusText, ...
         cases(caseIndex).searchElapsed_s);
 end
+
+%% Section 4: Assemble & Print The Batch Report
 successMask = [cases.success].';
 report = struct( ...
     "rootSeed", double(rootSeed), ...
@@ -93,12 +125,4 @@ report = struct( ...
 fprintf("Random batch root seed %u: %d/%d passed (%.1f%%).\n", ...
     uint32(rootSeed), report.successCount, caseCount, ...
     100 * report.successRate);
-end
-
-function value = passFail(success)
-if success
-    value = "PASS";
-else
-    value = "FAIL";
-end
 end

@@ -1,9 +1,24 @@
 function result = example11ChasedBoresight(viewOptions)
-%EXAMPLE11CHASEDBORESIGHT Animate pursuit until a late goal opens.
-%
-% result = example11ChasedBoresight()
-% result = example11ChasedBoresight(viewOptions)
+%% Section 0: Header & Readme
+% SYNTAX
+%   result = example11ChasedBoresight()
+%   result = example11ChasedBoresight(viewOptions)
+%**************************************************************************
+% PURPOSE
+%   - Plan sustained evasive steering until a late goal opens.
+%**************************************************************************
+% INPUTS
+%   - viewOptions (scalar struct, optional)
+%       Partial animation options.
+%**************************************************************************
+% OUTPUTS
+%   - result (scalar struct)
+%       Generated problem, successful plan, diagnostics, and view handles.
+%**************************************************************************
+% UNITS
+%   - Angular quantities are degrees; temporal quantities are seconds.
 
+%% Section 1: Resolve The Animation & Generate The Problem
 if nargin < 1
     viewOptions = struct();
 end
@@ -16,6 +31,8 @@ viewOptions = defaultAzElAnimationOptions(viewOptions, struct( ...
     "ObstacleFaceAlpha", 0.05));
 
 problem = makeChasedBoresightGauntlet();
+
+%% Section 2: Plan & Verify Pursuit Behavior
 plan = planAzElDijkstra( ...
     problem.azElData, problem.startState, problem.stopState, ...
     problem.limits, problem.options);
@@ -47,6 +64,7 @@ if diagnostics.angularPathLength_deg < 120
         "The route did not complete the expected defensive loop.");
 end
 
+%% Section 3: Animate, Package & Report The Result
 view = animateAzElAvoidancePlan( ...
     problem.azElData, plan, viewOptions);
 result = problem;

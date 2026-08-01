@@ -1,10 +1,23 @@
 function problem = makeRotatingSlotGauntlet()
-%MAKEROTATINGSLOTGAUNTLET Create four independently rotating slotted rings.
-%
-% The generated case is standalone canonical azElData. A boresight begins
-% outside four concentric C-shaped barriers and must time each slot crossing.
-% The annular voids between rings provide safe places to wait.
+%% Section 0: Header & Readme
+% SYNTAX
+%   problem = makeRotatingSlotGauntlet()
+%**************************************************************************
+% PURPOSE
+%   - Create four independently rotating slotted rings whose intervening
+%     annular chambers permit explicit waiting.
+%**************************************************************************
+% INPUTS
+%   - None.
+%**************************************************************************
+% OUTPUTS
+%   - problem (scalar struct)
+%       Canonical obstacles, endpoint states, limits, options, and geometry.
+%**************************************************************************
+% UNITS
+%   - Angular quantities are degrees; temporal quantities are seconds.
 
+%% Section 1: Define Ring Geometry & Timing
 time_s = (0:1:90).';
 innerRadius_deg = [10 7 4 1];
 outerRadius_deg = [11 8 5 2];
@@ -14,24 +27,34 @@ nominalCrossingTime_s = [12 32 52 72];
 phase_deg = -angularRate_deg_s .* nominalCrossingTime_s;
 verticesPerArc = 18;
 
+%% Section 2: Sample Every Rotating Ring
 azElData = cell(1, 4);
-for ring = 1:4
-    azimuth = cell(numel(time_s), 1);
-    elevation = cell(numel(time_s), 1);
-    for sample = 1:numel(time_s)
-        slotCenter_deg = phase_deg(ring) + ...
-            angularRate_deg_s(ring) * time_s(sample);
-        [azimuth{sample}, elevation{sample}] = slottedRing( ...
-            innerRadius_deg(ring), outerRadius_deg(ring), ...
-            slotCenter_deg, slotWidth_deg(ring), verticesPerArc);
+for ringIndex = 1:numel(innerRadius_deg)
+    azimuth_deg = cell(numel(time_s), 1);
+    elevation_deg = cell(numel(time_s), 1);
+    for sampleIndex = 1:numel(time_s)
+        slotCenter_deg = phase_deg(ringIndex) + ...
+            angularRate_deg_s(ringIndex) * time_s(sampleIndex);
+        [azimuth_deg{sampleIndex}, elevation_deg{sampleIndex}] = slottedRing( ...
+            innerRadius_deg(ringIndex), outerRadius_deg(ringIndex), ...
+            slotCenter_deg, slotWidth_deg(ringIndex), verticesPerArc);
     end
-    azElData{ring} = makeAzElObstacleData( ...
-        sprintf('Rotating slot %d', ring), ...
-        time_s, azimuth, elevation);
+    azElData{ringIndex} = makeAzElObstacleData( ...
+        sprintf('Rotating slot %d', ringIndex), ...
+        time_s, azimuth_deg, elevation_deg);
 end
 
-startState = boundaryState(0, [12.5 0]);
-stopState = boundaryState(90, [0 0]);
+%% Section 3: Assemble The Planning Problem
+startState = struct( ...
+    "time_s", 0, ...
+    "position_deg", [12.5 0], ...
+    "velocity_deg_s", [0 0], ...
+    "acceleration_deg_s2", [0 0]);
+stopState = struct( ...
+    "time_s", 90, ...
+    "position_deg", [0 0], ...
+    "velocity_deg_s", [0 0], ...
+    "acceleration_deg_s2", [0 0]);
 limits = struct( ...
     "azimuth_deg", [-14 14], ...
     "elevation_deg", [-14 14], ...
@@ -67,29 +90,24 @@ problem = struct( ...
     "geometry", geometry);
 end
 
+%% Section 4: Local Geometry Functions
+% Ring construction stays separate because it maps polar slot geometry to
+% one closed polygon and would interrupt the scenario sampling loop above.
 function [azimuth_deg, elevation_deg] = slottedRing( ...
-        innerRadius, outerRadius, slotCenter_deg, slotWidth_deg, ...
+        innerRadius_deg, outerRadius_deg, slotCenter_deg, slotWidth_deg, ...
         verticesPerArc)
-halfSlot = deg2rad(slotWidth_deg / 2);
-slotCenter = deg2rad(slotCenter_deg);
-blockedAngle = linspace( ...
-    slotCenter + halfSlot, ...
-    slotCenter + 2 * pi - halfSlot, verticesPerArc).';
-outerAzimuth = outerRadius * cos(blockedAngle);
-outerElevation = outerRadius * sin(blockedAngle);
-innerAngle = flipud(blockedAngle);
-innerAzimuth = innerRadius * cos(innerAngle);
-innerElevation = innerRadius * sin(innerAngle);
+halfSlot_rad = deg2rad(slotWidth_deg / 2);
+slotCenter_rad = deg2rad(slotCenter_deg);
+blockedAngle_rad = linspace( ...
+    slotCenter_rad + halfSlot_rad, ...
+    slotCenter_rad + 2 * pi - halfSlot_rad, verticesPerArc).';
+outerAzimuth_deg = outerRadius_deg * cos(blockedAngle_rad);
+outerElevation_deg = outerRadius_deg * sin(blockedAngle_rad);
+innerAngle_rad = flipud(blockedAngle_rad);
+innerAzimuth_deg = innerRadius_deg * cos(innerAngle_rad);
+innerElevation_deg = innerRadius_deg * sin(innerAngle_rad);
 azimuth_deg = [ ...
-    outerAzimuth; innerAzimuth; outerAzimuth(1)];
+    outerAzimuth_deg; innerAzimuth_deg; outerAzimuth_deg(1)];
 elevation_deg = [ ...
-    outerElevation; innerElevation; outerElevation(1)];
-end
-
-function state = boundaryState(time_s, position)
-state = struct( ...
-    "time_s", time_s, ...
-    "position_deg", position, ...
-    "velocity_deg_s", [0 0], ...
-    "acceleration_deg_s2", [0 0]);
+    outerElevation_deg; innerElevation_deg; outerElevation_deg(1)];
 end

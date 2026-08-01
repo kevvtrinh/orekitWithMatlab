@@ -1,47 +1,77 @@
 function diagnostics = analyzeChasedBoresightGauntlet(problem, plan)
-%ANALYZECHASEDBORESIGHTGAUNTLET Measure pursuit, motion, and goal timing.
+%% Section 0: Header & Readme
+% SYNTAX
+%   diagnostics = analyzeChasedBoresightGauntlet(problem, plan)
+%**************************************************************************
+% PURPOSE
+%   - Measure pursuit motion, waiting, goal timing, and exact safety.
+%**************************************************************************
+% INPUTS
+%   - problem (scalar struct)
+%       Chaser scenario, planner options, and goal-opening metadata.
+%   - plan (scalar struct)
+%       Successful Dijkstra plan for the scenario.
+%**************************************************************************
+% OUTPUTS
+%   - diagnostics (scalar struct)
+%       Goal, motion, waiting, path-length, and collision metrics.
+%**************************************************************************
+% UNITS
+%   - Angular quantities are degrees; times are seconds.
 
+%% Section 1: Validate The Successful Plan
 if ~isstruct(plan) || ~isfield(plan, "success") || ~plan.success
     error("analyzeChasedBoresightGauntlet:InvalidPlan", ...
         "plan must be a successful chased-boresight plan.");
 end
-sampleStep = median(diff(plan.time_s));
-goalDistance = hypot( ...
+
+%% Section 2: Measure Goal Arrival & Pre-Opening Motion
+sampleStep_s = median(diff(plan.time_s));
+goalDistance_deg = hypot( ...
     plan.position_deg(:, 1) - problem.stopState.position_deg(1), ...
     plan.position_deg(:, 2) - problem.stopState.position_deg(2));
-goalIndex = find(goalDistance <= 0.15, 1);
-if isempty(goalIndex)
-    goalArrivalTime = NaN;
+goalArrivalSample = find(goalDistance_deg <= 0.15, 1);
+if isempty(goalArrivalSample)
+    goalArrivalTime_s = NaN;
 else
-    goalArrivalTime = plan.time_s(goalIndex);
+    goalArrivalTime_s = plan.time_s(goalArrivalSample);
 end
-beforeOpen = plan.time_s < problem.geometry.goalOpenTime_s;
-movingBeforeOpen = beforeOpen & ~plan.isWaiting;
-movingFraction = nnz(movingBeforeOpen) / max(1, nnz(beforeOpen));
-longestWait = longestTrueRun(plan.isWaiting & beforeOpen) * sampleStep;
-blocked = queryAzElTimeObstacle(plan.obstacleField, ...
+isBeforeGoalOpening = plan.time_s < problem.geometry.goalOpenTime_s;
+isMovingBeforeOpening = isBeforeGoalOpening & ~plan.isWaiting;
+movingFractionBeforeOpening = nnz(isMovingBeforeOpening) / ...
+    max(1, nnz(isBeforeGoalOpening));
+longestWaitBeforeOpening_s = longestTrueRun( ...
+    plan.isWaiting & isBeforeGoalOpening) * sampleStep_s;
+
+%% Section 3: Recheck Exact Polygon Safety
+blockedSamples = queryAzElTimeObstacle(plan.obstacleField, ...
     plan.position_deg(:, 1), plan.position_deg(:, 2), plan.time_s, ...
     struct( ...
     "SafetyMarginDeg", problem.options.SafetyMargin_deg, ...
-    "TimePaddingSamples", plan.options.TimePaddingSamples));
+        "TimePaddingSamples", plan.options.TimePaddingSamples));
+
+%% Section 4: Assemble Diagnostics
 diagnostics = struct( ...
-    "goalArrivalTime_s", goalArrivalTime, ...
+    "goalArrivalTime_s", goalArrivalTime_s, ...
     "goalOpenTime_s", problem.geometry.goalOpenTime_s, ...
-    "movingFractionBeforeGoalOpen", movingFraction, ...
-    "longestWaitBeforeGoalOpen_s", longestWait, ...
-    "totalMovingTime_s", sampleStep * nnz(~plan.isWaiting), ...
-    "totalWaitingTime_s", sampleStep * nnz(plan.isWaiting), ...
+    "movingFractionBeforeGoalOpen", movingFractionBeforeOpening, ...
+    "longestWaitBeforeGoalOpen_s", longestWaitBeforeOpening_s, ...
+    "totalMovingTime_s", sampleStep_s * nnz(~plan.isWaiting), ...
+    "totalWaitingTime_s", sampleStep_s * nnz(plan.isWaiting), ...
     "angularPathLength_deg", plan.angularPathLength_deg, ...
-    "blockedSampleCount", nnz(blocked));
+    "blockedSampleCount", nnz(blockedSamples));
 end
 
-function longest = longestTrueRun(mask)
-changes = diff([false; mask(:); false]);
-starts = find(changes == 1);
-stops = find(changes == -1) - 1;
-if isempty(starts)
-    longest = 0;
+%% Section 5: Local Functions
+function longestRunLength = longestTrueRun(logicalMask)
+%% Section 0: Header & Readme
+% Sentinels turn runs touching either endpoint into ordinary transitions.
+transitions = diff([false; logicalMask(:); false]);
+runFirstSample = find(transitions == 1);
+runLastSample = find(transitions == -1) - 1;
+if isempty(runFirstSample)
+    longestRunLength = 0;
 else
-    longest = max(stops - starts + 1);
+    longestRunLength = max(runLastSample - runFirstSample + 1);
 end
 end
