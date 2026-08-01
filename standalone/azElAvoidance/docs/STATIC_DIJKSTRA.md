@@ -18,6 +18,27 @@ The implementation uses one maintainable static algorithm:
 
 No guide path, direction hint, route tube, or second static planner is used.
 
+## Implementation stages
+
+`solveStaticGoalDijkstra` keeps the complete per-resolution operation in
+execution order:
+
+1. Validate the exact initial and goal positions against the packed field.
+2. Build the azimuth/elevation grid and classify occupied nodes.
+3. Map each exact endpoint to its nearest free grid node.
+4. Seed a binary min-heap with the goal at zero angular cost.
+5. Pop the lowest cost label, reject stale entries, and settle the node.
+6. Generate free cardinal and diagonal neighbors, including wrapped azimuth.
+7. Relax each neighbor's cost and store the current node as its successor.
+8. Follow successors from the initial node to reconstruct the lattice route.
+9. Connect exact endpoints and remove unnecessary corners with polygon checks.
+10. Retime, densely validate, and package the candidate and diagnostics.
+
+The heap intentionally allows duplicate node entries. Improving a label pushes
+a new entry instead of performing decrease-key. When an older entry reaches
+the heap root, its queued cost no longer matches the best cost and it is safely
+ignored. Equal-cost entries use serial numbers for deterministic FIFO ties.
+
 ## Backward cost propagation
 
 Let each free grid state be \(q_i=[\alpha_i,\epsilon_i]^T\). Free

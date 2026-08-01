@@ -48,6 +48,37 @@ flowchart LR
     G -->|Free| I["Return az/el/time command"]
 ```
 
+## Maintained execution map
+
+The public function is intentionally an orchestrator around two visible,
+different Dijkstra searches:
+
+```text
+planAzElDijkstra
+    validate inputs and resolve defaults
+    build or reuse the packed obstacle field
+    classify geometry over the requested horizon
+
+    static minimum-distance case:
+        solveStaticGoalDijkstra at each scheduled grid step
+        select the shortest exact-validated candidate
+
+    dynamic or terminal-capture case:
+        searchAzElSafeIntervalDijkstra at each scheduled grid step
+        select the best candidate for the requested objective
+
+    normalize the stable public output schema
+```
+
+The static search label is angular cost-to-go and its stored relationship is
+a successor toward the goal. The dynamic search label is earliest feasible
+arrival time and its stored relationship is a parent plus the selected timed
+transition. They deliberately remain separate because merging them would hide
+their different state definitions and reconstruction rules.
+
+See `REFACTOR_DIJKSTRA.md` for the readability-pass boundaries, preserved
+invariants, toolbox review, and behavioral-equivalence record.
+
 ## 1. Planner inputs
 
 The public call is:

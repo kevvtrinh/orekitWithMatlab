@@ -26,6 +26,9 @@ and an algorithm-by-algorithm breakdown.
 The mathematical design, pseudocode, guarantees, complexity, and maintenance
 boundaries for the planner used by every numbered example are documented in
 [`DIJKSTRA_PLANNER.md`](docs/DIJKSTRA_PLANNER.md).
+The maintained code-stage map, preserved invariants, utility decisions, and
+equivalence checklist are in
+[`REFACTOR_DIJKSTRA.md`](docs/REFACTOR_DIJKSTRA.md).
 The all-Dijkstra branch comparison and measured runtime tradeoffs are in
 [`ALL_DIJKSTRA_EXPERIMENT.md`](docs/ALL_DIJKSTRA_EXPERIMENT.md).
 
