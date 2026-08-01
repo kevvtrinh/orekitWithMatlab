@@ -1,0 +1,10 @@
+scenario,seed,success,elapsed_s,iterations,generatedNodes,generatedCandidates,rejectedCandidates,initialTreeMaxTime_s,destinationTreeMinTime_s,treeTimeGap_s,pathLength_deg,plannerCollisionValidated,fineCollisionValidated,forwardDynamicsValidated,windingTurns,inwardRingCrossings,message
+Five-turn spiral,2,0,31.5818665,5000,1058,45000,37951,35.5,370,334.5,NaN,0,0,0,NaN,NaN,No collision-free kinodynamic tree connection was found within the configured iteration and node limits.
+Five-turn spiral,7,0,31.6777225,5000,886,45000,39047,25,385,360,NaN,0,0,0,NaN,NaN,No collision-free kinodynamic tree connection was found within the configured iteration and node limits.
+Five-turn spiral,19,0,29.1782606,5000,2413,45000,26437,252,259,7,NaN,0,0,0,NaN,NaN,No collision-free kinodynamic tree connection was found within the configured iteration and node limits.
+Rotating slots,2,0,113.4947322,5000,1749,45000,35226,75,0,-75,NaN,0,0,0,NaN,NaN,No collision-free kinodynamic tree connection was found within the configured iteration and node limits.
+Rotating slots,7,0,81.8323453,5000,1432,45000,36774,90,1,-89,NaN,0,0,0,NaN,NaN,No collision-free kinodynamic tree connection was found within the configured iteration and node limits.
+Rotating slots,19,0,75.8288919,5000,1366,45000,37375,59,0,-59,NaN,0,0,0,NaN,NaN,No collision-free kinodynamic tree connection was found within the configured iteration and node limits.
+Spinning-rod spiral,2,0,38.7288271,5000,2330,45000,25769,124,214,90,NaN,0,0,0,NaN,NaN,No collision-free kinodynamic tree connection was found within the configured iteration and node limits.
+Spinning-rod spiral,7,0,42.7403357,5000,2397,45000,25308,137.25,229.75,92.5,NaN,0,0,0,NaN,NaN,No collision-free kinodynamic tree connection was found within the configured iteration and node limits.
+Spinning-rod spiral,19,0,39.6126188,5000,2672,45000,23008,129,203.5,74.5,NaN,0,0,0,NaN,NaN,No collision-free kinodynamic tree connection was found within the configured iteration and node limits.
