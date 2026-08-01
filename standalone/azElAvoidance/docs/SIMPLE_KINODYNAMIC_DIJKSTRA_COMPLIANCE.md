@@ -68,6 +68,9 @@ and measured legacy-example results are recorded in
 - `equalCostTieBreaker = "staticTopology"` runs a separate reverse Dijkstra
   over time-invariant position occupancy and orders only exactly equal-cost
   seven-state scan candidates by its cost-to-go map.
+- `staticRouteRetiming = "analyticRestToRest"` attempts a synchronized
+  quintic route whose exact derivative bounds enforce velocity, acceleration,
+  and jerk limits. A failed attempt falls back to the state lattice.
 
 The scan frontier, state-index ties, one `timeStep_s`, and maximum-magnitude
 default jerk remain the public defaults. The optional frontier and tie-order
@@ -112,12 +115,13 @@ The implementation was checked against both the original specification and
 | Public and diagnostic field casing | Complete: public `plan.*` fields use lower camel case; nested diagnostic records use PascalCase. |
 | Visible Dijkstra implementation | Complete: minimum unsettled-state selection, propagation, collision checks, cost relaxation, parent storage, and reconstruction remain inline; no graph toolbox black box is used. |
 | Local-function scope | Complete: local functions are limited to defaults and validation, one refinement responsibility, complete-transition checking, and parent reconstruction. No nested functions are used. |
-| MATLAB Code Analyzer | Complete: `checkcode` reports zero findings for the planner, static-topology builder, focused tests, and compatibility runner. |
+| MATLAB Code Analyzer | Complete: `checkcode` reports zero findings for the planner, static-topology builder, analytic retimer, focused tests, and compatibility runner. |
 
 ## Verification record
 
 MATLAB `checkcode` reports zero findings for the planner, static-topology
-builder, and both compatibility/focused test files. The focused suite contains thirteen passing
+builder, analytic retimer, and both compatibility/focused test files. The
+focused suite contains fifteen passing
 tests:
 
 1. rest-to-rest kinodynamic propagation and dynamic limits;
@@ -139,6 +143,9 @@ tests:
 12. static goal-rooted topology tie breaking preserving successful Dijkstra
     cost while exposing a monotonically decreasing position route;
 13. rejection of a diagonal topology edge through occupied corner cells.
+14. jerk-limited analytic static retiming reaching an exact-time rest endpoint
+    while respecting every derivative limit;
+15. explicit insufficient-time diagnostics followed by state-lattice fallback.
 
 ## Legacy spiral regression status
 

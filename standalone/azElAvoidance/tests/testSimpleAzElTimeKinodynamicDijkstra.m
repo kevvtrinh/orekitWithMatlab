@@ -574,6 +574,97 @@ verifyEqual(testCase, topology.InitialCostToGoal_deg, Inf);
 verifyEmpty(testCase, topology.InitialPathSubscripts);
 end
 
+function testAnalyticStaticRetimingRespectsDerivativeLimits(testCase)
+%% Section 0: Header & Readme
+% SYNTAX
+%   testAnalyticStaticRetimingRespectsDerivativeLimits(testCase)
+%**************************************************************************
+% PURPOSE
+%   - Verify optional static-route quintic retiming reaches the exact-time
+%     rest endpoint while respecting velocity, acceleration, and jerk limits.
+%**************************************************************************
+% INPUTS
+%   - testCase (matlab.unittest.FunctionTestCase)
+%       Active verification fixture.
+%**************************************************************************
+% OUTPUTS
+%   - None.
+%**************************************************************************
+% UNITS
+%   - Angles are degrees and time is seconds.
+time_s = (0:12).';
+azElData = emptyObstacleData(time_s);
+[initialState, destinationState, limits, options] = standardProblem(12);
+options.staticRouteRetiming = "analyticRestToRest";
+
+plan = planSimpleAzElTimeKinodynamicDijkstra( ...
+    azElData, initialState, destinationState, limits, options);
+
+verifyTrue(testCase, plan.success, plan.message);
+verifyEqual(testCase, plan.solutionMethod, ...
+    "staticTopologyAnalyticRestToRest");
+verifyTrue(testCase, plan.staticTopology.Success, ...
+    plan.staticTopology.Message);
+verifyTrue(testCase, plan.analyticRetiming.Success, ...
+    plan.analyticRetiming.Message);
+verifyEqual(testCase, plan.time_s([1, end]), [0; 12], ...
+    "AbsTol", 1e-12);
+verifyEqual(testCase, plan.position_deg(1, :), ...
+    initialState.position_deg, "AbsTol", 1e-12);
+verifyEqual(testCase, plan.position_deg(end, :), ...
+    destinationState.position_deg, "AbsTol", 1e-12);
+verifyEqual(testCase, plan.velocity_deg_s([1, end], :), ...
+    zeros(2, 2), "AbsTol", 1e-10);
+verifyEqual(testCase, plan.acceleration_deg_s2([1, end], :), ...
+    zeros(2, 2), "AbsTol", 1e-10);
+verifyLessThanOrEqual(testCase, max(abs(plan.velocity_deg_s), [], 1), ...
+    limits.maxVelocity_deg_s + 1e-10);
+verifyLessThanOrEqual(testCase, ...
+    max(abs(plan.acceleration_deg_s2), [], 1), ...
+    limits.maxAcceleration_deg_s2 + 1e-10);
+verifyLessThanOrEqual(testCase, max(abs(plan.jerk_deg_s3), [], 1), ...
+    limits.maxJerk_deg_s3 + 1e-10);
+verifyTrue(testCase, any(plan.isWaiting));
+verifyEqual(testCase, plan.expandedStateCount, 0);
+verifyTrue(testCase, plan.sampledCollisionValidated);
+end
+
+function testAnalyticStaticRetimingReportsInsufficientTime(testCase)
+%% Section 0: Header & Readme
+% SYNTAX
+%   testAnalyticStaticRetimingReportsInsufficientTime(testCase)
+%**************************************************************************
+% PURPOSE
+%   - Verify analytic retiming fails explicitly when the exact horizon is
+%     shorter than the jerk-limited route duration.
+%**************************************************************************
+% INPUTS
+%   - testCase (matlab.unittest.FunctionTestCase)
+%       Active verification fixture.
+%**************************************************************************
+% OUTPUTS
+%   - None.
+%**************************************************************************
+% UNITS
+%   - Angles are degrees and time is seconds.
+time_s = (0:2).';
+azElData = emptyObstacleData(time_s);
+[initialState, destinationState, limits, options] = standardProblem(2);
+options.staticRouteRetiming = "analyticRestToRest";
+
+plan = planSimpleAzElTimeKinodynamicDijkstra( ...
+    azElData, initialState, destinationState, limits, options);
+
+verifyFalse(testCase, plan.success);
+verifyTrue(testCase, plan.analyticRetiming.Used);
+verifyFalse(testCase, plan.analyticRetiming.Success);
+verifyGreaterThan(testCase, ...
+    plan.analyticRetiming.MinimumManeuverTime_s, 2);
+verifyThat(testCase, plan.analyticRetiming.Message, ...
+    matlab.unittest.constraints.ContainsSubstring("needs"));
+verifyEmpty(testCase, plan.time_s);
+end
+
 function [initialState, destinationState, limits, options] = ...
         standardProblem(destinationTime_s)
 %% Section 0: Header & Readme

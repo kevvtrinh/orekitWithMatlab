@@ -200,6 +200,34 @@ therefore remains an optional, documented ordering aid rather than a claimed
 performance improvement. Its code and results are also mapped in
 [`SIMPLE_DIJKSTRA_FEATURE_STAGES.md`](SIMPLE_DIJKSTRA_FEATURE_STAGES.md).
 
+### Analytic jerk-limited rest-to-rest retiming
+
+The feature is selected with
+`options.staticRouteRetiming = "analyticRestToRest"`. Planner Section 7 first
+calls `retimeSimpleAzElStaticTopologyRoute`. Each retained topology turn uses
+a synchronized quintic progress law. Its duration enforces the exact analytic
+velocity, acceleration, and jerk maxima on both axes. The same sampled profile
+is checked against the packed obstacle field. Any timing or collision failure
+is stored on `plan.analyticRetiming` and falls back to the seven-state search.
+
+All fifteen focused tests passed and Code Analyzer reported zero findings.
+The doubled-budget static rerun produced three new numbered-example passes
+without removing the existing slalom pass:
+
+| Example | Final method | Expanded | Generated | Result |
+| --- | --- | ---: | ---: | --- |
+| 01 plan from `azElData` | analytic retiming | 0 | 0 | **passed** |
+| 02 Vietnam-China avoidance | analytic retiming | 0 | 0 | **passed** |
+| 03 kinodynamic detour | analytic retiming | 0 | 0 | **passed** |
+| 05 five-turn spiral | lattice fallback | 23,733 | 60,000 | time levels failed; finest hit cap |
+| 07 wrapped azimuth seam | lattice fallback | 15,054 | 40,000 | generated-state cap |
+| 08 alternating slalom | lattice fallback | 50,859 | 50,859 | **passed** |
+| 09 U-trap escape | lattice fallback | 1 | 1 | dynamically unreachable initial lattice state |
+
+The failed analytic attempts remain diagnostic evidence: Example 05's route
+intersected the packed obstacle field, while Examples 07, 08, and 09 required
+35.710, 111.355, and 60.871 seconds for 30, 60, and 60-second horizons.
+
 ## Rerunning
 
 Run every case at its base budget:
