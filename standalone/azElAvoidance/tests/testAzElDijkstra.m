@@ -251,6 +251,7 @@ verifyEqual(testCase, queryOptions.CollisionMode, "polygon");
 plannerDefaults = planAzElDijkstra(limits, "defaults");
 verifyTrue(testCase, isfield(plannerDefaults, "AllowAzimuthWrap"));
 verifyEqual(testCase, plannerDefaults.MotionMode, "profile");
+verifyEqual(testCase, plannerDefaults.PathFirstTimeScaling, "minimumJerk");
 verifyTrue(testCase, plannerDefaults.FallbackToProfile);
 plan = planAzElDijkstra(obstacleField, startState, stopState, limits, ...
     struct("GridStep_deg", 5, "GridStepSchedule_deg", 5, ...

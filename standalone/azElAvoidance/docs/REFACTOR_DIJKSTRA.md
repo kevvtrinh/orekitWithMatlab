@@ -256,7 +256,7 @@ test preserves the blocked-chord detour.
 The subsequent motion-policy extension keeps `profile` as the default and
 adds the opt-in `pathFirstThenKinematic` mode for moving scenes. That mode
 reuses the maintained static path search, replaces hard corners with short
-direction-matched blends, and time-scales one analytic minimum-jerk motion.
+direction-matched blends, and time-scales one analytic whole-path motion.
 It no longer introduces a rest at every retained waypoint. The continuous
 command is accepted only after limit and full time-aware polygon validation.
 When enabled, `FallbackToProfile` reserves half the wall-time budget for the
@@ -265,14 +265,24 @@ attempt, selected mode, and fallback decision visible without changing older
 result fields. Animation decimation now weights moving samples more heavily
 than long stationary holds without changing the underlying command.
 
+The later minimum-time extension keeps `minimumJerk` as that mode's default
+clock and adds `PathFirstTimeScaling="minimumTime"`. It compares continuous-
+velocity acceleration/cruise/deceleration schedules on one normalized clock,
+then scales the winning schedule to both axes' velocity and acceleration
+limits. Example 16 stores independent tangent-and-arc distance and one-axis
+rest-to-rest time lower bounds. Its report uses separate dimensionless ratios
+and their equal-weight geometric mean, so degrees are never mixed with seconds.
+
 Latest verification:
 
 ```text
 MATLAB Code Analyzer messages in touched MATLAB files: 0
-Complete test suite:                              42 passed, 0 failed, 0 incomplete
-Numbered example campaign:                        15 passed, 0 failed
+Complete test suite:                              43 passed, 0 failed, 0 incomplete
+Numbered example campaign:                        16 passed, 0 failed
 Five-turn spiral continuous motion:               0 interior stops, 0 blocked samples
 Five-turn spiral path / completion:                236.368 deg / 159.5 s
+No-wrap rising-disk path / time ratios:            1.002656 / 1.026083
+No-wrap rising-disk combined ratio / stops:        1.014302 / 0
 Path-first oscillating-wall integration:          selected profile fallback, 0 blocked samples
 Path-first rotating-slot integration:             selected profile fallback, 0 blocked samples
 ```

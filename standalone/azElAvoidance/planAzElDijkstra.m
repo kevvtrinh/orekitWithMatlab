@@ -229,6 +229,28 @@ else
         "MotionMode must be profile or pathFirstThenKinematic.");
 end
 
+% PathFirstTimeScaling changes only how a completed, corner-blended path is
+% traversed. The established minimum-jerk clock remains the default. The
+% minimum-time clock uses one acceleration/cruise/deceleration schedule for
+% the whole path, so velocity stays continuous without adding waypoint
+% stops merely to change direction.
+if ~(ischar(options.PathFirstTimeScaling) || ...
+        (isstring(options.PathFirstTimeScaling) && ...
+        isscalar(options.PathFirstTimeScaling)))
+    error("planAzElDijkstra:InvalidPathFirstTimeScaling", ...
+        "PathFirstTimeScaling must be scalar text.");
+end
+timeScalingName = regexprep(lower(strtrim(string( ...
+    options.PathFirstTimeScaling))), "[^a-z]", "");
+if any(timeScalingName == ["minimumjerk", "gentle"])
+    options.PathFirstTimeScaling = "minimumJerk";
+elseif any(timeScalingName == ["minimumtime", "fastest"])
+    options.PathFirstTimeScaling = "minimumTime";
+else
+    error("planAzElDijkstra:InvalidPathFirstTimeScaling", ...
+        "PathFirstTimeScaling must be minimumJerk or minimumTime.");
+end
+
 if any(abs([initialState.velocity_deg_s, ...
         initialState.acceleration_deg_s2]) > 1e-12)
     error("planAzElDijkstra:NonzeroBoundaryDynamics", ...
@@ -1519,6 +1541,7 @@ retimed = struct( ...
     "Success", true, ...
     "Message", "Static route satisfies timing and exact collision checks.", ...
     "MotionStyle", "segmentStops", ...
+    "TimeScalingStyle", "segmentStops", ...
     "Profile", profile, ...
     "RouteDistance_deg", sum(hypot( ...
         routeStep_deg(:, 1), routeStep_deg(:, 2))), ...
@@ -1564,8 +1587,8 @@ retimingTimer = tic;
 cornerBlendedPath_deg = makeCornerBlendedPath(routePositions_deg, options);
 [pathModel, smoothedPath_deg, smoothedDistance_deg] = ...
     makeContinuousPathModel(cornerBlendedPath_deg, options);
-minimumManeuverTime_s = minimumContinuousPathDuration( ...
-    pathModel, axisLimits);
+timeScaling = makeContinuousTimeScaling(pathModel, axisLimits, options);
+minimumManeuverTime_s = timeScaling.Duration_s;
 availableManeuverTime_s = goalState.time_s - initialState.time_s;
 if minimumManeuverTime_s > availableManeuverTime_s + 1e-9
     retimed = failedRetiming(sprintf( ...
@@ -1573,19 +1596,20 @@ if minimumManeuverTime_s > availableManeuverTime_s + 1e-9
         minimumManeuverTime_s, availableManeuverTime_s), ...
         toc(retimingTimer));
     retimed.MotionStyle = "continuousCornerBlend";
+    retimed.TimeScalingStyle = timeScaling.Style;
     retimed.SmoothedPath_deg = smoothedPath_deg;
     return;
 end
 
 profile = makeContinuousPathProfile(pathModel, initialState.time_s, ...
-    goalState.time_s, minimumManeuverTime_s, options.SampleTime_s, ...
+    goalState.time_s, timeScaling, options.SampleTime_s, ...
     axisLimits, options);
 maximumRate_deg_s = max(axisLimits.maxVelocity_deg_s);
 gridCollisionStep_s = options.GridStep_deg / maximumRate_deg_s / 4;
 collisionSampleStep_s = min([options.SampleTime_s, ...
     options.CollisionCheckStep_s, gridCollisionStep_s]);
 validationProfile = makeContinuousPathProfile(pathModel, ...
-    initialState.time_s, goalState.time_s, minimumManeuverTime_s, ...
+    initialState.time_s, goalState.time_s, timeScaling, ...
     collisionSampleStep_s, axisLimits, options);
 
 rateLimitExceeded = any(max(abs( ...
@@ -1599,6 +1623,7 @@ if rateLimitExceeded || accelerationLimitExceeded
         "Continuous route exceeds a velocity or acceleration limit.", ...
         toc(retimingTimer));
     retimed.MotionStyle = "continuousCornerBlend";
+    retimed.TimeScalingStyle = timeScaling.Style;
     retimed.SmoothedPath_deg = smoothedPath_deg;
     return;
 end
@@ -1614,6 +1639,7 @@ if any(blockedRetimedSamples)
         "The continuous route intersects the exact packed obstacle field.", ...
         toc(retimingTimer));
     retimed.MotionStyle = "continuousCornerBlend";
+    retimed.TimeScalingStyle = timeScaling.Style;
     retimed.SmoothedPath_deg = smoothedPath_deg;
     return;
 end
@@ -1623,6 +1649,7 @@ retimed = struct( ...
     "Message", ...
     "Corner-blended route satisfies timing and exact collision checks.", ...
     "MotionStyle", "continuousCornerBlend", ...
+    "TimeScalingStyle", timeScaling.Style, ...
     "Profile", profile, ...
     "RouteDistance_deg", smoothedDistance_deg, ...
     "MinimumManeuverTime_s", minimumManeuverTime_s, ...
@@ -1631,6 +1658,158 @@ retimed = struct( ...
     "RoutePositions_deg", routePositions_deg, ...
     "SmoothedPath_deg", smoothedPath_deg, ...
     "SearchElapsed_s", toc(retimingTimer));
+end
+
+function timeScaling = makeContinuousTimeScaling( ...
+        pathModel, axisLimits, options)
+%% Section 0: Header & Readme
+% SYNTAX
+%   timeScaling = makeContinuousTimeScaling( ...
+%       pathModel, axisLimits, options)
+%**************************************************************************
+% PURPOSE
+%   - Choose the requested whole-path clock and calculate its shortest
+%     limit-respecting duration.
+%**************************************************************************
+% INPUTS
+%   - pathModel (scalar struct)
+%       Path position and analytic progress derivatives.
+%   - axisLimits (scalar struct)
+%       Per-axis maximum velocity and acceleration.
+%   - options (scalar struct)
+%       Resolved PathFirstTimeScaling selection.
+%**************************************************************************
+% OUTPUTS
+%   - timeScaling (scalar struct)
+%       Style, duration, and any style-specific schedule values.
+%**************************************************************************
+% UNITS
+%   - Duration_s is seconds; RampFraction and progress are unitless.
+if options.PathFirstTimeScaling == "minimumTime"
+    timeScaling = minimumTimeContinuousPathScaling( ...
+        pathModel, axisLimits);
+else
+    timeScaling = struct( ...
+        "Style", "minimumJerk", ...
+        "Duration_s", minimumContinuousPathDuration( ...
+            pathModel, axisLimits), ...
+        "RampFraction", NaN);
+end
+end
+
+function timeScaling = minimumTimeContinuousPathScaling( ...
+        pathModel, axisLimits)
+%% Section 0: Header & Readme
+% SYNTAX
+%   timeScaling = minimumTimeContinuousPathScaling( ...
+%       pathModel, axisLimits)
+%**************************************************************************
+% PURPOSE
+%   - Find the fastest symmetric acceleration/cruise/deceleration clock
+%     for one continuous path.
+%**************************************************************************
+% INPUTS
+%   - pathModel (scalar struct)
+%       Path position, tangent, and curvature polynomials.
+%   - axisLimits (scalar struct)
+%       Per-axis maximum velocity and acceleration.
+%**************************************************************************
+% OUTPUTS
+%   - timeScaling (scalar struct)
+%       Minimum-time schedule within the searched continuous-clock family.
+%**************************************************************************
+% UNITS
+%   - Duration_s is seconds; RampFraction is unitless.
+% A ramp fraction says how much of the maneuver is spent accelerating and
+% again decelerating. Fractions near one half describe a triangular speed
+% history; smaller values leave a central cruise. Every candidate first
+% runs on a one-second clock. Its velocity and acceleration then scale by
+% 1/T and 1/T^2, which gives the exact duration needed for that candidate.
+normalizedTime = linspace(0, 1, 4001).';
+coarseRampFractions = (0.02:0.002:0.5).';
+[bestDuration_s, bestRampFraction] = evaluateRampFractionSet( ...
+    pathModel, axisLimits, normalizedTime, coarseRampFractions);
+
+% Refine only around the best coarse value. This keeps the result stable
+% and inexpensive while resolving the reported duration to much less than
+% one output sample for the intended long traversals.
+refinementHalfWidth = 0.002;
+fineRampFractions = linspace(max(0.005, ...
+    bestRampFraction - refinementHalfWidth), min(0.5, ...
+    bestRampFraction + refinementHalfWidth), 81).';
+[fineDuration_s, fineRampFraction] = evaluateRampFractionSet( ...
+    pathModel, axisLimits, normalizedTime, fineRampFractions);
+if fineDuration_s < bestDuration_s
+    bestDuration_s = fineDuration_s;
+    bestRampFraction = fineRampFraction;
+end
+
+% The dense calculation is deterministic, but a small margin protects the
+% unsampled instant between neighboring progress samples.
+timeScaling = struct( ...
+    "Style", "minimumTimeTrapezoid", ...
+    "Duration_s", 1.005 * max(bestDuration_s, 1e-6), ...
+    "RampFraction", bestRampFraction);
+end
+
+function [bestDuration_s, bestRampFraction] = evaluateRampFractionSet( ...
+        pathModel, axisLimits, normalizedTime, rampFractions)
+%% Section 0: Header & Readme
+% SYNTAX
+%   [bestDuration_s, bestRampFraction] = evaluateRampFractionSet( ...
+%       pathModel, axisLimits, normalizedTime, rampFractions)
+%**************************************************************************
+% PURPOSE
+%   - Measure candidate whole-path clocks on a common one-second scale.
+%**************************************************************************
+% INPUTS
+%   - pathModel, axisLimits (scalar structs)
+%       Analytic path and per-axis kinematic limits.
+%   - normalizedTime (numeric vector)
+%       Common zero-to-one clock samples.
+%   - rampFractions (numeric vector)
+%       Acceleration fractions to compare.
+%**************************************************************************
+% OUTPUTS
+%   - bestDuration_s (positive scalar)
+%       Shortest duration required by the compared candidates.
+%   - bestRampFraction (scalar in the interval (0, 0.5])
+%       Acceleration fraction belonging to bestDuration_s.
+%**************************************************************************
+% UNITS
+%   - bestDuration_s is seconds; other values are unitless except the
+%     degree-based path derivatives and limits carried by their structures.
+bestDuration_s = Inf;
+bestRampFraction = rampFractions(1);
+for rampIndex = 1:numel(rampFractions)
+    rampFraction = rampFractions(rampIndex);
+    [pathProgress, progressRate, progressAcceleration] = ...
+        trapezoidalProgress(normalizedTime, 1, rampFraction);
+    velocityDuration_s = 0;
+    accelerationDuration_s = 0;
+    for axisIndex = 1:2
+        pathSlope_deg = reshape(ppval( ...
+            pathModel.FirstDerivative{axisIndex}, pathProgress), [], 1);
+        pathCurvature_deg = reshape(ppval( ...
+            pathModel.SecondDerivative{axisIndex}, pathProgress), [], 1);
+        velocityAtOneSecond_deg_s = pathSlope_deg .* progressRate;
+        accelerationAtOneSecond_deg_s2 = ...
+            pathCurvature_deg .* progressRate.^2 + ...
+            pathSlope_deg .* progressAcceleration;
+        velocityDuration_s = max(velocityDuration_s, ...
+            max(abs(velocityAtOneSecond_deg_s)) / ...
+            axisLimits.maxVelocity_deg_s(axisIndex));
+        accelerationDuration_s = max(accelerationDuration_s, sqrt( ...
+            max(abs(accelerationAtOneSecond_deg_s2)) / ...
+            axisLimits.maxAcceleration_deg_s2(axisIndex)));
+    end
+    requiredDuration_s = max( ...
+        velocityDuration_s, accelerationDuration_s);
+    if requiredDuration_s < bestDuration_s
+        bestDuration_s = requiredDuration_s;
+        bestRampFraction = rampFraction;
+    end
+end
 end
 
 function blendedPath_deg = makeCornerBlendedPath(routePositions_deg, options)
@@ -1919,12 +2098,12 @@ minimumDuration_s = 1.02 * max( ...
 end
 
 function profile = makeContinuousPathProfile( ...
-        pathModel, initialTime_s, goalTime_s, maneuverDuration_s, ...
+        pathModel, initialTime_s, goalTime_s, timeScaling, ...
         sampleTime_s, axisLimits, options)
 %% Section 0: Header & Readme
 % SYNTAX
 %   profile = makeContinuousPathProfile( ...
-%       pathModel, initialTime_s, goalTime_s, maneuverDuration_s, ...
+%       pathModel, initialTime_s, goalTime_s, timeScaling, ...
 %       sampleTime_s, axisLimits, options)
 %**************************************************************************
 % PURPOSE
@@ -1933,8 +2112,10 @@ function profile = makeContinuousPathProfile( ...
 % INPUTS
 %   - pathModel (scalar struct)
 %       Two-axis position and derivative polynomials.
-%   - initialTime_s, goalTime_s, maneuverDuration_s, sampleTime_s
-%       Mission horizon, active-motion duration, and output spacing.
+%   - initialTime_s, goalTime_s, sampleTime_s (numeric scalars)
+%       Mission horizon and output spacing.
+%   - timeScaling (scalar struct)
+%       Style, maneuver duration, and any style-specific schedule values.
 %   - axisLimits, options (scalar structs)
 %       Azimuth canonicalization limits and wrapping policy.
 %**************************************************************************
@@ -1950,10 +2131,17 @@ if time_s(end) < goalTime_s - 1e-9
 else
     time_s(end) = goalTime_s;
 end
-elapsedTime_s = min(max(time_s - initialTime_s, 0), maneuverDuration_s);
-normalizedTime = elapsedTime_s / maneuverDuration_s;
-[pathProgress, progressRate_1_s, progressAcceleration_1_s2] = ...
-    minimumJerkProgress(normalizedTime, maneuverDuration_s);
+elapsedTime_s = min(max(time_s - initialTime_s, 0), ...
+    timeScaling.Duration_s);
+normalizedTime = elapsedTime_s / timeScaling.Duration_s;
+if timeScaling.Style == "minimumTimeTrapezoid"
+    [pathProgress, progressRate_1_s, progressAcceleration_1_s2] = ...
+        trapezoidalProgress(normalizedTime, timeScaling.Duration_s, ...
+        timeScaling.RampFraction);
+else
+    [pathProgress, progressRate_1_s, progressAcceleration_1_s2] = ...
+        minimumJerkProgress(normalizedTime, timeScaling.Duration_s);
+end
 
 positionUnwrapped_deg = evaluatePathPosition(pathModel, pathProgress);
 velocity_deg_s = zeros(numel(time_s), 2);
@@ -1969,6 +2157,15 @@ for axisIndex = 1:2
         pathCurvature_deg .* progressRate_1_s.^2 + ...
         pathSlope_deg .* progressAcceleration_1_s2;
 end
+% The trapezoid has a nonzero one-sided acceleration immediately before
+% stopping. Once its scheduled duration has elapsed, publish the requested
+% rest state instead of repeating that final deceleration during the hold.
+maneuverIsComplete = time_s >= ...
+    initialTime_s + timeScaling.Duration_s - 1e-12;
+positionUnwrapped_deg(maneuverIsComplete, :) = repmat( ...
+    pathModel.GoalPosition_deg, nnz(maneuverIsComplete), 1);
+velocity_deg_s(maneuverIsComplete, :) = 0;
+acceleration_deg_s2(maneuverIsComplete, :) = 0;
 positionUnwrapped_deg(1, :) = pathModel.StartPosition_deg;
 positionUnwrapped_deg(end, :) = pathModel.GoalPosition_deg;
 position_deg = positionUnwrapped_deg;
@@ -1984,6 +2181,64 @@ profile = struct( ...
     "acceleration_deg_s2", acceleration_deg_s2, ...
     "isWaiting", all(abs(velocity_deg_s) <= 1e-10, 2) & ...
         all(abs(acceleration_deg_s2) <= 1e-10, 2));
+end
+
+function [progress, progressRate_1_s, progressAcceleration_1_s2] = ...
+        trapezoidalProgress(normalizedTime, duration_s, rampFraction)
+%% Section 0: Header & Readme
+% SYNTAX
+%   [progress, progressRate_1_s, progressAcceleration_1_s2] = ...
+%       trapezoidalProgress(normalizedTime, duration_s, rampFraction)
+%**************************************************************************
+% PURPOSE
+%   - Evaluate a continuous-velocity accelerate/cruise/decelerate clock.
+%**************************************************************************
+% INPUTS
+%   - normalizedTime (numeric vector)
+%       Clamped maneuver time from zero through one.
+%   - duration_s (positive scalar)
+%       Physical duration represented by normalizedTime.
+%   - rampFraction (scalar in the interval (0, 0.5])
+%       Fraction spent accelerating and again decelerating.
+%**************************************************************************
+% OUTPUTS
+%   - progress, progressRate_1_s, progressAcceleration_1_s2
+%       Path fraction and its first two physical-time derivatives.
+%**************************************************************************
+% UNITS
+%   - Progress and rampFraction are unitless; derivatives are 1/s and
+%     1/s^2.
+normalizedAcceleration = 1 / (rampFraction * (1 - rampFraction));
+normalizedCruiseRate = 1 / (1 - rampFraction);
+progress = zeros(size(normalizedTime));
+progressRate = zeros(size(normalizedTime));
+progressAcceleration = zeros(size(normalizedTime));
+
+isAccelerating = normalizedTime < rampFraction;
+isCruising = normalizedTime >= rampFraction & ...
+    normalizedTime <= 1 - rampFraction;
+isDecelerating = normalizedTime > 1 - rampFraction;
+progress(isAccelerating) = 0.5 * normalizedAcceleration * ...
+    normalizedTime(isAccelerating).^2;
+progressRate(isAccelerating) = normalizedAcceleration * ...
+    normalizedTime(isAccelerating);
+progressAcceleration(isAccelerating) = normalizedAcceleration;
+
+accelerationDistance = 0.5 * normalizedAcceleration * rampFraction^2;
+progress(isCruising) = accelerationDistance + ...
+    normalizedCruiseRate * ...
+    (normalizedTime(isCruising) - rampFraction);
+progressRate(isCruising) = normalizedCruiseRate;
+
+remainingNormalizedTime = 1 - normalizedTime(isDecelerating);
+progress(isDecelerating) = 1 - 0.5 * normalizedAcceleration * ...
+    remainingNormalizedTime.^2;
+progressRate(isDecelerating) = normalizedAcceleration * ...
+    remainingNormalizedTime;
+progressAcceleration(isDecelerating) = -normalizedAcceleration;
+
+progressRate_1_s = progressRate / duration_s;
+progressAcceleration_1_s2 = progressAcceleration / duration_s^2;
 end
 
 function [progress, progressRate_1_s, progressAcceleration_1_s2] = ...
@@ -2147,6 +2402,7 @@ retimed = struct( ...
     "Success", false, ...
     "Message", string(message), ...
     "MotionStyle", "", ...
+    "TimeScalingStyle", "", ...
     "Profile", struct(), ...
     "RouteDistance_deg", Inf, ...
     "MinimumManeuverTime_s", Inf, ...
@@ -4292,6 +4548,7 @@ options = struct( ...
     "AllowNonzeroTerminalState", false, ...
     "PrintFailureSuggestions", true, ...
     "MotionMode", "profile", ...
+    "PathFirstTimeScaling", "minimumJerk", ...
     "FallbackToProfile", true, ...
     "Objective", "minimumAngularDistance", ...
     "RouteShortcutStep_deg", 0.1, ...

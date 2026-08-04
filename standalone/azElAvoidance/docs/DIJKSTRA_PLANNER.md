@@ -349,12 +349,22 @@ the safe-interval graph is built. It deliberately separates the questions:
 
 The first question uses the same complete goal-rooted Dijkstra grids as the
 static planner. The second replaces hard interior corners with quadratic
-direction-matched blends and applies one minimum-jerk progress clock to the
-complete route. Position, velocity, and acceleration come from the blended
-path and its analytic derivatives. A conservative duration keeps both axes
-inside their supplied limits without forcing an intermediate stop. The full
-time-varying obstacle field is then queried densely, and the route is returned
-only when that independent timed validation succeeds.
+direction-matched blends and applies one progress clock to the complete route.
+Position, velocity, and acceleration come from the blended path and its
+analytic derivatives. A conservative duration keeps both axes inside their
+supplied limits without forcing an intermediate stop. The full time-varying
+obstacle field is then queried densely, and the route is returned only when
+that independent timed validation succeeds.
+
+`PathFirstTimeScaling="minimumJerk"` is the default clock. It has zero rate
+and acceleration at both ends and favors a gentle maneuver.
+`PathFirstTimeScaling="minimumTime"` instead compares symmetric continuous-
+velocity acceleration/cruise/deceleration schedules. Each candidate is
+evaluated on a normalized one-second clock; velocity scales with $1/T$ and
+acceleration with $1/T^2$, so the shortest limit-respecting duration follows
+without repeatedly resampling physical time. A dense coarse search followed
+by local refinement chooses the acceleration fraction. The final command is
+still independently checked against limits and moving polygons.
 
 An opening-scene path can fail when an obstacle later crosses it or when its
 minimum slew time misses the deadline. With `FallbackToProfile=true`, the
@@ -368,7 +378,8 @@ minimum-time objective or nonzero terminal state uses the profile fallback
 when enabled and otherwise reports an incompatible option combination.
 `plan.motionPlanning` records the requested mode, selected mode, fallback
 decision, failure explanation, and path-first resolution attempts.
-`plan.retiming.MotionStyle` identifies `continuousCornerBlend`, while the raw
+`plan.retiming.MotionStyle` identifies `continuousCornerBlend`, and
+`plan.retiming.TimeScalingStyle` identifies the selected clock. The raw
 polygonal shortcut remains available in `plan.routeShortcut` for diagnosis.
 
 The planner instead uses a safe-interval state:

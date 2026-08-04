@@ -127,8 +127,9 @@ and the packed obstacle field are also returned.
 
 Static obstacle volumes use progressive goal-rooted Dijkstra. Moving volumes
 use progressive event-compressed safe-interval Dijkstra. Both modes use
-analytic rest-to-rest slews and validate the command against the original
-packed polygons.
+analytic motion and validate the command against the original packed
+polygons. The default profiles use rest-to-rest internal slews; the optional
+path-first mode below can traverse one blended route continuously.
 
 ### Optional path-first motion for moving scenes
 
@@ -154,6 +155,20 @@ different positions or wait for an obstacle to pass. Half of
 `plan.motionPlanning` to see the requested and selected modes, whether
 fallback was used, and each path-first resolution attempt. The default
 `MotionMode` remains `"profile"` for backward-compatible behavior.
+
+The default whole-path clock is `"minimumJerk"`, which favors gentle start
+and stop behavior. When completion time matters more and continuous velocity
+is sufficient, select the acceleration/cruise/deceleration clock:
+
+```matlab
+options.PathFirstTimeScaling = "minimumTime";
+```
+
+This clock searches its acceleration fraction, preserves one continuous
+velocity history through the blended route, and chooses the shortest sampled
+duration that satisfies both axes' velocity and acceleration limits. Run
+`example16NoWrapRisingDiskEfficiency` for a no-wrap crossing that compares
+path length and completion time with stored mathematical lower bounds.
 
 Animation frame decimation also gives moving samples more weight than a long
 stationary hold. This changes playback smoothness only; the command and

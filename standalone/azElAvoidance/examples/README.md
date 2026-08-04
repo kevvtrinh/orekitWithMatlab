@@ -30,6 +30,7 @@ azimuth/elevation/time obstacle field.
 | 13 | `example13RandomBlinkingIntercept` | Moving-target Dijkstra | Interception-time search where every candidate uses the same dynamic Dijkstra kernel. |
 | 14 | `example14MovingRendezvousAndTrail` | Velocity-matched Dijkstra | Crossy Road-style capture through twelve nonoverlapping four-vehicle rows in a narrow central corridor; rows 9-12 sweep the center slot as timed gates. |
 | 15 | `example15SpinningRodSpiral` | Safe-interval Dijkstra | Unguided traversal of a two-turn spiral while a faster rotating rod forces planner-selected waits in three protected wall notches. |
+| 16 | `example16NoWrapRisingDiskEfficiency` | Goal-rooted Dijkstra | A no-wrap `-175` to `+175` crossing over a large slowly rising disk, using continuous minimum-time path scaling and stored analytic distance/time comparisons. |
 
 Examples 05-09 can be run as a set:
 
@@ -45,8 +46,9 @@ through `runAzElGauntletCase`. Example 13 uses
 the same Dijkstra planner.
 
 The planner routes static geometry through progressive goal-rooted Dijkstra.
-Moving volumes use progressive event-compressed safe-interval Dijkstra. Both modes
-retime analytic rest-to-rest internal slews and validate against the packed
+Moving volumes normally use progressive event-compressed safe-interval
+Dijkstra. Path-first examples may instead apply one continuous clock to a
+corner-blended spatial route before validating it against the moving packed
 polygons. Example 14 enables the optional quintic terminal edge to match a
 moving target's nonzero rate before trailing it.
 
