@@ -36,8 +36,33 @@ function plan = planAzElDijkstra( ...
 % UNITS
 %   - Angular position is degrees. Time is seconds. Velocity is deg/s and
 %     acceleration is deg/s^2.
+%
+% HOW TO READ THIS FILE
+%   Think of this function as a planning report with seven chapters:
+%   1. Restate the request in one predictable format.
+%   2. Fill in every omitted option and reject contradictory settings.
+%   3. Pack the obstacle polygons once so every later check sees the same
+%      geometry.
+%   4. Decide whether a simple static map is sufficient or time must be
+%      part of the search.
+%   5. Try complete grids from coarse to fine and keep the best route that
+%      passes an independent polygon check.
+%   6. Explain a failure or turn the winning route into sampled commands.
+%   7. Return the same field layout on every exit path.
+%
+%   "Goal-rooted" means the static cost calculation starts at the goal and
+%   spreads outward. "Safe interval" means a continuous span of time when
+%   the boresight may wait at one position without touching an obstacle.
+%   These names sound specialized, but both searches follow the same simple
+%   rule: always process the cheapest known unfinished state next.
 
-%% Section 1: Validate And Normalize Public Inputs
+%% Section 1: Read The Request Into One Predictable Format
+% Report question: What exactly did the caller ask the planner to do?
+%
+% MATLAB callers can omit optional fields, use row or column vectors, and
+% request defaults without running a search. This section removes those
+% harmless differences. After it finishes, the rest of the file can assume
+% that both states, all limits, and every option have one known shape.
 isDefaultsRequest = nargin == 2 && isstruct(azElData) && ...
     (ischar(initialState) || isstring(initialState)) && ...
     isscalar(string(initialState)) && ...
@@ -47,7 +72,7 @@ if isDefaultsRequest
     plan = defaultAzElDijkstraOptions(limits);
     return;
 end
-timer = tic;
+plannerTimer = tic;
 if nargin < 5 || isempty(options)
     options = struct();
 end
@@ -89,9 +114,18 @@ for defaultOptionIndex = 1:numel(defaultOptionFields)
     end
 end
 
-%% Section 2: Resolve Search And Validation Options
-% The finest grid step defines the default global coarse-to-fine schedule.
-% An explicitly supplied graph remains a single-resolution request.
+%% Section 2: Turn Partial Options Into One Complete Search Plan
+% Report question: Which grid sizes and safety checks will actually run?
+%
+% The caller usually supplies only the choices that matter to the mission.
+% Here we make the remaining choices explicit, validate them, and record the
+% resolved values in plan.options. This makes a completed run reproducible:
+% a future engineer can inspect the returned options instead of guessing
+% which defaults were active.
+%
+% The finest requested grid step also defines the default coarse-to-fine
+% schedule. A deliberately supplied graph stays at one resolution because
+% changing it would no longer be the graph the caller asked us to search.
 finestGridStep_deg = options.GridStep_deg;
 if isempty(options.GridStepSchedule_deg)
     if explicitGraph
@@ -181,13 +215,17 @@ if hasTerminalDynamics && ~options.AllowNonzeroTerminalState
         "Set AllowNonzeroTerminalState to true for terminal capture.");
 end
 
-%% Section 3: Build Or Reuse The Packed Obstacle Field
+%% Section 3: Prepare One Authoritative Copy Of The Obstacles
+% Report question: Which exact polygons will search and validation use?
+%
+% Packing the input once saves repeated parsing and, more importantly,
+% prevents different parts of the planner from interpreting the same
+% obstacle differently. Repeated planning calls may pass an already-packed
+% field and skip this work.
 isPrebuiltObstacleField = isstruct(azElData) && isscalar(azElData) && ...
     isfield(azElData, "Format") && ...
     any(string(azElData.Format) == [ ...
     "AzElTimeObstacleField", "AzElTimeObstacleWorkspace"]);
-% Reusing a packed obstacle field avoids repacking polygons when a
-% caller evaluates several initial/goal pairs against one obstacle field.
 if isPrebuiltObstacleField
     obstacleField = azElData;
 else
@@ -195,11 +233,15 @@ else
         "MaximumVerticesPerRegion", options.MaximumVerticesPerRegion));
 end
 
-%% Section 4: Select The Static Or Dynamic State Representation
+%% Section 4: Choose The Simplest Search That Can Answer The Request
+% Report question: Can time be ignored while choosing the route?
+%
+% A truly unchanged obstacle field can be planned on a two-dimensional map.
+% Moving polygons, a minimum-time objective, or a requested nonzero final
+% rate require the time-aware search. We inspect the packed data rather than
+% trusting a label from the caller, because choosing the wrong branch could
+% turn a moving obstacle into a false safe passage.
 gridStepSchedule_deg = options.GridStepSchedule_deg(:).';
-% A static minimum-distance case can use a cheaper complete 2-D graph.
-% Terminal dynamics remain in the safe-interval search because the final
-% edge must match velocity and acceleration at an exact arrival time.
 obstacleFieldIsStatic = true;
 for packedObstacle = reshape(obstacleField.Obstacles, 1, [])
     if packedObstacle.SampleCount == 0
@@ -218,8 +260,9 @@ for packedObstacle = reshape(obstacleField.Obstacles, 1, [])
         double(packedObstacle.SliceOffsets(2) - 1);
     firstAzimuth_deg = packedObstacle.AzimuthDeg(firstVertexIndices);
     firstElevation_deg = packedObstacle.ElevationDeg(firstVertexIndices);
-    % Strict equality is intentional: equivalent polygons with reordered
-    % vertices cannot safely share one static occupancy graph.
+    % We require every stored vertex to match in the same order. Two slices
+    % that merely look alike might describe regions differently, so treating
+    % them as static would be an unsafe shortcut.
     for obstacleSampleIndex = 2:packedObstacle.SampleCount
         sampleVertexIndices = double( ...
             packedObstacle.SliceOffsets(obstacleSampleIndex)): ...
@@ -242,7 +285,14 @@ staticSearchIsApplicable = ~hasTerminalDynamics && ...
     options.Objective == "minimumAngularDistance" && ...
     obstacleFieldIsStatic;
 
-%% Section 5: Try Static Goal-Rooted Dijkstra From Coarse To Fine
+%% Section 5: Report The Static Search From Coarse To Fine
+% Report question: Which complete static grid gives the best valid route?
+%
+% Coarse grids answer quickly but cannot represent narrow passages. Fine
+% grids represent more detail but cost more time and memory. Each attempt is
+% a complete search at its own resolution. We save one diagnostic row per
+% attempt, keep the shortest independently validated route, and stop early
+% only when the straight-line lower bound proves that no improvement exists.
 if staticSearchIsApplicable
     staticAttemptTemplate = struct( ...
         "GridStep_deg", NaN, ...
@@ -263,10 +313,11 @@ if staticSearchIsApplicable
     bestStaticPlan = struct();
     bestStaticRouteDistance_deg = Inf;
 
-    % Each resolution is a complete finite graph. A coarse failure only
-    % proves that graph cannot express a route, so finer levels still run.
+    % A failed coarse grid says only that this rough drawing has no route.
+    % It does not prove that the continuous problem is impossible, so the
+    % report continues to the next, more detailed drawing.
     for staticGridLevel = 1:numel(gridStepSchedule_deg)
-        remainingStaticTime_s = options.MaxSearchTime_s - toc(timer);
+        remainingStaticTime_s = options.MaxSearchTime_s - toc(plannerTimer);
         if remainingStaticTime_s <= 0
             break;
         end
@@ -320,8 +371,9 @@ if staticSearchIsApplicable
             bestStaticPlan = staticCandidate;
             bestStaticRouteDistance_deg = staticCandidate.objectiveCost;
         end
-        % The straight-line lower bound is a global certificate, so no
-        % finer graph can improve a matching exact-validated route.
+        % No route can be shorter than the straight line between endpoints.
+        % If a validated candidate reaches that length, finer grids cannot
+        % improve it and the static chapter is complete.
         if staticCandidate.success && staticCandidate.optimalGlobally
             break;
         end
@@ -339,15 +391,22 @@ if staticSearchIsApplicable
         bestStaticPlan.selectedGridStep_deg = bestStaticPlan.options.GridStep_deg;
         bestStaticPlan.resolutionAttempts = staticAttempts;
         bestStaticPlan.safeIntervalSearch = struct();
-        bestStaticPlan.searchElapsed_s = toc(timer);
+        bestStaticPlan.searchElapsed_s = toc(plannerTimer);
         bestStaticPlan.options = options;
         plan = normalizeAzElDijkstraPlanSchema(bestStaticPlan);
         return;
     end
 end
 
-%% Section 6: Run Dynamic Safe-Interval Dijkstra From Coarse To Fine
-attemptTemplate = struct( ...
+%% Section 6: Report The Time-Aware Search From Coarse To Fine
+% Report question: When may the boresight wait and move through this scene?
+%
+% The static chapter is skipped for moving scenes and is also allowed to
+% hand off here when none of its grids produced a valid timed command. A
+% dynamic state combines a position with one safe span of time. Its cost is
+% simply the earliest proven arrival inside that span. As above, the report
+% records every resolution and retains the best successful candidate.
+dynamicAttemptTemplate = struct( ...
     "GridStep_deg", NaN, ...
     "PrimitiveRadii_deg", zeros(1, 0), ...
     "Success", false, ...
@@ -360,10 +419,11 @@ attemptTemplate = struct( ...
     "CandidateTime_s", zeros(0, 1), ...
     "CandidatePosition_deg", zeros(0, 2), ...
     "Selected", false);
-attempts = repmat(attemptTemplate, numel(gridStepSchedule_deg), 1);
-attemptCount = 0;
-searchResult = struct();
-bestSearchResult = struct();
+dynamicAttempts = repmat( ...
+    dynamicAttemptTemplate, numel(gridStepSchedule_deg), 1);
+dynamicAttemptCount = 0;
+lastDynamicSearchResult = struct();
+bestDynamicSearchResult = struct();
 bestObjectiveCost = Inf;
 selectedGridStep_deg = NaN;
 endpointDelta_deg = wrappedDelta(initialState.position_deg, ...
@@ -371,10 +431,10 @@ endpointDelta_deg = wrappedDelta(initialState.position_deg, ...
 endpointLowerBound_deg = hypot( ...
     endpointDelta_deg(1), endpointDelta_deg(2));
 
-% Coarse failures only mean that a graph could not represent a route. Retry
-% the same search at progressively finer spatial resolutions.
+% A coarse failure is evidence about that grid, not proof that the mission
+% is impossible. Leave enough wall time for every requested resolution.
 for gridLevelIndex = 1:numel(gridStepSchedule_deg)
-    remainingSearchTime_s = options.MaxSearchTime_s - toc(timer);
+    remainingSearchTime_s = options.MaxSearchTime_s - toc(plannerTimer);
     if remainingSearchTime_s <= 0
         break;
     end
@@ -388,8 +448,8 @@ for gridLevelIndex = 1:numel(gridStepSchedule_deg)
     end
     remainingLevelCount = numel(gridStepSchedule_deg) - ...
         gridLevelIndex + 1;
-    % Reserve time for later levels so one difficult coarse graph cannot
-    % consume the complete wall-time budget.
+    % Divide the remaining time fairly. Without this reservation, one rough
+    % grid could consume the whole budget before a finer useful grid starts.
     attemptBudget_s = remainingSearchTime_s / remainingLevelCount;
     if gridLevelIndex == numel(gridStepSchedule_deg)
         attemptBudget_s = remainingSearchTime_s;
@@ -412,8 +472,8 @@ for gridLevelIndex = 1:numel(gridStepSchedule_deg)
         candidatePosition_deg = zeros(0, 2);
         candidateObjectiveCost = Inf;
     end
-    attemptCount = attemptCount + 1;
-    attempts(attemptCount, 1) = struct( ...
+    dynamicAttemptCount = dynamicAttemptCount + 1;
+    dynamicAttempts(dynamicAttemptCount, 1) = struct( ...
         "GridStep_deg", gridStepSchedule_deg(gridLevelIndex), ...
         "PrimitiveRadii_deg", ...
         attemptOptions.PrimitiveRadii_deg, ...
@@ -427,13 +487,15 @@ for gridLevelIndex = 1:numel(gridStepSchedule_deg)
         "CandidateTime_s", candidateTime_s, ...
         "CandidatePosition_deg", candidatePosition_deg, ...
         "Selected", false);
-    searchResult = searchCandidate;
+    % Preserve the latest explanation even when every attempt fails. If at
+    % least one succeeds, bestDynamicSearchResult becomes the final report.
+    lastDynamicSearchResult = searchCandidate;
     if searchCandidate.Success
         if ~hasTerminalDynamics && ...
                 abs(searchCandidate.Route.angularPathLength_deg - ...
                 endpointLowerBound_deg) <= 1e-9
             searchCandidate.GlobalAngularOptimal = true;
-            searchResult = searchCandidate;
+            lastDynamicSearchResult = searchCandidate;
         end
         if options.Objective == "minimumAngularDistance"
             candidateObjectiveCost = searchCandidate.Route.angularPathLength_deg;
@@ -441,12 +503,13 @@ for gridLevelIndex = 1:numel(gridStepSchedule_deg)
             candidateObjectiveCost = searchCandidate.Route.arrivalTime_s(end);
         end
         if candidateObjectiveCost < bestObjectiveCost
-            bestSearchResult = searchCandidate;
+            bestDynamicSearchResult = searchCandidate;
             bestObjectiveCost = candidateObjectiveCost;
             selectedGridStep_deg = gridStepSchedule_deg(gridLevelIndex);
         end
-        % Stop only for an objective certificate or the minimum-time policy.
-        % Otherwise keep the best validated candidate and continue refining.
+        % A straight-line distance match is a proof of best possible angular
+        % distance. Minimum-time mode returns its first proven arrival. In
+        % every other case, keep comparing finer validated candidates.
         if searchCandidate.GlobalAngularOptimal || ...
                 options.Objective == "minimumTime"
             break;
@@ -454,21 +517,29 @@ for gridLevelIndex = 1:numel(gridStepSchedule_deg)
     end
 end
 
-attempts = attempts(1:attemptCount);
-if ~isempty(fieldnames(bestSearchResult))
-    searchResult = bestSearchResult;
-    selected = find([attempts.Success] & ...
-        abs([attempts.ObjectiveCost] - ...
+dynamicAttempts = dynamicAttempts(1:dynamicAttemptCount);
+selectedDynamicSearchResult = lastDynamicSearchResult;
+if ~isempty(fieldnames(bestDynamicSearchResult))
+    selectedDynamicSearchResult = bestDynamicSearchResult;
+    selectedDynamicAttemptIndex = find([dynamicAttempts.Success] & ...
+        abs([dynamicAttempts.ObjectiveCost] - ...
         bestObjectiveCost) <= 1e-9, 1, "last");
-    attempts(selected).Selected = true;
+    dynamicAttempts(selectedDynamicAttemptIndex).Selected = true;
 end
 
-%% Section 7: Assemble The Stable Public Plan
-if isempty(fieldnames(searchResult)) || ~searchResult.Success
-    if isempty(fieldnames(searchResult))
+%% Section 7: Write The Final Planning Report
+% Report question: What happened, and what evidence should the caller keep?
+%
+% Success and failure use one public field layout. That consistency lets a
+% caller log a run before checking plan.success. Failure records preserve
+% every attempted grid and the final search explanation; success records add
+% the uniformly sampled command that visualization and control code consume.
+if isempty(fieldnames(selectedDynamicSearchResult)) || ...
+        ~selectedDynamicSearchResult.Success
+    if isempty(fieldnames(selectedDynamicSearchResult))
         message = "The search time budget expired before Dijkstra started.";
     else
-        message = searchResult.Message;
+        message = selectedDynamicSearchResult.Message;
     end
     plan = struct( ...
         "success", false, ...
@@ -490,9 +561,9 @@ if isempty(fieldnames(searchResult)) || ~searchResult.Success
         "optimalOnLattice", false, ...
         "optimalGlobally", false, ...
         "exactCollisionValidated", false, ...
-        "expandedNodeCount", sum([attempts.ExpandedNodeCount]), ...
-        "generatedNodeCount", sum([attempts.GeneratedNodeCount]), ...
-        "searchElapsed_s", toc(timer), ...
+        "expandedNodeCount", sum([dynamicAttempts.ExpandedNodeCount]), ...
+        "generatedNodeCount", sum([dynamicAttempts.GeneratedNodeCount]), ...
+        "searchElapsed_s", toc(plannerTimer), ...
         "selectedGridStep_deg", NaN, ...
         "startState", initialState, ...
         "stopState", goalState, ...
@@ -500,17 +571,17 @@ if isempty(fieldnames(searchResult)) || ~searchResult.Success
         "options", options, ...
         "obstacleField", obstacleField, ...
         "workspace", obstacleField, ... % deprecated compatibility alias
-        "resolutionAttempts", attempts, ...
-        "safeIntervalSearch", searchResult);
+        "resolutionAttempts", dynamicAttempts, ...
+        "safeIntervalSearch", selectedDynamicSearchResult);
     plan = finalizeAzElPlanFailure(plan);
     plan = normalizeAzElDijkstraPlanSchema(plan);
     return;
 end
 
-profile = searchResult.Profile;
-route = searchResult.Route;
-% Search nodes are maneuver breakpoints. Profile is the uniform command
-% history that downstream visualization and control code consumes.
+profile = selectedDynamicSearchResult.Profile;
+route = selectedDynamicSearchResult.Route;
+% Search nodes mark only the important wait/move decisions. The profile is
+% the regularly sampled command history used by plots and downstream code.
 finalEndpointDelta_deg = wrappedDelta(initialState.position_deg, ...
     goalState.position_deg, limits, options);
 angularLowerBound_deg = hypot( ...
@@ -545,11 +616,11 @@ plan = struct( ...
     max(1, route.angularPathLength_deg / ...
         max(angularLowerBound_deg, eps)), ...
     "optimalOnLattice", false, ...
-    "optimalGlobally", searchResult.GlobalAngularOptimal, ...
+    "optimalGlobally", selectedDynamicSearchResult.GlobalAngularOptimal, ...
     "exactCollisionValidated", true, ...
-    "expandedNodeCount", sum([attempts.ExpandedNodeCount]), ...
-    "generatedNodeCount", sum([attempts.GeneratedNodeCount]), ...
-    "searchElapsed_s", toc(timer), ...
+    "expandedNodeCount", sum([dynamicAttempts.ExpandedNodeCount]), ...
+    "generatedNodeCount", sum([dynamicAttempts.GeneratedNodeCount]), ...
+    "searchElapsed_s", toc(plannerTimer), ...
     "selectedGridStep_deg", selectedGridStep_deg, ...
     "startState", initialState, ...
     "stopState", goalState, ...
@@ -557,12 +628,18 @@ plan = struct( ...
     "options", options, ...
     "obstacleField", obstacleField, ...
     "workspace", obstacleField, ... % deprecated compatibility alias
-    "resolutionAttempts", attempts, ...
-    "safeIntervalSearch", searchResult);
+    "resolutionAttempts", dynamicAttempts, ...
+    "safeIntervalSearch", selectedDynamicSearchResult);
 plan = normalizeAzElDijkstraPlanSchema(plan);
 end
 
-%% Section 8: Local Functions
+%% Section 8: Supporting Chapters Used By The Report Above
+% The local functions appear in reading order:
+%   - one complete static-grid search and its route cleanup/retiming;
+%   - one complete moving-obstacle search and its safe-time bookkeeping;
+%   - shared motion, wrapping, frontier, defaults, and schema helpers.
+% Keeping them here makes the public workflow readable from top to bottom
+% while keeping rules used in several places in one maintainable copy.
 function plan = solveStaticGoalDijkstra( ...
         obstacleField, initialState, goalState, axisLimits, options)
 %% Section 0: Header & Readme
@@ -583,11 +660,21 @@ function plan = solveStaticGoalDijkstra( ...
 %**************************************************************************
 % UNITS
 %   - Angular quantities are degrees and time quantities are seconds.
-% Static and moving geometry require different state representations. This
-% complete per-resolution core remains separate so neither algorithm hides
-% branches of the other inside its expansion loop.
+%
+% PLAIN-LANGUAGE SUMMARY
+%   This function answers one question at one grid resolution: "If the
+%   obstacles do not move, what is the shortest safe line I can draw from
+%   the exact start to the exact goal?" It first finds a route on the grid,
+%   removes unnecessary corners, calculates how long each slew needs, and
+%   finally checks the timed command against the original polygons.
+%
+%   Static and moving geometry need different kinds of search state. Keeping
+%   this complete static story together prevents time-related cases from
+%   being mixed into the much simpler map search.
 
-%% Section 1: Validate Exact Endpoint Occupancy
+%% Section 1: Confirm The Exact Endpoints Are Safe
+% The nearest grid points are only search aids. The true start and goal are
+% mission inputs, so check those exact coordinates before drawing a map.
 staticTimer = tic;
 topology = emptyGoalDijkstraResult(options);
 endpointBlocked = queryAzElTimeObstacle(obstacleField, ...
@@ -604,7 +691,11 @@ if any(endpointBlocked)
     return;
 end
 
-%% Section 2: Build The Spatial Grid And Classify Occupancy
+%% Section 2: Draw The Map That Dijkstra Will Search
+% The grid is a temporary square-paper drawing of the continuous field. Each
+% grid point is marked free or blocked by querying the authoritative packed
+% polygons. Wrapped azimuth omits the duplicated right edge because -180 and
+% +180 degrees describe the same direction.
 if options.AllowAzimuthWrap
     azimuthSpan_deg = diff(axisLimits.azimuth_deg);
     azimuthBinCount = ceil(azimuthSpan_deg / options.GridStep_deg);
@@ -625,7 +716,11 @@ blockedNodeMask = queryAzElTimeObstacle(obstacleField, ...
     "SafetyMarginDeg", options.SafetyMargin_deg));
 blockedNodeMask = reshape(blockedNodeMask, size(azimuthMesh_deg));
 
-%% Section 3: Map Endpoints And Run Goal-Rooted Dijkstra
+%% Section 3: Work Backward From The Goal Until The Start Is Reached
+% The exact endpoints rarely fall on grid points, so first choose the nearest
+% free grid point for each. Dijkstra then starts at the goal and writes the
+% remaining angular distance onto progressively farther free points. Starting
+% at the goal makes each saved successor naturally point toward the goal.
 topologySearchTimer = tic;
 blockedNodeMask = logical(blockedNodeMask);
 elevationBinCount = numel(elevationGrid_deg);
@@ -663,10 +758,11 @@ else
     neighborElevationOffsets = [-1 -1 -1 0 0 1 1 1];
     neighborAzimuthOffsets = [-1 0 1 -1 1 -1 0 1];
 
-    % --- Propagate Minimum Angular Cost From The Goal -------------------
-    % The heap may contain several labels for one node. Pushing an improved
-    % label is cheaper and simpler than decrease-key; stale labels are
-    % rejected when popped, before the node is settled.
+    % --- Visit The Cheapest Unfinished Grid Point -----------------------
+    % The frontier is the planner's to-do list, ordered by known distance to
+    % the goal. When a better distance is found, a new to-do item is added
+    % instead of editing the older one in place. An older item is harmless:
+    % the comparison below recognizes and skips it when its turn arrives.
     while dijkstraFrontier.Count > 0
         if toc(topologySearchTimer) >= options.MaxSearchTime_s
             topologyTerminationReason = "wallTimeLimit";
@@ -693,6 +789,9 @@ else
 
         [currentElevationIndex, currentAzimuthIndex] = ind2sub( ...
             [elevationBinCount azimuthBinCount], currentNodeIndex);
+        % Check the eight surrounding squares. A neighbor is considered only
+        % when it stays inside the field, is not blocked, and does not slip
+        % diagonally between two blocked corners.
         for neighborDirectionIndex = 1:numel(neighborElevationOffsets)
             neighborElevationIndex = currentElevationIndex + ...
                 neighborElevationOffsets(neighborDirectionIndex);
@@ -717,8 +816,9 @@ else
                 neighborDirectionIndex) ~= 0 && ...
                 neighborAzimuthOffsets(neighborDirectionIndex) ~= 0;
             if isDiagonalTransition
-                % Corner cutting would manufacture zero-clearance routes
-                % that the continuous obstacle does not actually permit.
+                % A diagonal between two touching blocked squares looks open
+                % at their shared corner but has no real clearance. Reject it
+                % so the grid cannot invent a route through solid geometry.
                 diagonalCutsBlockedCorner = blockedNodeMask( ...
                     currentElevationIndex, neighborAzimuthIndex) || ...
                     blockedNodeMask(neighborElevationIndex, ...
@@ -754,9 +854,11 @@ else
                 continue;
             end
 
-            % J(v)=c(v,u)+J(u). Since u is closer to the goal, store u as
-            % v's successor; following successors from the start therefore
-            % walks toward the goal even though propagation began there.
+            % Plain-language relaxation rule: reaching the goal from this
+            % neighbor via the current point costs "one step plus the current
+            % point's remaining distance." Save it only when that is the best
+            % explanation found so far. The current point becomes the arrow
+            % that this neighbor will follow toward the goal.
             costToGoal_deg(neighborNodeIndex) = candidateCost_deg;
             successorNodeIndex(neighborNodeIndex) = uint32(currentNodeIndex);
             dijkstraFrontier = pushDijkstraFrontier( ...
@@ -765,7 +867,7 @@ else
         end
     end
 
-    % --- Reconstruct The Goal-Directed Successor Chain -----------------
+    % --- Turn Saved Arrows Into A Start-To-Goal Route -------------------
     if ~reachedInitialGridState
         topology = emptyGoalDijkstraResult(options);
         if topologyTerminationReason == ""
@@ -785,7 +887,9 @@ else
         topology.SettledMask = reshape( ...
             settledNodeMask, size(blockedNodeMask));
     else
-        % --- Reconstruct The Selected Goal-Directed Lattice Chain ---------
+        % Start at the selected initial grid point and follow the saved arrow
+        % at each point. Because every arrow was written toward a point with
+        % less remaining cost, the chain must eventually reach the goal.
         gridNodePath = zeros(128, 1, "uint32");
         pathStateCount = 1;
         pathGridNode = uint32(initialNodeIndex);
@@ -847,7 +951,9 @@ else
     end
 end
 
-%% Section 4: Stop When The Selected Lattice Has No Route
+%% Section 4: Explain Why This Grid Did Not Produce A Route
+% A failed grid attempt is returned to the coarse-to-fine caller as evidence,
+% not thrown away. The caller may still try a finer drawing of the same scene.
 if ~topology.Success
     plan = failedStaticPlan( ...
         "Goal-rooted Dijkstra failed: " + topology.Message, ...
@@ -856,7 +962,11 @@ if ~topology.Success
     return;
 end
 
-%% Section 5: Connect The Exact Endpoints To The Lattice Route
+%% Section 5: Replace Grid Endpoints With The Exact Mission Endpoints
+% The grid route begins and ends at nearby free grid points. Add the exact
+% mission coordinates, unwrap seam crossings, and remove duplicate points.
+% No real turn is removed here; that happens only after an exact visibility
+% check in the next section.
 routePositions_deg = [initialState.position_deg; ...
     topology.Path_deg; goalState.position_deg];
 if options.AllowAzimuthWrap
@@ -879,7 +989,11 @@ keepRouteWaypoint(2:end) = hypot( ...
 routePositions_deg = routePositions_deg(keepRouteWaypoint, :);
 unshortenedRoute_deg = routePositions_deg;
 
-%% Section 6: Remove Unnecessary Corners With Exact Visibility Checks
+%% Section 6: Remove Corners That The Original Polygons Do Not Require
+% Grid routes often look like staircases. From each retained point, test the
+% farthest later point that can be reached by a straight collision-free line.
+% This is not a guess based on grid occupancy: every replacement line is
+% sampled against the packed polygons before an intermediate corner is lost.
 shortcutTimer = tic;
 inputWaypointCount = size(routePositions_deg, 1);
 if inputWaypointCount <= 2
@@ -961,7 +1075,11 @@ if ~shortcut.Success
 end
 routePositions_deg = shortcut.Path_deg;
 
-%% Section 7: Retime And Validate Synchronized Two-Axis Slews
+%% Section 7: Turn The Spatial Route Into A Timed Slew Command
+% A safe line on a map is not yet a command. For each segment, calculate a
+% shared progress curve so azimuth and elevation start and stop together
+% without exceeding either axis limit. The boresight waits after finishing
+% early so the command still ends at the requested goal time.
 retimingTimer = tic;
 segmentDisplacement_deg = diff(routePositions_deg, 1, 1);
 absoluteDisplacement_deg = abs(segmentDisplacement_deg.');
@@ -985,6 +1103,8 @@ normalizedRateLimit(stationarySegment) = 0;
 normalizedAcceleration(stationarySegment) = 1;
 
 triangularProfile = normalizedRateLimit.^2 ./ normalizedAcceleration >= 1;
+% Short moves accelerate and immediately decelerate (a triangular speed
+% shape). Longer moves reach the speed limit and include a cruise period.
 accelerationDuration_s = normalizedRateLimit ./ normalizedAcceleration;
 accelerationDuration_s(triangularProfile) = sqrt( ...
     1 ./ normalizedAcceleration(triangularProfile));
@@ -1060,7 +1180,10 @@ end
 profile = retimed.Profile;
 routeDistance_deg = retimed.RouteDistance_deg;
 
-%% Section 8: Package The Static Candidate And Diagnostics
+%% Section 8: Write The Static Attempt Report
+% The caller receives the command plus the evidence used to trust it: the
+% searched map, the route before and after corner removal, timing details,
+% node counts, and the packed obstacle field used for final validation.
 endpointDelta_deg = wrappedDelta(initialState.position_deg, ...
     goalState.position_deg, axisLimits, options);
 straightLineLowerBound_deg = hypot( ...
@@ -1742,19 +1865,27 @@ function result = searchAzElSafeIntervalDijkstra( ...
 % UNITS
 %   - Angles are degrees and time is seconds.
 %
-% Each state is (azimuth, elevation, safe-interval index). Its Dijkstra
-% label is the earliest feasible arrival time inside that interval. Stored
-% parents, departures, and motion durations reconstruct the selected timed
-% transition chain. Time remains continuous inside an interval, so waiting
-% does not create one state per time sample.
+% PLAIN-LANGUAGE SUMMARY
+%   Moving obstacles make position alone incomplete: arriving at the same
+%   point before or after an obstacle passes can change whether the route is
+%   safe. We therefore pair each position with a "safe interval," meaning a
+%   continuous span when the boresight may wait there safely.
+%
+%   The number written on each state is the earliest arrival proven so far.
+%   Parent, departure, and motion records act like a travel receipt: after
+%   reaching the goal, they explain exactly where the boresight waited and
+%   when each slew began. Waiting stays continuous; the search does not make
+%   one separate state for every clock tick.
 
-%% Section 1: Build The Obstacle Event Timeline
-timer = tic;
+%% Section 1: List The Times When Safety Can Change
+% Obstacle samples are the moments when the stored scene may change. These
+% event times give us a compact calendar for deciding when a stationary
+% position is safe. A long period with no change becomes one interval rather
+% than hundreds of nearly identical time samples.
+dynamicSearchTimer = tic;
 hasTerminalDynamics = options.AllowNonzeroTerminalState && ...
     any(abs([stopState.velocity_deg_s, ...
     stopState.acceleration_deg_s2]) > 1e-12);
-% Event times are the only instants used to classify a stationary grid
-% point. Long consecutive safe runs are compressed into one SIPP interval.
 packedObstacles = obstacleField.Obstacles;
 eventTimeParts = cell(numel(packedObstacles) + 1, 1);
 eventTimeParts{1} = [startState.time_s; stopState.time_s];
@@ -1768,6 +1899,9 @@ for obstacleIndex = 1:numel(packedObstacles)
 end
 eventTimes = unique(vertcat(eventTimeParts{:}));
 if numel(eventTimes) > options.MaximumSafeIntervalSamples
+    % Very long histories can contain more event times than the configured
+    % memory budget allows. Keep evenly spaced evidence plus both mission
+    % endpoints so the reduction is predictable and reproducible.
     retainedEventIndices = unique(round(linspace( ...
         1, numel(eventTimes), options.MaximumSafeIntervalSamples)));
     eventTimes = eventTimes(retainedEventIndices);
@@ -1781,7 +1915,10 @@ safeCache = containers.Map( ...
     'KeyType', 'char', 'ValueType', 'any');
 safeQueryCount = 0;
 
-%% Section 2: Find The Endpoint Safe Intervals
+%% Section 2: Confirm The Endpoints Are Safe At Their Required Times
+% A route cannot repair a start that is already inside an obstacle or a goal
+% that is blocked at the required final time. Resolve those two facts before
+% allocating the larger search structures.
 [startSafeIntervals_s, safeCache, safeQueryCount] = safeIntervalsAt( ...
     startState.position_deg, obstacleField, eventTimes, limits, options, ...
     safeCache, safeQueryCount);
@@ -1794,7 +1931,8 @@ end
 if startSafeIntervalIndex == 0
     result = failedResult( ...
         "The start is not inside a sampled safe interval.", ...
-        eventTimes, safeCache, safeQueryCount, toc(timer), options);
+        eventTimes, safeCache, safeQueryCount, ...
+        toc(dynamicSearchTimer), options);
     return;
 end
 
@@ -1810,11 +1948,17 @@ end
 if goalSafeIntervalIndex == 0
     result = failedResult( ...
         "The stop is not inside a sampled safe interval.", ...
-        eventTimes, safeCache, safeQueryCount, toc(timer), options);
+        eventTimes, safeCache, safeQueryCount, ...
+        toc(dynamicSearchTimer), options);
     return;
 end
 
-%% Section 3: Try The Exact Direct-Route Certificate
+%% Section 3: Check Whether The Obvious Direct Route Already Works
+% Before building a graph, try the simplest defensible answer: wait if
+% needed, then slew directly to the goal. If that straight command is safe,
+% its angular distance is the absolute lower bound and no search can improve
+% it. Terminal velocity matching is excluded because it needs a different
+% final motion shape that is handled in the normal search below.
 [directFound, directRoute, directProfile] = deal(false, struct(), struct());
 % A collision-free direct slew has the Euclidean lower-bound distance and is
 % therefore a global certificate for the angular-distance objective.
@@ -1913,7 +2057,7 @@ if directFound && options.Objective == "minimumAngularDistance"
         "SafeIntervalCacheCount", safeCache.Count, ...
         "EventTimeCount", numel(eventTimes), ...
         "EventTimes_s", eventTimes, ...
-        "SearchElapsed_s", toc(timer), ...
+        "SearchElapsed_s", toc(dynamicSearchTimer), ...
         "TerminationReason", "globalAngularCertificate", ...
         "BlockedValidationSampleCount", 0, ...
         "GlobalAngularOptimal", true, ...
@@ -1921,7 +2065,10 @@ if directFound && options.Objective == "minimumAngularDistance"
     return;
 end
 
-%% Section 4: Build Motion Primitives And Initialize Arrival Labels
+%% Section 4: Define Allowed Moves And Create The First Search State
+% Motion primitives are the reusable step directions and distances available
+% from a grid point. Each new search node stores a position, one safe interval,
+% its earliest arrival, and enough parent information to explain that arrival.
 primitiveRadii_deg = unique(double(options.PrimitiveRadii_deg(:)));
 primitiveAngles_rad = deg2rad((0:options.DirectionStep_deg: ...
     360 - options.DirectionStep_deg).');
@@ -1937,8 +2084,8 @@ for primitiveRadius_deg = reshape(primitiveRadii_deg, 1, [])
     offsetCursor = offsetCursor + primitiveDirectionCount;
 end
 offsets = unique(round(offsets * 1e9) / 1e9, "rows", "stable");
-% One node represents (spatial grid point, safe-interval index). Arrival time
-% is the label optimized within that state; waiting remains continuous.
+% One node represents one place during one safe span. The stored arrival time
+% answers, "What is the earliest safe time we know how to be here?"
 nodeCapacity = options.InitialNodeCapacity;
 nodes = struct( ...
     "PositionDeg", zeros(nodeCapacity, 2), ...
@@ -1965,15 +2112,20 @@ arrivalFrontier = struct( ...
 arrivalFrontier = pushArrivalFrontier( ...
     arrivalFrontier, startIndex, startState.time_s);
 
-%% Section 5: Propagate Earliest Feasible Arrival Times
+%% Section 5: Visit Reachable States In Earliest-Arrival Order
+% This is the heart of dynamic Dijkstra. Repeatedly take the unfinished state
+% with the earliest arrival, try every allowed neighboring position, find a
+% safe departure/arrival pair, and keep the result only when it improves the
+% best arrival previously known for that same place and safe interval.
 expandedNodeCount = 0;
 generatedNodeCount = 1;
 goalIndex = 0;
 while arrivalFrontier.Count > 0
-    if toc(timer) >= options.MaxSearchTime_s
+    if toc(dynamicSearchTimer) >= options.MaxSearchTime_s
         result = failedResult( ...
             "Safe-interval Dijkstra reached its wall-time limit.", ...
-            eventTimes, safeCache, safeQueryCount, toc(timer), options);
+            eventTimes, safeCache, safeQueryCount, ...
+            toc(dynamicSearchTimer), options);
         result.ExpandedNodeCount = expandedNodeCount;
         result.GeneratedNodeCount = generatedNodeCount;
         result.TerminationReason = "wallTimeLimit";
@@ -1982,7 +2134,8 @@ while arrivalFrontier.Count > 0
     if expandedNodeCount >= options.MaxExpansions
         result = failedResult( ...
             "Safe-interval Dijkstra reached its expansion limit.", ...
-            eventTimes, safeCache, safeQueryCount, toc(timer), options);
+            eventTimes, safeCache, safeQueryCount, ...
+            toc(dynamicSearchTimer), options);
         result.ExpandedNodeCount = expandedNodeCount;
         result.GeneratedNodeCount = generatedNodeCount;
         result.TerminationReason = "expansionLimit";
@@ -1995,8 +2148,9 @@ while arrivalFrontier.Count > 0
     currentSafeIntervalIndex = nodes.IntervalIndex(currentNodeIndex);
     currentKey = stateKey( ...
         currentPosition_deg, currentSafeIntervalIndex, limits, options);
-    % Better labels are appended instead of mutating queued entries. Ignore
-    % superseded labels when they eventually reach the frontier root.
+    % A better arrival is added as a new record instead of editing an older
+    % to-do item in place. If that old item reaches the front later, this
+    % check recognizes that a better explanation already exists and skips it.
     if ~isKey(bestNodeByStateKey, currentKey) || ...
             bestNodeByStateKey(currentKey) ~= currentNodeIndex
         continue;
@@ -2017,7 +2171,7 @@ while arrivalFrontier.Count > 0
     currentSafeInterval_s = currentIntervals( ...
         currentSafeIntervalIndex, :);
 
-    % --- Generate Neighboring Spatial Positions ------------------------
+    % --- List The Places Reachable By One Allowed Move -----------------
     candidatePositions_deg = currentPosition_deg + offsets;
     candidatePositions_deg(:, 1) = round(( ...
         candidatePositions_deg(:, 1) - limits.azimuth_deg(1)) / ...
@@ -2060,6 +2214,9 @@ while arrivalFrontier.Count > 0
     candidatePositions_deg = candidatePositions_deg( ...
         ~candidateIsCurrentPosition, :);
 
+    % Each candidate place may have several separate safe intervals. Treat
+    % each interval as a different state because arriving between two visits
+    % of a moving obstacle is not equivalent to arriving after both visits.
     for candidatePositionIndex = 1:size(candidatePositions_deg, 1)
         candidatePosition_deg = candidatePositions_deg( ...
             candidatePositionIndex, :);
@@ -2068,8 +2225,9 @@ while arrivalFrontier.Count > 0
         candidateIsTerminalCapture = hasTerminalDynamics && ...
             samePosition(candidatePosition_deg, ...
             stopState.position_deg, limits, options);
-        % Internal primitives are rest-to-rest. Only the final capture edge
-        % may use a quintic that ends with nonzero target kinematics.
+        % Ordinary moves begin and end at rest, which keeps intermediate
+        % states small and easy to compare. Only the last rendezvous move may
+        % finish with the target's requested velocity and acceleration.
         if candidateIsTerminalCapture
             motionDuration_s = NaN;
             motion = struct();
@@ -2087,7 +2245,7 @@ while arrivalFrontier.Count > 0
             continue;
         end
 
-        % --- Schedule And Relax Compatible Safe-Interval States --------
+        % --- Find A Safe Time For The Move, Then Record An Improvement ---
         for candidateSafeIntervalIndex = 1:size(candidateSafeIntervals_s, 1)
             candidateSafeInterval_s = candidateSafeIntervals_s( ...
                 candidateSafeIntervalIndex, :);
@@ -2097,6 +2255,12 @@ while arrivalFrontier.Count > 0
                 continue;
             end
             if candidateIsTerminalCapture
+                % The final rendezvous is the one deliberately detailed case
+                % in this loop. The goal fixes arrival time, position, rate,
+                % and acceleration. We therefore try a bounded, reproducible
+                % list of departure times, build the complete smooth motion
+                % for each, and accept the first one that respects dynamics,
+                % field limits, and every sampled obstacle polygon.
                 transitionIsScheduled = false;
                 departureTime_s = NaN;
                 arrivalTime_s = NaN;
@@ -2115,6 +2279,10 @@ while arrivalFrontier.Count > 0
                     latestTerminalDeparture_s >= ...
                     earliestTerminalDeparture_s;
                 if goalInsideCandidateInterval && terminalWindowIsOrdered
+                    % Obstacle event times are natural departure candidates;
+                    % evenly spaced trials protect against a valid departure
+                    % that falls between events. The configured cap prevents
+                    % one final edge from consuming the whole search budget.
                     terminalEventCandidates_s = eventTimes( ...
                         eventTimes >= earliestTerminalDeparture_s & ...
                         eventTimes <= latestTerminalDeparture_s);
@@ -2160,6 +2328,10 @@ while arrivalFrontier.Count > 0
                         if ~terminalDynamicsInsideLimits
                             continue;
                         end
+                        % A quintic boundary profile is the smooth curve that
+                        % can satisfy position, rate, and acceleration at both
+                        % ends. Sampling it here verifies the full curve, not
+                        % just its endpoint values.
                         terminalDelta_deg = wrappedDelta( ...
                             currentPosition_deg, stopState.position_deg, ...
                             limits, options);
@@ -2236,6 +2408,8 @@ while arrivalFrontier.Count > 0
                     end
                 end
             else
+                % Ordinary rest-to-rest moves use the shared scheduler. It
+                % may wait at the current point before starting the slew.
                 [transitionIsScheduled, departureTime_s, arrivalTime_s] = scheduleTransition( ...
                     obstacleField, ...
                     currentPosition_deg, transitionDelta_deg, ...
@@ -2243,8 +2417,8 @@ while arrivalFrontier.Count > 0
                     currentSafeInterval_s, candidateSafeInterval_s, ...
                     motionDuration_s, motion, eventTimes, limits, options);
             end
-            % A transition includes any wait at the parent and must arrive
-            % inside the child's safe interval before the mission deadline.
+            % A scheduled transition includes any safe wait at its parent.
+            % It is useful only if the move finishes before the mission ends.
             if ~transitionIsScheduled || ...
                     arrivalTime_s > stopState.time_s + 1e-9
                 continue;
@@ -2264,6 +2438,9 @@ while arrivalFrontier.Count > 0
             if ~candidateImprovesArrivalLabel
                 continue;
             end
+            % Even a locally improved arrival is discarded when the fastest
+            % physically possible remaining move cannot meet the deadline.
+            % This is only a feasibility check; it never changes queue order.
             remainingDelta_deg = wrappedDelta( ...
                 candidatePosition_deg, stopState.position_deg, ...
                 limits, options);
@@ -2279,35 +2456,43 @@ while arrivalFrontier.Count > 0
                 continue;
             end
 
-            % T(v)=arrivalTime_s is the dynamic Dijkstra label. Store the
-            % parent and selected transition only when this route reaches
-            % the same (position, safe interval) state earlier.
+            % This candidate is now the clearest known explanation for how
+            % to reach the state. Save its parent and exact wait/move timing
+            % so the final report can reconstruct the command later.
             [nodes, nextNodeIndex] = appendNode(nodes, ...
                 candidatePosition_deg, candidateSafeIntervalIndex, ...
                 arrivalTime_s, currentNodeIndex, departureTime_s, ...
                 motionDuration_s);
             bestNodeByStateKey(candidateKey) = nextNodeIndex;
             generatedNodeCount = generatedNodeCount + 1;
-            % Arrival time is the complete queue cost. The lower bound
-            % above only rejects labels that cannot meet the deadline.
+            % The to-do list is ordered only by actual arrival time. The
+            % remaining-time calculation above is a reject test, not a hidden
+            % heuristic, so the search remains Dijkstra rather than A*.
             arrivalFrontier = pushArrivalFrontier( ...
                 arrivalFrontier, nextNodeIndex, arrivalTime_s);
         end
     end
 end
 
-%% Section 6: Stop When No Safe-Interval State Reaches The Goal
+%% Section 6: Explain Why No State Reached The Goal
+% Emptying the to-do list means every reachable state was considered. Keep
+% the event timeline, cache counts, and node totals so a failed run still
+% explains how much of the problem was explored.
 if goalIndex == 0
     result = failedResult( ...
         "No safe-interval Dijkstra path reaches the stop state.", ...
-        eventTimes, safeCache, safeQueryCount, toc(timer), options);
+        eventTimes, safeCache, safeQueryCount, ...
+        toc(dynamicSearchTimer), options);
     result.ExpandedNodeCount = expandedNodeCount;
     result.GeneratedNodeCount = generatedNodeCount;
     result.TerminationReason = "noPath";
     return;
 end
 
-%% Section 7: Reconstruct The Selected Parent And Transition Chain
+%% Section 7: Follow The Winning Receipts Back To The Start
+% Each improved state saved the parent that produced it. Walk those links
+% backward from the goal, reverse the list, and recover every arrival,
+% departure, wait, and motion duration in chronological order.
 nodePath = zeros(128, 1, "uint32");
 nodePathCount = 0;
 pathNodeIndex = uint32(goalIndex);
@@ -2333,7 +2518,10 @@ for routeEdgeIndex = 1:numel(nodePath) - 1
 end
 routeDepartureTime_s(end) = stopState.time_s;
 
-%% Section 8: Build The Continuous Timed Route Profile
+%% Section 8: Convert Decisions Into A Continuous Command History
+% Canonical azimuth may jump from +180 to -180 even though the boresight made
+% a small seam crossing. Build an unwrapped copy for derivatives and distance,
+% then sample every wait and slew on the regular output and validation clocks.
 routePositionUnwrapped_deg = routePosition_deg;
 routePositionUnwrapped_deg(1, :) = startState.position_deg;
 % Canonical positions may jump at the azimuth seam. The unwrapped copy
@@ -2384,7 +2572,10 @@ route.angularPathLength_deg = sum(hypot( ...
     diff(validationProfile.positionUnwrapped_deg(:, 1)), ...
     diff(validationProfile.positionUnwrapped_deg(:, 2))));
 
-%% Section 9: Validate Against The Authoritative Packed Polygons
+%% Section 9: Perform The Independent Final Collision Check
+% Safe intervals and edge checks helped construct the route, but they are not
+% the final authority. Recheck both the fine validation samples and the exact
+% samples returned to the caller against the original packed polygons.
 blocked = queryAzElTimeObstacle(obstacleField, ...
     [validationProfile.position_deg(:, 1); profile.position_deg(:, 1)], ...
     [validationProfile.position_deg(:, 2); profile.position_deg(:, 2)], ...
@@ -2396,7 +2587,7 @@ if any(blocked)
     result = failedResult( ...
         sprintf('Safe-interval Dijkstra failed dense validation at %d samples.', ...
         nnz(blocked)), eventTimes, safeCache, ...
-        safeQueryCount, toc(timer), options);
+        safeQueryCount, toc(dynamicSearchTimer), options);
     result.ExpandedNodeCount = expandedNodeCount;
     result.GeneratedNodeCount = generatedNodeCount;
     result.TerminationReason = "denseValidationFailed";
@@ -2406,7 +2597,9 @@ if any(blocked)
     return;
 end
 
-%% Section 10: Package The Dynamic Search Result And Diagnostics
+%% Section 10: Write The Dynamic Search Report
+% Return the continuous command together with the event calendar, cache use,
+% node counts, stop reason, and resolved options needed to reproduce it.
 result = struct( ...
     "Success", true, ...
     "Message", "Dynamic safe-interval Dijkstra path found and validated.", ...
@@ -2419,59 +2612,73 @@ result = struct( ...
     "SafeIntervalCacheCount", safeCache.Count, ...
     "EventTimeCount", numel(eventTimes), ...
     "EventTimes_s", eventTimes, ...
-    "SearchElapsed_s", toc(timer), ...
+    "SearchElapsed_s", toc(dynamicSearchTimer), ...
     "TerminationReason", "goalReached", ...
     "BlockedValidationSampleCount", 0, ...
     "GlobalAngularOptimal", false, ...
     "Options", options);
 end
 
-function [intervals, cache, queryCount] = safeIntervalsAt( ...
-        position, obstacleField, eventTimes, limits, options, cache, queryCount)
+function [safeIntervals_s, safeIntervalCache, collisionQueryCount] = ...
+        safeIntervalsAt(currentPosition_deg, obstacleField, ...
+        obstacleEventTimes_s, limits, options, safeIntervalCache, ...
+        collisionQueryCount)
 %% Section 0: Header & Readme
 % SYNTAX
-%   [intervals, cache, queryCount] = safeIntervalsAt( ...
-%       position, obstacleField, eventTimes, limits, options, ...
-%       cache, queryCount)
+%   [safeIntervals_s, safeIntervalCache, collisionQueryCount] = ...
+%       safeIntervalsAt(currentPosition_deg, obstacleField, ...
+%       obstacleEventTimes_s, limits, options, safeIntervalCache, ...
+%       collisionQueryCount)
 %**************************************************************************
 % PURPOSE
 %   - Classify and cache maximal safe time intervals at one position.
 %**************************************************************************
 % INPUTS
-%   - position, obstacleField, eventTimes, limits, options (query inputs)
-%       Spatial point, geometry, event grid, limits, and collision controls.
-%   - cache, queryCount (diagnostic state)
-%       Shared classification cache and cumulative query count.
+%   - currentPosition_deg (numeric two-vector)
+%       The azimuth/elevation location whose safe times are needed.
+%   - obstacleField, obstacleEventTimes_s, limits, options
+%       The obstacle description, times worth checking, motion limits, and
+%       collision-check settings.
+%   - safeIntervalCache, collisionQueryCount (diagnostic state)
+%       Previously answered position queries and the running query count.
 %**************************************************************************
 % OUTPUTS
-%   - intervals (numeric N-by-2 matrix)
-%       Inclusive safe interval bounds.
-%   - cache, queryCount (updated diagnostic state)
-%       Shared cache and count.
+%   - safeIntervals_s (numeric N-by-2 matrix)
+%       Start and stop time of every safe period at this position.
+%   - safeIntervalCache, collisionQueryCount (updated diagnostic state)
+%       The shared cache and count after answering this query.
 %**************************************************************************
 % UNITS
-%   - Position is degrees and intervals/eventTimes are seconds.
-% Start, goal, and expanded nodes share this cache so one position has one
-% authoritative event classification throughout the search.
-key = positionKey(position, limits, options);
-if isKey(cache, key)
-    intervals = cache(key);
+%   - Position is degrees; intervals and event times are seconds.
+% Think of this function as filling in one row of a calendar. It asks which
+% listed times are blocked, joins consecutive safe times into periods, and
+% remembers the answer. Start, goal, and expanded nodes all use this same
+% calendar, so the planner cannot disagree with itself about one position.
+positionCacheKey = positionKey(currentPosition_deg, limits, options);
+if isKey(safeIntervalCache, positionCacheKey)
+    % Reusing this answer is both faster and more consistent than asking the
+    % obstacle model the same question again later in the search.
+    safeIntervals_s = safeIntervalCache(positionCacheKey);
     return;
 end
-blocked = queryAzElTimeObstacle(obstacleField, ...
-    repmat(canonicalAzimuth(position(1), limits, options), ...
-    numel(eventTimes), 1), ...
-    repmat(position(2), numel(eventTimes), 1), ...
-    eventTimes, collisionOptions(options));
-safe = ~blocked(:);
-% Run-length compression is the key SIPP reduction: hundreds of safe samples
-% at one position become a single continuous waiting state.
-changes = diff([false; safe; false]);
-starts = find(changes == 1);
-stops = find(changes == -1) - 1;
-intervals = [eventTimes(starts), eventTimes(stops)]; %#ok<FNDSB>
-cache(key) = intervals;
-queryCount = queryCount + numel(eventTimes);
+isBlockedAtEventTime = queryAzElTimeObstacle(obstacleField, ...
+    repmat(canonicalAzimuth(currentPosition_deg(1), limits, options), ...
+    numel(obstacleEventTimes_s), 1), ...
+    repmat(currentPosition_deg(2), numel(obstacleEventTimes_s), 1), ...
+    obstacleEventTimes_s, collisionOptions(options));
+isSafeAtEventTime = ~isBlockedAtEventTime(:);
+
+% A long row of individual true/false answers is hard for the search to use.
+% The changes below turn, for example, five consecutive safe samples into
+% one interval that says "waiting here is allowed from time A through B."
+safeStateChanges = diff([false; isSafeAtEventTime; false]);
+safeIntervalStartIndices = find(safeStateChanges == 1);
+safeIntervalStopIndices = find(safeStateChanges == -1) - 1;
+safeIntervals_s = [ ...
+    obstacleEventTimes_s(safeIntervalStartIndices), ...
+    obstacleEventTimes_s(safeIntervalStopIndices)]; %#ok<FNDSB>
+safeIntervalCache(positionCacheKey) = safeIntervals_s;
+collisionQueryCount = collisionQueryCount + numel(obstacleEventTimes_s);
 end
 
 function [scheduled, departure, arrival] = scheduleTransition( ...
@@ -2501,11 +2708,14 @@ function [scheduled, departure, arrival] = scheduleTransition( ...
 %**************************************************************************
 % UNITS
 %   - Position/delta are degrees and all timing arguments are seconds.
-% Direct certification and graph expansion must apply identical waiting and
-% collision rules, so this shared transition scheduler prevents divergence.
+% This helper answers one practical question: "If we are allowed to wait at
+% the current point, when is the earliest safe time to start this move?"
+% The direct-path check and the full Dijkstra search both ask that question
+% here, so they cannot silently apply different waiting or collision rules.
 earliestDeparture_s = max(currentArrival, candidateSafe(1) - duration);
 latestDeparture_s = min(currentSafe(2), candidateSafe(2) - duration);
-% This window keeps both endpoint occupancy constraints valid.
+% Leaving before this window would reach the next point too early. Leaving
+% after it would overstay one of the two safe periods.
 if latestDeparture_s < earliestDeparture_s - 1e-9
     scheduled = false;
     departure = NaN;
@@ -2515,8 +2725,9 @@ end
 
 departureCandidates_s = eventTimes( ...
     eventTimes >= earliestDeparture_s & eventTimes <= latestDeparture_s);
-% Test interval boundaries and obstacle event times first; those are where
-% feasibility changes. The trial cap controls worst-case edge cost.
+% Obstacle event times and the two window edges are the useful departure
+% candidates because obstacle safety can change there. The cap keeps one
+% difficult edge from consuming the planner's entire time budget.
 departureCandidates_s = unique( ...
     [earliestDeparture_s; departureCandidates_s; latestDeparture_s]);
 if numel(departureCandidates_s) > options.MaximumDepartureTrials
@@ -2529,6 +2740,9 @@ departure = NaN;
 arrival = NaN;
 batchSize = options.DepartureBatchSize;
 for batchStartIndex = 1:batchSize:numel(departureCandidates_s)
+    % Several departures are packed into one obstacle query for speed. They
+    % are still considered in chronological order, so the first safe answer
+    % is also the earliest safe departure represented by this search.
     candidateIndices = batchStartIndex:min( ...
         batchStartIndex + batchSize - 1, numel(departureCandidates_s));
     trialDepartures_s = departureCandidates_s(candidateIndices);
@@ -2548,8 +2762,9 @@ for batchStartIndex = 1:batchSize:numel(departureCandidates_s)
             options.ValidationStep_s, eventTimes(1)); ...
             alignedTimes(trialDeparture_s, trialArrival_s, ...
             options.SampleTime_s, eventTimes(1))];
-        % The duration-relative and mission-aligned grids close different
-        % aliasing gaps against a moving obstacle.
+        % One time grid follows the move itself and two grids follow the
+        % mission clock. Using both makes it less likely that repeated sample
+        % spacing will always step over the same brief obstacle crossing.
         trialElapsed_s = unique([ ...
             regularElapsed_s; missionAlignedTimes_s - trialDeparture_s]);
         [trialProgress, ~, ~] = segmentProgress( ...
@@ -2577,6 +2792,8 @@ for batchStartIndex = 1:batchSize:numel(departureCandidates_s)
         packedTrialOwner(trialBlocked))) = false;
     firstFreeCandidateInBatch = find(collisionFreeCandidate, 1);
     if ~isempty(firstFreeCandidateInBatch)
+        % Candidates and batches are ordered from earliest to latest. We can
+        % therefore stop as soon as this first collision-free move is found.
         scheduled = true;
         departure = departureCandidates_s( ...
             candidateIndices(firstFreeCandidateInBatch));
@@ -2616,11 +2833,11 @@ end
 end
 
 function profile = makeRouteProfile( ...
-        route, startTime, stopTime, sampleStep, limits, options)
+        route, startTime_s, stopTime_s, sampleStep_s, limits, options)
 %% Section 0: Header & Readme
 % SYNTAX
 %   profile = makeRouteProfile( ...
-%       route, startTime, stopTime, sampleStep, limits, options)
+%       route, startTime_s, stopTime_s, sampleStep_s, limits, options)
 %**************************************************************************
 % PURPOSE
 %   - Reconstruct a safe-interval route on a requested uniform sample grid.
@@ -2628,7 +2845,7 @@ function profile = makeRouteProfile( ...
 % INPUTS
 %   - route (scalar struct)
 %       Waypoints, arrivals, departures, and terminal dynamics.
-%   - startTime, stopTime, sampleStep (numeric scalars)
+%   - startTime_s, stopTime_s, sampleStep_s (numeric scalars)
 %       Output horizon and spacing.
 %   - limits, options (scalar structs)
 %       Dynamic limits and wrapping policy.
@@ -2639,178 +2856,239 @@ function profile = makeRouteProfile( ...
 %**************************************************************************
 % UNITS
 %   - Angles are degrees and timing arguments are seconds.
-% Returned and validation profiles must reconstruct the same waits and
-% motion law at different sampling rates.
-time = (startTime:sampleStep:stopTime).';
-if time(end) < stopTime - 1e-9
-    time(end + 1, 1) = stopTime;
-else
-    time(end) = stopTime;
-end
-sampleCount = numel(time);
-unwrapped = repmat(route.positionUnwrapped_deg(1, :), sampleCount, 1);
-velocity = zeros(sampleCount, 2);
-acceleration = zeros(sampleCount, 2);
+% The route is a compact list of decisions: arrive here, wait until this
+% time, then move to the next point. This function expands those decisions
+% into the row-by-row command that downstream code can plot, validate, or
+% execute. The regular output and the denser safety check both use this
+% function, so they reconstruct exactly the same waits and moves.
 
-for node = 2:size(route.positionUnwrapped_deg, 1)
-    reached = time >= route.arrivalTime_s(node) - 1e-10;
-    unwrapped(reached, :) = repmat( ...
-        route.positionUnwrapped_deg(node, :), nnz(reached), 1);
+% Chapter 1: Build the requested report times, including the exact stop.
+sampleTime_s = (startTime_s:sampleStep_s:stopTime_s).';
+if sampleTime_s(end) < stopTime_s - 1e-9
+    sampleTime_s(end + 1, 1) = stopTime_s;
+else
+    sampleTime_s(end) = stopTime_s;
 end
-% Waiting is established above by holding the most recently reached node.
-% Maneuver samples overwrite only each edge's active time window.
-for edge = 1:size(route.positionUnwrapped_deg, 1) - 1
-    departure = route.departureTime_s(edge);
-    duration = route.motionDuration_s(edge);
-    moving = time >= departure - 1e-10 & ...
-        time <= departure + duration + 1e-10;
-    if ~any(moving)
+sampleCount = numel(sampleTime_s);
+sampledPositionUnwrapped_deg = repmat( ...
+    route.positionUnwrapped_deg(1, :), sampleCount, 1);
+sampledVelocity_deg_s = zeros(sampleCount, 2);
+sampledAcceleration_deg_s2 = zeros(sampleCount, 2);
+
+% Chapter 2: Fill waiting periods by holding the latest reached waypoint.
+% At this point every sample has the correct stationary position. The next
+% chapter only needs to overwrite the samples during actual movement.
+for routeNodeIndex = 2:size(route.positionUnwrapped_deg, 1)
+    routeNodeHasBeenReached = ...
+        sampleTime_s >= route.arrivalTime_s(routeNodeIndex) - 1e-10;
+    sampledPositionUnwrapped_deg(routeNodeHasBeenReached, :) = repmat( ...
+        route.positionUnwrapped_deg(routeNodeIndex, :), ...
+        nnz(routeNodeHasBeenReached), 1);
+end
+
+% Chapter 3: Replace the stationary values inside each move with its smooth
+% motion profile. Most edges start and stop at rest. The final edge may use
+% a special profile when the caller requested nonzero terminal motion.
+for routeEdgeIndex = 1:size(route.positionUnwrapped_deg, 1) - 1
+    departureTime_s = route.departureTime_s(routeEdgeIndex);
+    motionDuration_s = route.motionDuration_s(routeEdgeIndex);
+    sampleIsDuringMotion = ...
+        sampleTime_s >= departureTime_s - 1e-10 & ...
+        sampleTime_s <= departureTime_s + motionDuration_s + 1e-10;
+    if ~any(sampleIsDuringMotion)
         continue;
     end
-    tau = min(max(time(moving) - departure, 0), duration);
+    elapsedMotionTime_s = min(max( ...
+        sampleTime_s(sampleIsDuringMotion) - departureTime_s, 0), ...
+        motionDuration_s);
     if route.hasTerminalCapture && ...
-            edge == size(route.positionUnwrapped_deg, 1) - 1
-        terminal = evaluateAzElBoundaryProfile( ...
-            route.positionUnwrapped_deg(edge, :), [0 0], [0 0], ...
-            route.positionUnwrapped_deg(edge + 1, :), ...
+            routeEdgeIndex == size(route.positionUnwrapped_deg, 1) - 1
+        terminalProfile = evaluateAzElBoundaryProfile( ...
+            route.positionUnwrapped_deg(routeEdgeIndex, :), ...
+            [0 0], [0 0], ...
+            route.positionUnwrapped_deg(routeEdgeIndex + 1, :), ...
             route.terminalVelocity_deg_s, ...
-            route.terminalAcceleration_deg_s2, duration, tau);
-        unwrapped(moving, :) = terminal.position_deg;
-        velocity(moving, :) = terminal.velocity_deg_s;
-        acceleration(moving, :) = terminal.acceleration_deg_s2;
+            route.terminalAcceleration_deg_s2, motionDuration_s, ...
+            elapsedMotionTime_s);
+        sampledPositionUnwrapped_deg(sampleIsDuringMotion, :) = ...
+            terminalProfile.position_deg;
+        sampledVelocity_deg_s(sampleIsDuringMotion, :) = ...
+            terminalProfile.velocity_deg_s;
+        sampledAcceleration_deg_s2(sampleIsDuringMotion, :) = ...
+            terminalProfile.acceleration_deg_s2;
     else
-        delta = route.positionUnwrapped_deg(edge + 1, :) - ...
-            route.positionUnwrapped_deg(edge, :);
-        [~, motion] = segmentMotion(delta, limits);
-        [progress, rate, accelerationValue] = segmentProgress( ...
-            tau, duration, motion);
-        unwrapped(moving, :) = route.positionUnwrapped_deg(edge, :) + ...
-            progress * delta;
-        velocity(moving, :) = rate * delta;
-        acceleration(moving, :) = accelerationValue * delta;
+        edgeDisplacement_deg = ...
+            route.positionUnwrapped_deg(routeEdgeIndex + 1, :) - ...
+            route.positionUnwrapped_deg(routeEdgeIndex, :);
+        [~, normalizedMotion] = segmentMotion( ...
+            edgeDisplacement_deg, limits);
+        [progress, progressRate_1_s, progressAcceleration_1_s2] = ...
+            segmentProgress(elapsedMotionTime_s, motionDuration_s, ...
+            normalizedMotion);
+        sampledPositionUnwrapped_deg(sampleIsDuringMotion, :) = ...
+            route.positionUnwrapped_deg(routeEdgeIndex, :) + ...
+            progress * edgeDisplacement_deg;
+        sampledVelocity_deg_s(sampleIsDuringMotion, :) = ...
+            progressRate_1_s * edgeDisplacement_deg;
+        sampledAcceleration_deg_s2(sampleIsDuringMotion, :) = ...
+            progressAcceleration_1_s2 * edgeDisplacement_deg;
     end
 end
-position = unwrapped;
-position(:, 1) = canonicalAzimuth(position(:, 1), limits, options);
-velocity(1, :) = 0;
-acceleration(1, :) = 0;
+
+% Chapter 4: Wrap azimuth only for the public command. Keeping the separate
+% unwrapped copy preserves continuous motion through the azimuth seam.
+sampledPosition_deg = sampledPositionUnwrapped_deg;
+sampledPosition_deg(:, 1) = canonicalAzimuth( ...
+    sampledPosition_deg(:, 1), limits, options);
+sampledVelocity_deg_s(1, :) = 0;
+sampledAcceleration_deg_s2(1, :) = 0;
+
+% Chapter 5: Publish stable field names. "isWaiting" is derived from motion,
+% not guessed from waypoint times, so it also works at boundary samples.
 profile = struct( ...
-    "time_s", time, ...
-    "position_deg", position, ...
-    "positionUnwrapped_deg", unwrapped, ...
-    "velocity_deg_s", velocity, ...
-    "acceleration_deg_s2", acceleration, ...
-    "isWaiting", all(abs(velocity) <= 1e-10, 2) & ...
-    all(abs(acceleration) <= 1e-10, 2));
+    "time_s", sampleTime_s, ...
+    "position_deg", sampledPosition_deg, ...
+    "positionUnwrapped_deg", sampledPositionUnwrapped_deg, ...
+    "velocity_deg_s", sampledVelocity_deg_s, ...
+    "acceleration_deg_s2", sampledAcceleration_deg_s2, ...
+    "isWaiting", all(abs(sampledVelocity_deg_s) <= 1e-10, 2) & ...
+    all(abs(sampledAcceleration_deg_s2) <= 1e-10, 2));
 end
 
-function [duration, motion] = segmentMotion(delta, limits)
+function [motionDuration_s, normalizedMotion] = ...
+        segmentMotion(axisDisplacement_deg, limits)
 %% Section 0: Header & Readme
 % SYNTAX
-%   [duration, motion] = segmentMotion(delta, limits)
+%   [motionDuration_s, normalizedMotion] = ...
+%       segmentMotion(axisDisplacement_deg, limits)
 %**************************************************************************
 % PURPOSE
 %   - Derive the shortest synchronized rest-to-rest two-axis slew.
 %**************************************************************************
 % INPUTS
-%   - delta (numeric two-vector)
+%   - axisDisplacement_deg (numeric two-vector)
 %       Signed axis displacement.
 %   - limits (scalar struct)
 %       Two-axis velocity and acceleration limits.
 %**************************************************************************
 % OUTPUTS
-%   - duration (nonnegative scalar)
+%   - motionDuration_s (nonnegative scalar)
 %       Synchronized slew duration.
-%   - motion (scalar struct)
+%   - normalizedMotion (scalar struct)
 %       Normalized trapezoidal or triangular motion law.
 %**************************************************************************
 % UNITS
-%   - delta is degrees and duration is seconds.
-% Search edges and profile reconstruction share one synchronized two-axis
-% law so feasibility cannot change after route selection.
-absoluteDelta = abs(delta);
-active = absoluteDelta > 1e-12;
-if ~any(active)
-    duration = 0;
-    motion = struct( ...
+%   - Axis displacement is degrees and duration is seconds.
+% Both axes must start and finish together even when they travel different
+% distances. We therefore describe the move with one shared progress value
+% from zero to one. Each axis multiplies that value by its own displacement.
+% Search edges and profile reconstruction both use this helper, so the move
+% cannot acquire a different duration after the route has been selected.
+absoluteDisplacement_deg = abs(axisDisplacement_deg);
+axisIsMoving = absoluteDisplacement_deg > 1e-12;
+if ~any(axisIsMoving)
+    motionDuration_s = 0;
+    normalizedMotion = struct( ...
         "PeakRate", 0, "Acceleration", 1, ...
         "AccelerationTime", 0, "CruiseTime", 0);
     return;
 end
-rateLimit = min(limits.maxVelocity_deg_s(active) ./ ...
-    absoluteDelta(active));
-acceleration = min(limits.maxAcceleration_deg_s2(active) ./ ...
-    absoluteDelta(active));
-% Both axes follow one normalized progress law. Taking the most restrictive
-% normalized limit guarantees each physical axis respects its own bounds.
-if rateLimit^2 / acceleration >= 1
-    accelerationTime = sqrt(1 / acceleration);
-    peakRate = sqrt(acceleration);
-    cruiseTime = 0;
+
+% Convert each physical axis limit into a limit on shared progress. Choosing
+% the smallest value means neither azimuth nor elevation can exceed its own
+% velocity or acceleration limit.
+progressRateLimit_1_s = min( ...
+    limits.maxVelocity_deg_s(axisIsMoving) ./ ...
+    absoluteDisplacement_deg(axisIsMoving));
+progressAccelerationLimit_1_s2 = min( ...
+    limits.maxAcceleration_deg_s2(axisIsMoving) ./ ...
+    absoluteDisplacement_deg(axisIsMoving));
+
+% A short move accelerates and immediately decelerates (a triangular speed
+% shape). A longer move reaches the speed limit and cruises in the middle
+% (a trapezoidal speed shape).
+if progressRateLimit_1_s^2 / progressAccelerationLimit_1_s2 >= 1
+    accelerationTime_s = sqrt(1 / progressAccelerationLimit_1_s2);
+    peakProgressRate_1_s = sqrt(progressAccelerationLimit_1_s2);
+    cruiseTime_s = 0;
 else
-    accelerationTime = rateLimit / acceleration;
-    peakRate = rateLimit;
-    cruiseTime = (1 - acceleration * accelerationTime^2) / peakRate;
+    accelerationTime_s = progressRateLimit_1_s / ...
+        progressAccelerationLimit_1_s2;
+    peakProgressRate_1_s = progressRateLimit_1_s;
+    cruiseTime_s = (1 - progressAccelerationLimit_1_s2 * ...
+        accelerationTime_s^2) / peakProgressRate_1_s;
 end
-duration = 2 * accelerationTime + cruiseTime;
-motion = struct( ...
-    "PeakRate", peakRate, ...
-    "Acceleration", acceleration, ...
-    "AccelerationTime", accelerationTime, ...
-    "CruiseTime", cruiseTime);
+motionDuration_s = 2 * accelerationTime_s + cruiseTime_s;
+normalizedMotion = struct( ...
+    "PeakRate", peakProgressRate_1_s, ...
+    "Acceleration", progressAccelerationLimit_1_s2, ...
+    "AccelerationTime", accelerationTime_s, ...
+    "CruiseTime", cruiseTime_s);
 end
 
-function [progress, rate, acceleration] = segmentProgress( ...
-        tau, duration, motion)
+function [progress, progressRate_1_s, progressAcceleration_1_s2] = ...
+        segmentProgress(elapsedTime_s, motionDuration_s, normalizedMotion)
 %% Section 0: Header & Readme
 % SYNTAX
-%   [progress, rate, acceleration] = segmentProgress( ...
-%       tau, duration, motion)
+%   [progress, progressRate_1_s, progressAcceleration_1_s2] = ...
+%       segmentProgress(elapsedTime_s, motionDuration_s, normalizedMotion)
 %**************************************************************************
 % PURPOSE
 %   - Evaluate normalized segment position, rate, and acceleration.
 %**************************************************************************
 % INPUTS
-%   - tau (numeric vector)
+%   - elapsedTime_s (numeric vector)
 %       Elapsed segment times.
-%   - duration (nonnegative scalar)
+%   - motionDuration_s (nonnegative scalar)
 %       Segment duration.
-%   - motion (scalar struct)
+%   - normalizedMotion (scalar struct)
 %       Analytic normalized motion law.
 %**************************************************************************
 % OUTPUTS
-%   - progress, rate, acceleration (numeric vectors)
+%   - progress, progressRate_1_s, progressAcceleration_1_s2
 %       Normalized motion samples.
 %**************************************************************************
 % UNITS
 %   - progress is dimensionless, rate is 1/s, acceleration is 1/s^2.
-% Collision checks and output derivatives must evaluate the exact same
-% normalized trapezoidal law.
-progress = zeros(size(tau));
-rate = zeros(size(tau));
-acceleration = zeros(size(tau));
-tAcceleration = motion.AccelerationTime;
-tCruiseEnd = tAcceleration + motion.CruiseTime;
+% Collision checks and returned velocity/acceleration must use the exact
+% same motion shape. This evaluator is the single place that divides the
+% move into accelerating, cruising, and slowing-down portions.
+progress = zeros(size(elapsedTime_s));
+progressRate_1_s = zeros(size(elapsedTime_s));
+progressAcceleration_1_s2 = zeros(size(elapsedTime_s));
+accelerationStopTime_s = normalizedMotion.AccelerationTime;
+cruiseStopTime_s = accelerationStopTime_s + ...
+    normalizedMotion.CruiseTime;
 
-accelerating = tau > 0 & tau < tAcceleration;
-progress(accelerating) = 0.5 * motion.Acceleration .* ...
-    tau(accelerating).^2;
-rate(accelerating) = motion.Acceleration .* tau(accelerating);
-acceleration(accelerating) = motion.Acceleration;
+sampleIsAccelerating = elapsedTime_s > 0 & ...
+    elapsedTime_s < accelerationStopTime_s;
+progress(sampleIsAccelerating) = 0.5 * normalizedMotion.Acceleration .* ...
+    elapsedTime_s(sampleIsAccelerating).^2;
+progressRate_1_s(sampleIsAccelerating) = ...
+    normalizedMotion.Acceleration .* elapsedTime_s(sampleIsAccelerating);
+progressAcceleration_1_s2(sampleIsAccelerating) = ...
+    normalizedMotion.Acceleration;
 
-cruising = tau >= tAcceleration & tau < tCruiseEnd;
-accelerationDistance = 0.5 * motion.Acceleration * tAcceleration^2;
-progress(cruising) = accelerationDistance + motion.PeakRate .* ...
-    (tau(cruising) - tAcceleration);
-rate(cruising) = motion.PeakRate;
+sampleIsCruising = elapsedTime_s >= accelerationStopTime_s & ...
+    elapsedTime_s < cruiseStopTime_s;
+progressAtCruiseStart = 0.5 * normalizedMotion.Acceleration * ...
+    accelerationStopTime_s^2;
+progress(sampleIsCruising) = progressAtCruiseStart + ...
+    normalizedMotion.PeakRate .* ...
+    (elapsedTime_s(sampleIsCruising) - accelerationStopTime_s);
+progressRate_1_s(sampleIsCruising) = normalizedMotion.PeakRate;
 
-decelerating = tau >= tCruiseEnd & tau < duration;
-remaining = duration - tau(decelerating);
-progress(decelerating) = 1 - ...
-    0.5 * motion.Acceleration .* remaining.^2;
-rate(decelerating) = motion.Acceleration .* remaining;
-acceleration(decelerating) = -motion.Acceleration;
-progress(tau >= duration) = 1;
+sampleIsDecelerating = elapsedTime_s >= cruiseStopTime_s & ...
+    elapsedTime_s < motionDuration_s;
+remainingMotionTime_s = motionDuration_s - ...
+    elapsedTime_s(sampleIsDecelerating);
+progress(sampleIsDecelerating) = 1 - ...
+    0.5 * normalizedMotion.Acceleration .* remainingMotionTime_s.^2;
+progressRate_1_s(sampleIsDecelerating) = ...
+    normalizedMotion.Acceleration .* remainingMotionTime_s;
+progressAcceleration_1_s2(sampleIsDecelerating) = ...
+    -normalizedMotion.Acceleration;
+progress(elapsedTime_s >= motionDuration_s) = 1;
 end
 
 function yes = samePosition(firstPosition, secondPosition, limits, options)

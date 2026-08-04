@@ -15,7 +15,7 @@ azimuth/elevation/time obstacle field.
 
 | # | Entry point | Primary algorithm | What the example exercises |
 |---:|---|---|---|
-| 01 | `example01PlanFromAzElData` | Dijkstra workflow: direct certificate | User-supplied `azElData`; a collision-free direct wait-and-slew reaches the angular lower bound. |
+| 01 | `example01PlanFromAzElData` | Goal-rooted Dijkstra | Caller-supplied `azElData`; a progressive `[2, 1]` degree full-field search and independent command validation. |
 | 02 | `example02VietnamChinaAvoidance` | Goal-rooted Dijkstra | Progressive complete-grid Dijkstra, rest-to-rest retiming, and polygon validation around two obstacles. |
 | 03 | `example03KinodynamicDetour` | Goal-rooted Dijkstra | A rate- and acceleration-limited detour around a static blocker. |
 | 04 | `example04DynamicSafeIntervals` | Safe-interval Dijkstra | Event-compressed Dijkstra through two moving volumes. |

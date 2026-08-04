@@ -152,7 +152,7 @@ After the public, static, and dynamic readability edits, the same 9 tests
 passed and the same three spiral values were reproduced. MATLAB Code Analyzer
 reported zero messages for `planAzElDijkstra.m`.
 
-The final full-suite result is recorded here after verification:
+The original full-suite result from that pass was:
 
 ```text
 37 passed, 0 failed, 0 incomplete
@@ -228,12 +228,48 @@ helper remains because angular and time axes both share that nontrivial policy.
 - `STYLE.md`: folder-wide continuation, loop, randomized-case, example, and
   test conventions.
 
+## Junior-engineer report pass
+
+The current branch adds a second readability layer without changing the
+planner API or search rules. The public workflow now reads as a seven-chapter
+planning report: restate the request, resolve options, prepare obstacles,
+choose static or time-aware search, report the selected search, explain the
+result, and publish a stable output record.
+
+The static and dynamic search sections now answer plain-language questions
+before introducing their data structures. Terms such as goal-rooted search,
+safe interval, relaxation, stale heap entry, and terminal capture are explained
+where a reader first needs them. Motion-profile reconstruction is split into
+five small report chapters: sample times, waiting, movement, azimuth wrapping,
+and published output. Local variables in that path carry their units and their
+role instead of names such as `time`, `delta`, `node`, or `moving`.
+
+This pass also found a real example configuration problem. Example 01 used a
+0.1-degree full-field search grid because its output command used 0.1-second
+samples. Those are independent resolutions; the search grid created millions
+of positions and exhausted the default wall-time budget for a blocked direct
+chord. The example now keeps 0.1-second command samples but searches on a
+progressive `[2, 1]` degree grid with a documented 20-second budget. It also
+performs an independent collision query before animation, and a regression
+test preserves the blocked-chord detour.
+
+Latest verification:
+
+```text
+MATLAB Code Analyzer messages in touched MATLAB files: 0
+Complete test suite:                              38 passed, 0 failed, 0 incomplete
+Full example campaign before correction:          examples 02-15 passed
+Corrected example 01 rerun:                       passed in 4.2 s, 0 blocked samples
+```
+
 ## Suspected bugs and unresolved items
 
-No behavioral bug was intentionally fixed in this refactor. The dynamic
-terminal-capture transition remains a dense block because its trial ordering,
-sampling, and tolerance behavior are part of the current source of truth.
-Extracting or redesigning it should be a separately tested change.
+No planner-algorithm bug was intentionally fixed in this refactor. The example
+01 search-resolution problem described above was corrected and covered by a
+regression test. The dynamic terminal-capture transition remains a dense block
+because its trial ordering, sampling, and tolerance behavior are part of the
+current source of truth. Extracting or redesigning it should be a separately
+tested change.
 
 The main planner remains a large function-oriented file in accordance with
 `STYLE.md`. Its major algorithms remain inline and in execution order; local

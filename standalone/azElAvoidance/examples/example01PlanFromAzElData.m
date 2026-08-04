@@ -5,7 +5,9 @@ function plan = example01PlanFromAzElData(azElData, viewOptions)
 %   plan = example01PlanFromAzElData(azElData, viewOptions)
 %**************************************************************************
 % PURPOSE
-%   - Demonstrate the complete planning call from caller-supplied azElData.
+%   - Demonstrate a complete Dijkstra planning call from caller-supplied
+%     obstacle data over the full azimuth/elevation field of regard.
+%   - Independently validate the returned command before animation.
 %**************************************************************************
 % INPUTS
 %   - azElData (canonical obstacle collection)
@@ -21,6 +23,9 @@ function plan = example01PlanFromAzElData(azElData, viewOptions)
 %   - Angular quantities are degrees; temporal quantities are seconds.
 
 %% Section 1: Define The Planning Request
+% This example reads like a small planning report: define the two endpoint
+% states, state the hardware limits, and then state how much search detail
+% is appropriate for a full-field demonstration.
 if nargin < 2
     viewOptions = struct();
 end
@@ -45,16 +50,36 @@ limits = struct( ...
 
 options = struct( ...
     "SampleTime_s", 0.1, ...
-    "GridStep_deg", 0.1, ...
+    "GridStep_deg", 1, ...
+    "GridStepSchedule_deg", [2 1], ...
     "SafetyMargin_deg", 1, ...
     "AllowAzimuthWrap", true, ...
-    "Objective", "minimumAngularDistance");
+    "Objective", "minimumAngularDistance", ...
+    "MaxSearchTime_s", 20);
 
-%% Section 2: Plan & Reject Failure
+% SampleTime_s controls how often the final command is reported; it does
+% not need to equal the search grid spacing. Searching the entire sky on a
+% 0.1-degree grid creates millions of positions and can exhaust the default
+% wall-time budget. The two-degree pass finds the route family quickly, and
+% the one-degree pass improves it before exact polygon validation.
+
+%% Section 2: Plan & Independently Validate The Command
+% The planner performs its own dense validation. This second check belongs
+% in the example as an easy-to-see acceptance test for caller-supplied data.
 plan = planAzElDijkstra( ...
     azElData, startState, stopState, limits, options);
 if ~plan.success
     error("example01PlanFromAzElData:NoPath", "%s", plan.message);
+end
+blockedCommandSamples = queryAzElTimeObstacle(plan.obstacleField, ...
+    plan.position_deg(:, 1), plan.position_deg(:, 2), plan.time_s, ...
+    struct( ...
+    "SafetyMarginDeg", options.SafetyMargin_deg, ...
+    "TimePaddingSamples", plan.options.TimePaddingSamples));
+if any(blockedCommandSamples)
+    error("example01PlanFromAzElData:Collision", ...
+        "The returned command contains %d blocked samples.", ...
+        nnz(blockedCommandSamples));
 end
 
 %% Section 3: Animate The Result
