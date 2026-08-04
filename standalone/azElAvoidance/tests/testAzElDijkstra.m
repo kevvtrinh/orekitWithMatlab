@@ -4,7 +4,7 @@ function tests = testAzElDijkstra
 %   results = runtests("testAzElDijkstra.m")
 %**************************************************************************
 % PURPOSE
-%   - Verify maintained static/dynamic Dijkstra behavior and public schemas.
+%   - Verify the compatibility facade and unified planner result schema.
 %**************************************************************************
 % INPUTS
 %   - None; MATLAB supplies local function-test fixtures.
@@ -24,7 +24,7 @@ packageRoot = fileparts(fileparts(mfilename("fullpath")));
 addpath(genpath(packageRoot));
 end
 
-function testDirectPathUsesExactCertificate(testCase)
+function testDirectPathUsesUnifiedPipeline(testCase)
 time_s = (0:10).';
 empty = repmat({zeros(0, 1)}, numel(time_s), 1);
 data = makeAzElObstacleData("Empty", time_s, empty, empty);
@@ -37,9 +37,14 @@ plan = planAzElDijkstra( ...
     "GridStepSchedule_deg", [4 2 1]));
 
 verifyTrue(testCase, plan.success);
-verifyTrue(testCase, plan.optimalGlobally);
+verifyFalse(testCase, plan.optimalGlobally);
+verifyTrue(testCase, plan.optimalOnLattice);
 verifyEqual(testCase, plan.angularPathLength_deg, 8, "AbsTol", 1e-9);
-verifyEqual(testCase, plan.selectedGridStep_deg, 4);
+verifyEqual(testCase, plan.selectedGridStep_deg, 1);
+verifyEqual(testCase, plan.method, ...
+    "reverseDijkstraForwardKinodynamicAStar");
+verifyTrue(testCase, plan.diagnostics.reverseDijkstra.executed);
+verifyTrue(testCase, plan.diagnostics.forwardAStar.executed);
 verifyPlan(testCase, plan);
 end
 
@@ -67,13 +72,16 @@ plan = planAzElDijkstra( ...
 verifyTrue(testCase, plan.success);
 verifyGreaterThan(testCase, plan.angularPathLength_deg, 8);
 verifyGreaterThan(testCase, plan.expandedNodeCount, 0);
-verifyEqual(testCase, plan.method, "progressiveSafeIntervalDijkstra");
-verifyEqual(testCase, ...
-    plan.safeIntervalSearch.Method, "adaptiveSafeIntervalDijkstra");
+verifyEqual(testCase, plan.method, ...
+    "reverseDijkstraForwardKinodynamicAStar");
+verifyTrue(testCase, plan.diagnostics.reverseDijkstra.executed);
+verifyTrue(testCase, plan.diagnostics.forwardAStar.executed);
+verifyGreaterThan(testCase, ...
+    plan.diagnostics.forwardAStar.propagationAttempts, 0);
 verifyPlan(testCase, plan);
 end
 
-function testMovingGeometryAllowsDirectDynamicCertificate(testCase)
+function testMovingGeometryStillUsesUnifiedPipeline(testCase)
 time_s = (0:0.5:20).';
 azimuth = repmat({zeros(0, 1)}, numel(time_s), 1);
 elevation = repmat({zeros(0, 1)}, numel(time_s), 1);
@@ -88,8 +96,9 @@ plan = planAzElDijkstra(data, initialState, goalState, ...
     "GridStepSchedule_deg", [2 1], "MaxSearchTime_s", 8));
 
 verifyTrue(testCase, plan.success);
-verifyEqual(testCase, plan.method, "progressiveSafeIntervalDijkstra");
-verifyTrue(testCase, plan.optimalGlobally);
+verifyEqual(testCase, plan.method, ...
+    "reverseDijkstraForwardKinodynamicAStar");
+verifyFalse(testCase, plan.optimalGlobally);
 verifyEqual(testCase, plan.angularPathLength_deg, 8, "AbsTol", 1e-9);
 verifyPlan(testCase, plan);
 end
@@ -193,6 +202,11 @@ verifyLessThanOrEqual(testCase, ...
 verifyLessThanOrEqual(testCase, ...
     max(abs(plan.acceleration_deg_s2), [], 1), ...
     plan.limits.maxAcceleration_deg_s2 + 1e-8);
+verifyLessThanOrEqual(testCase, ...
+    max(abs(plan.jerk_deg_s3), [], 1), ...
+    plan.options.MaxJerk_deg_s3 + 1e-8);
+verifyTrue(testCase, plan.validation.passed);
+verifyTrue(testCase, plan.validation.collisionFree);
 end
 
 function [startState, stopState, limits] = standardProblem(stopTime)

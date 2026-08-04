@@ -139,7 +139,10 @@ terminal derivative and timing costs.
 Reverse Dijkstra uses a binary min-heap ordered by accumulated cost, cell id,
 and insertion serial. A popped entry whose cost no longer matches the best
 cell label is stale. Diagnostics record pushes, pops, stale pops, settlements,
-relaxations, seeds, unreachable cells, and elapsed time.
+relaxations, seeds, unreachable cells, and elapsed time. The independently
+testable `computeAzElReverseDijkstra` kernel owns these queue semantics; known
+finite graphs exercise improved labels, stale pops, multi-source ties, blocked
+nodes, and circular azimuth before the planner integrates its result.
 
 The reverse field is always built and reported. Its value is combined with the
 forward heuristic only when preprocessing proves that the enabled forward
