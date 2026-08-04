@@ -15,7 +15,7 @@ azimuth/elevation/time workspace.
 
 | # | Entry point | Primary algorithm | What the example exercises |
 |---:|---|---|---|
-| 01 | `example01PlanFromAzElData` | Dijkstra workflow: direct certificate | User-supplied `azElData`; a collision-free direct wait-and-slew reaches the angular lower bound. |
+| 01 | `example01PlanFromAzElData` | Goal-rooted Dijkstra | Caller-supplied `azElData`; a progressive `[2, 1]` degree full-field search and independent command validation. |
 | 02 | `example02VietnamChinaAvoidance` | Goal-rooted Dijkstra | Progressive complete-grid Dijkstra, rest-to-rest retiming, and polygon validation around two obstacles. |
 | 03 | `example03KinodynamicDetour` | Bidirectional kinodynamic RRT* | Both fixed-time trees find and validate a rate- and acceleration-limited detour around a static blocker. |
 | 04 | `example04DynamicSafeIntervals` | Bidirectional kinodynamic RRT* | Seeded space-time tree growth through two moving obstacle volumes. |

@@ -1,8 +1,28 @@
 function plan = example01PlanFromAzElData(azElData, viewOptions)
-%EXAMPLE01PLANFROMAZELDATA Run the dispatcher from one or more obstacles.
-%
-% azElData may be a scalar struct, struct array, or cell collection.
+%% Section 0: Header & Readme
+% SYNTAX
+%   plan = example01PlanFromAzElData(azElData)
+%   plan = example01PlanFromAzElData(azElData, viewOptions)
+%**************************************************************************
+% PURPOSE
+%   - Demonstrate a complete Dijkstra planning call from caller-supplied
+%     obstacle data over the full azimuth/elevation field of regard.
+%   - Independently validate the returned command before animation.
+%**************************************************************************
+% INPUTS
+%   - azElData (canonical obstacle collection)
+%       Scalar struct, struct array, or nested cell collection.
+%   - viewOptions (scalar struct, optional)
+%       Partial animateAzElAvoidancePlan options.
+%**************************************************************************
+% OUTPUTS
+%   - plan (scalar struct)
+%       Successful Dijkstra plan plus animation handles.
+%**************************************************************************
+% UNITS
+%   - Angular quantities are degrees; temporal quantities are seconds.
 
+%% Section 1: Define The Planning Request
 if nargin < 2
     viewOptions = struct();
 end
@@ -27,16 +47,30 @@ limits = struct( ...
 
 options = struct( ...
     "SampleTime_s", 0.1, ...
-    "GridStep_deg", 0.1, ...
+    "GridStep_deg", 1, ...
+    "GridStepSchedule_deg", [2 1], ...
     "SafetyMargin_deg", 1, ...
     "AllowAzimuthWrap", true, ...
-    "Objective", "minimumAngularDistance");
+    "Objective", "minimumAngularDistance", ...
+    "MaxSearchTime_s", 20);
 
+%% Section 2: Plan & Independently Validate The Command
 plan = planAzElDijkstra( ...
     azElData, startState, stopState, limits, options);
 if ~plan.success
     error("example01PlanFromAzElData:NoPath", "%s", plan.message);
 end
+blocked = queryAzElTimeObstacle(plan.workspace, ...
+    plan.position_deg(:, 1), plan.position_deg(:, 2), plan.time_s, ...
+    struct( ...
+    "SafetyMarginDeg", options.SafetyMargin_deg, ...
+    "TimePaddingSamples", plan.options.TimePaddingSamples));
+if any(blocked)
+    error("example01PlanFromAzElData:Collision", ...
+        "The returned command contains %d blocked samples.", nnz(blocked));
+end
+
+%% Section 3: Animate The Result
 plan.animationHandles = animateAzElAvoidancePlan( ...
     azElData, plan, defaultAzElAnimationOptions( ...
     viewOptions, struct("MaximumAnimationFrames", 240)));
