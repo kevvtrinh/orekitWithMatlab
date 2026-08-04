@@ -1,0 +1,23 @@
+Base commit: 5fbc5a6fa24ad2c1626fe3cdc7abc0c1f034a3d8
+Branch: codex/reverse-dijkstra-forward-astar
+
+planAzElDijkstra
+  -> static branch: solveStaticGoalDijkstra
+     -> reverse grid Dijkstra
+     -> route shortcut
+     -> separate rest-to-rest retiming
+  -> dynamic branch: searchAzElSafeIntervalDijkstra
+     -> safe-interval construction
+     -> arrival-time Dijkstra
+  -> private/finalizeAzElPlanFailure
+
+planAzElMovingTargetIntercept
+  -> filters sampled intercept candidates
+  -> calls planAzElDijkstra once per attempted candidate
+  -> appends target tracking samples after capture
+  -> private/finalizeAzElPlanFailure
+
+Examples 01-12 and 15 enter planAzElDijkstra (05-09 through
+runAzElGauntletCase). Examples 13-14 enter planAzElMovingTargetIntercept and
+then the legacy Dijkstra planner. There is no forward kinodynamic A* and no
+jerk-enforcing authoritative segment law at this base commit.
