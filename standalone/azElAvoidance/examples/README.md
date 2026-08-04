@@ -19,7 +19,7 @@ azimuth/elevation/time obstacle field.
 | 02 | `example02VietnamChinaAvoidance` | Goal-rooted Dijkstra | Progressive complete-grid Dijkstra, rest-to-rest retiming, and polygon validation around two obstacles. |
 | 03 | `example03KinodynamicDetour` | Goal-rooted Dijkstra | A rate- and acceleration-limited detour around a static blocker. |
 | 04 | `example04DynamicSafeIntervals` | Safe-interval Dijkstra | Event-compressed Dijkstra through two moving volumes. |
-| 05 | `example05FiveTurnSpiral` | Goal-rooted Dijkstra | Unguided global coarse-to-fine Dijkstra through a deep spiral. |
+| 05 | `example05FiveTurnSpiral` | Goal-rooted Dijkstra | Unguided global coarse-to-fine Dijkstra followed by continuous corner-blended motion through a deep spiral. |
 | 06 | `example06StopGoGates` | Safe-interval Dijkstra | Uniform-cost search through sequentially opening gates; waiting is planner-selected. |
 | 07 | `example07WrappedAzimuthSeam` | Goal-rooted Dijkstra | Shortest wrapped lattice route across the `-180/180` azimuth seam. |
 | 08 | `example08AlternatingSlalom` | Goal-rooted Dijkstra | Global coarse-to-fine Dijkstra through alternating barriers. |

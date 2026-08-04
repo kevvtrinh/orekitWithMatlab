@@ -1188,96 +1188,19 @@ end
 routePositions_deg = shortcut.Path_deg;
 
 %% Section 7: Turn The Spatial Route Into A Timed Slew Command
-% A safe line on a map is not yet a command. For each segment, calculate a
-% shared progress curve so azimuth and elevation start and stop together
-% without exceeding either axis limit. The boresight waits after finishing
-% early so the command still ends at the requested goal time.
-retimingTimer = tic;
-segmentDisplacement_deg = diff(routePositions_deg, 1, 1);
-absoluteDisplacement_deg = abs(segmentDisplacement_deg.');
-rateScaleCandidate = inf(size(absoluteDisplacement_deg));
-accelerationScaleCandidate = inf(size(absoluteDisplacement_deg));
-movingAxis = absoluteDisplacement_deg > 1e-12;
-rateLimit_deg_s = axisLimits.maxVelocity_deg_s(:);
-accelerationLimit_deg_s2 = axisLimits.maxAcceleration_deg_s2(:);
-for axisIndex = 1:2
-    activeSegment = movingAxis(axisIndex, :);
-    rateScaleCandidate(axisIndex, activeSegment) = rateLimit_deg_s( ...
-        axisIndex) ./ absoluteDisplacement_deg(axisIndex, activeSegment);
-    accelerationScaleCandidate(axisIndex, activeSegment) = accelerationLimit_deg_s2( ...
-        axisIndex) ./ ...
-        absoluteDisplacement_deg(axisIndex, activeSegment);
-end
-normalizedRateLimit = min(rateScaleCandidate, [], 1);
-normalizedAcceleration = min(accelerationScaleCandidate, [], 1);
-stationarySegment = ~isfinite(normalizedRateLimit);
-normalizedRateLimit(stationarySegment) = 0;
-normalizedAcceleration(stationarySegment) = 1;
-
-triangularProfile = normalizedRateLimit.^2 ./ normalizedAcceleration >= 1;
-% Short moves accelerate and immediately decelerate (a triangular speed
-% shape). Longer moves reach the speed limit and include a cruise period.
-accelerationDuration_s = normalizedRateLimit ./ normalizedAcceleration;
-accelerationDuration_s(triangularProfile) = sqrt( ...
-    1 ./ normalizedAcceleration(triangularProfile));
-normalizedPeakRate = normalizedAcceleration .* accelerationDuration_s;
-accelerationDistance = normalizedAcceleration .* accelerationDuration_s.^2;
-cruiseDuration_s = zeros(size(normalizedRateLimit));
-cruisingProfile = ~triangularProfile & ~stationarySegment;
-cruiseDuration_s(cruisingProfile) = (1 - ...
-    accelerationDistance(cruisingProfile)) ./ ...
-    normalizedPeakRate(cruisingProfile);
-segmentDuration_s = 2 .* accelerationDuration_s + cruiseDuration_s;
-segmentDuration_s(stationarySegment) = 0;
-
-minimumManeuverTime_s = sum(segmentDuration_s);
-availableManeuverTime_s = goalState.time_s - initialState.time_s;
-if minimumManeuverTime_s > availableManeuverTime_s + 1e-9
-    retimed = failedRetiming(sprintf( ...
-        "Route needs %.3f s but only %.3f s is available.", ...
-        minimumManeuverTime_s, availableManeuverTime_s), ...
-        toc(retimingTimer));
+% A safe line on a map is not yet a command. The established profile mode
+% treats each retained line segment as a separate rest-to-rest maneuver.
+% The path-first mode instead rounds the corners and time-scales one smooth
+% start-to-finish motion, so it does not stop at every Dijkstra waypoint.
+% Both choices still pass the same limit and packed-polygon checks below.
+if options.MotionMode == "pathFirstThenKinematic"
+    retimed = retimeStaticRouteContinuously( ...
+        obstacleField, initialState, goalState, routePositions_deg, ...
+        axisLimits, options);
 else
-    segmentInitialTime_s = initialState.time_s + ...
-        [0, cumsum(segmentDuration_s(1:end - 1))];
-    profile = makeStaticRouteProfile(initialState.time_s, ...
-        goalState.time_s, routePositions_deg, segmentDisplacement_deg, ...
-        segmentInitialTime_s, segmentDuration_s, normalizedPeakRate, ...
-        normalizedAcceleration, options.SampleTime_s, axisLimits, options);
-    maximumRate_deg_s = max(axisLimits.maxVelocity_deg_s);
-    gridCollisionStep_s = options.GridStep_deg / maximumRate_deg_s / 4;
-    collisionSampleStep_s = min([options.SampleTime_s, ...
-        options.CollisionCheckStep_s, gridCollisionStep_s]);
-    validationProfile = makeStaticRouteProfile( ...
-        initialState.time_s, goalState.time_s, routePositions_deg, ...
-        segmentDisplacement_deg, segmentInitialTime_s, ...
-        segmentDuration_s, normalizedPeakRate, normalizedAcceleration, ...
-        collisionSampleStep_s, axisLimits, options);
-    blockedRetimedSamples = queryAzElTimeObstacle(obstacleField, ...
-        validationProfile.position_deg(:, 1), ...
-        validationProfile.position_deg(:, 2), ...
-        validationProfile.time_s, struct( ...
-        "SafetyMarginDeg", options.SafetyMargin_deg, ...
-        "TimePaddingSamples", 1));
-    if any(blockedRetimedSamples)
-        retimed = failedRetiming( ...
-            "The retimed route intersects the exact packed obstacle field.", ...
-            toc(retimingTimer));
-    else
-        routeStep_deg = diff(routePositions_deg, 1, 1);
-        retimed = struct( ...
-            "Success", true, ...
-            "Message", ...
-            "Static route satisfies timing and exact collision checks.", ...
-            "Profile", profile, ...
-            "RouteDistance_deg", sum(hypot( ...
-                routeStep_deg(:, 1), routeStep_deg(:, 2))), ...
-            "MinimumManeuverTime_s", minimumManeuverTime_s, ...
-            "SegmentDuration_s", segmentDuration_s, ...
-            "SegmentInitialTime_s", segmentInitialTime_s, ...
-            "RoutePositions_deg", routePositions_deg, ...
-            "SearchElapsed_s", toc(retimingTimer));
-    end
+    retimed = retimeStaticRouteWithSegmentStops( ...
+        obstacleField, initialState, goalState, routePositions_deg, ...
+        axisLimits, options);
 end
 if ~retimed.Success
     plan = failedStaticPlan( ...
@@ -1291,6 +1214,12 @@ end
 
 profile = retimed.Profile;
 routeDistance_deg = retimed.RouteDistance_deg;
+publishedRoute_deg = routePositions_deg;
+if retimed.MotionStyle == "continuousCornerBlend"
+    % The shortcut report retains the raw polygonal route. The public
+    % autonomous route should show what the command actually follows.
+    publishedRoute_deg = retimed.SmoothedPath_deg;
+end
 
 %% Section 8: Write The Static Attempt Report
 % The caller receives the command plus the evidence used to trust it: the
@@ -1335,7 +1264,7 @@ plan = struct( ...
     "topologySearch", topology, ...
     "preShortcutRoute_deg", unshortenedRoute_deg, ...
     "routeShortcut", shortcut, ...
-    "autonomousRoute_deg", routePositions_deg, ...
+    "autonomousRoute_deg", publishedRoute_deg, ...
     "retiming", retimed);
 end
 
@@ -1480,6 +1409,615 @@ shortcut = struct( ...
     "Elapsed_s", elapsed_s);
 end
 
+function retimed = retimeStaticRouteWithSegmentStops( ...
+        obstacleField, initialState, goalState, routePositions_deg, ...
+        axisLimits, options)
+%% Section 0: Header & Readme
+% SYNTAX
+%   retimed = retimeStaticRouteWithSegmentStops( ...
+%       obstacleField, initialState, goalState, routePositions_deg, ...
+%       axisLimits, options)
+%**************************************************************************
+% PURPOSE
+%   - Preserve the established profile behavior: stop at every retained
+%     waypoint, then start the next synchronized two-axis slew.
+%**************************************************************************
+% INPUTS
+%   - obstacleField, initialState, goalState (planning context)
+%       Packed polygons and requested time-bounded endpoint states.
+%   - routePositions_deg (numeric N-by-2 matrix)
+%       Exact-checked polygonal route.
+%   - axisLimits, options (scalar structs)
+%       Kinematic limits and resolved planner controls.
+%**************************************************************************
+% OUTPUTS
+%   - retimed (scalar struct)
+%       Sampled command or a stable failure explanation.
+%**************************************************************************
+% UNITS
+%   - Angles are degrees; time is seconds.
+% This remains the default because its exact per-segment motion law is the
+% behavioral baseline. The continuous path-first mode below is opt-in.
+retimingTimer = tic;
+segmentDisplacement_deg = diff(routePositions_deg, 1, 1);
+absoluteDisplacement_deg = abs(segmentDisplacement_deg.');
+rateScaleCandidate = inf(size(absoluteDisplacement_deg));
+accelerationScaleCandidate = inf(size(absoluteDisplacement_deg));
+movingAxis = absoluteDisplacement_deg > 1e-12;
+rateLimit_deg_s = axisLimits.maxVelocity_deg_s(:);
+accelerationLimit_deg_s2 = axisLimits.maxAcceleration_deg_s2(:);
+for axisIndex = 1:2
+    activeSegment = movingAxis(axisIndex, :);
+    rateScaleCandidate(axisIndex, activeSegment) = rateLimit_deg_s( ...
+        axisIndex) ./ absoluteDisplacement_deg(axisIndex, activeSegment);
+    accelerationScaleCandidate(axisIndex, activeSegment) = ...
+        accelerationLimit_deg_s2(axisIndex) ./ ...
+        absoluteDisplacement_deg(axisIndex, activeSegment);
+end
+normalizedRateLimit = min(rateScaleCandidate, [], 1);
+normalizedAcceleration = min(accelerationScaleCandidate, [], 1);
+stationarySegment = ~isfinite(normalizedRateLimit);
+normalizedRateLimit(stationarySegment) = 0;
+normalizedAcceleration(stationarySegment) = 1;
+
+triangularProfile = normalizedRateLimit.^2 ./ normalizedAcceleration >= 1;
+accelerationDuration_s = normalizedRateLimit ./ normalizedAcceleration;
+accelerationDuration_s(triangularProfile) = sqrt( ...
+    1 ./ normalizedAcceleration(triangularProfile));
+normalizedPeakRate = normalizedAcceleration .* accelerationDuration_s;
+accelerationDistance = normalizedAcceleration .* accelerationDuration_s.^2;
+cruiseDuration_s = zeros(size(normalizedRateLimit));
+cruisingProfile = ~triangularProfile & ~stationarySegment;
+cruiseDuration_s(cruisingProfile) = (1 - ...
+    accelerationDistance(cruisingProfile)) ./ ...
+    normalizedPeakRate(cruisingProfile);
+segmentDuration_s = 2 .* accelerationDuration_s + cruiseDuration_s;
+segmentDuration_s(stationarySegment) = 0;
+
+minimumManeuverTime_s = sum(segmentDuration_s);
+availableManeuverTime_s = goalState.time_s - initialState.time_s;
+if minimumManeuverTime_s > availableManeuverTime_s + 1e-9
+    retimed = failedRetiming(sprintf( ...
+        "Route needs %.3f s but only %.3f s is available.", ...
+        minimumManeuverTime_s, availableManeuverTime_s), ...
+        toc(retimingTimer));
+    retimed.MotionStyle = "segmentStops";
+    return;
+end
+
+segmentInitialTime_s = initialState.time_s + ...
+    [0, cumsum(segmentDuration_s(1:end - 1))];
+profile = makeStaticRouteProfile(initialState.time_s, ...
+    goalState.time_s, routePositions_deg, segmentDisplacement_deg, ...
+    segmentInitialTime_s, segmentDuration_s, normalizedPeakRate, ...
+    normalizedAcceleration, options.SampleTime_s, axisLimits, options);
+maximumRate_deg_s = max(axisLimits.maxVelocity_deg_s);
+gridCollisionStep_s = options.GridStep_deg / maximumRate_deg_s / 4;
+collisionSampleStep_s = min([options.SampleTime_s, ...
+    options.CollisionCheckStep_s, gridCollisionStep_s]);
+validationProfile = makeStaticRouteProfile( ...
+    initialState.time_s, goalState.time_s, routePositions_deg, ...
+    segmentDisplacement_deg, segmentInitialTime_s, ...
+    segmentDuration_s, normalizedPeakRate, normalizedAcceleration, ...
+    collisionSampleStep_s, axisLimits, options);
+blockedRetimedSamples = queryAzElTimeObstacle(obstacleField, ...
+    validationProfile.position_deg(:, 1), ...
+    validationProfile.position_deg(:, 2), ...
+    validationProfile.time_s, struct( ...
+    "SafetyMarginDeg", options.SafetyMargin_deg, ...
+    "TimePaddingSamples", 1));
+if any(blockedRetimedSamples)
+    retimed = failedRetiming( ...
+        "The retimed route intersects the exact packed obstacle field.", ...
+        toc(retimingTimer));
+    retimed.MotionStyle = "segmentStops";
+    return;
+end
+
+routeStep_deg = diff(routePositions_deg, 1, 1);
+retimed = struct( ...
+    "Success", true, ...
+    "Message", "Static route satisfies timing and exact collision checks.", ...
+    "MotionStyle", "segmentStops", ...
+    "Profile", profile, ...
+    "RouteDistance_deg", sum(hypot( ...
+        routeStep_deg(:, 1), routeStep_deg(:, 2))), ...
+    "MinimumManeuverTime_s", minimumManeuverTime_s, ...
+    "SegmentDuration_s", segmentDuration_s, ...
+    "SegmentInitialTime_s", segmentInitialTime_s, ...
+    "RoutePositions_deg", routePositions_deg, ...
+    "SmoothedPath_deg", zeros(0, 2), ...
+    "SearchElapsed_s", toc(retimingTimer));
+end
+
+function retimed = retimeStaticRouteContinuously( ...
+        obstacleField, initialState, goalState, routePositions_deg, ...
+        axisLimits, options)
+%% Section 0: Header & Readme
+% SYNTAX
+%   retimed = retimeStaticRouteContinuously( ...
+%       obstacleField, initialState, goalState, routePositions_deg, ...
+%       axisLimits, options)
+%**************************************************************************
+% PURPOSE
+%   - Round a path's corners and apply one continuous start-to-finish
+%     kinematic schedule without stopping at intermediate waypoints.
+%**************************************************************************
+% INPUTS
+%   - obstacleField, initialState, goalState (planning context)
+%       Packed moving polygons and requested endpoint states.
+%   - routePositions_deg (numeric N-by-2 matrix)
+%       Exact-checked polygonal path found before kinematics are applied.
+%   - axisLimits, options (scalar structs)
+%       Kinematic limits, sampling controls, and collision margins.
+%**************************************************************************
+% OUTPUTS
+%   - retimed (scalar struct)
+%       Continuous command or a failure eligible for profile fallback.
+%**************************************************************************
+% UNITS
+%   - Angles are degrees; time is seconds.
+% The smooth route is only an attempt. It must fit the deadline, remain
+% inside both axis limits, and pass the same dense polygon query as the
+% established profile. A failure is allowed to trigger profile fallback.
+retimingTimer = tic;
+cornerBlendedPath_deg = makeCornerBlendedPath(routePositions_deg, options);
+[pathModel, smoothedPath_deg, smoothedDistance_deg] = ...
+    makeContinuousPathModel(cornerBlendedPath_deg, options);
+minimumManeuverTime_s = minimumContinuousPathDuration( ...
+    pathModel, axisLimits);
+availableManeuverTime_s = goalState.time_s - initialState.time_s;
+if minimumManeuverTime_s > availableManeuverTime_s + 1e-9
+    retimed = failedRetiming(sprintf( ...
+        "Continuous route needs %.3f s but only %.3f s is available.", ...
+        minimumManeuverTime_s, availableManeuverTime_s), ...
+        toc(retimingTimer));
+    retimed.MotionStyle = "continuousCornerBlend";
+    retimed.SmoothedPath_deg = smoothedPath_deg;
+    return;
+end
+
+profile = makeContinuousPathProfile(pathModel, initialState.time_s, ...
+    goalState.time_s, minimumManeuverTime_s, options.SampleTime_s, ...
+    axisLimits, options);
+maximumRate_deg_s = max(axisLimits.maxVelocity_deg_s);
+gridCollisionStep_s = options.GridStep_deg / maximumRate_deg_s / 4;
+collisionSampleStep_s = min([options.SampleTime_s, ...
+    options.CollisionCheckStep_s, gridCollisionStep_s]);
+validationProfile = makeContinuousPathProfile(pathModel, ...
+    initialState.time_s, goalState.time_s, minimumManeuverTime_s, ...
+    collisionSampleStep_s, axisLimits, options);
+
+rateLimitExceeded = any(max(abs( ...
+    validationProfile.velocity_deg_s), [], 1) > ...
+    axisLimits.maxVelocity_deg_s + 1e-8);
+accelerationLimitExceeded = any(max(abs( ...
+    validationProfile.acceleration_deg_s2), [], 1) > ...
+    axisLimits.maxAcceleration_deg_s2 + 1e-8);
+if rateLimitExceeded || accelerationLimitExceeded
+    retimed = failedRetiming( ...
+        "Continuous route exceeds a velocity or acceleration limit.", ...
+        toc(retimingTimer));
+    retimed.MotionStyle = "continuousCornerBlend";
+    retimed.SmoothedPath_deg = smoothedPath_deg;
+    return;
+end
+
+blockedRetimedSamples = queryAzElTimeObstacle(obstacleField, ...
+    validationProfile.position_deg(:, 1), ...
+    validationProfile.position_deg(:, 2), ...
+    validationProfile.time_s, struct( ...
+    "SafetyMarginDeg", options.SafetyMargin_deg, ...
+    "TimePaddingSamples", 1));
+if any(blockedRetimedSamples)
+    retimed = failedRetiming( ...
+        "The continuous route intersects the exact packed obstacle field.", ...
+        toc(retimingTimer));
+    retimed.MotionStyle = "continuousCornerBlend";
+    retimed.SmoothedPath_deg = smoothedPath_deg;
+    return;
+end
+
+retimed = struct( ...
+    "Success", true, ...
+    "Message", ...
+    "Corner-blended route satisfies timing and exact collision checks.", ...
+    "MotionStyle", "continuousCornerBlend", ...
+    "Profile", profile, ...
+    "RouteDistance_deg", smoothedDistance_deg, ...
+    "MinimumManeuverTime_s", minimumManeuverTime_s, ...
+    "SegmentDuration_s", minimumManeuverTime_s, ...
+    "SegmentInitialTime_s", initialState.time_s, ...
+    "RoutePositions_deg", routePositions_deg, ...
+    "SmoothedPath_deg", smoothedPath_deg, ...
+    "SearchElapsed_s", toc(retimingTimer));
+end
+
+function blendedPath_deg = makeCornerBlendedPath(routePositions_deg, options)
+%% Section 0: Header & Readme
+% SYNTAX
+%   blendedPath_deg = makeCornerBlendedPath(routePositions_deg, options)
+%**************************************************************************
+% PURPOSE
+%   - Replace each hard interior corner with a short quadratic bend.
+%**************************************************************************
+% INPUTS
+%   - routePositions_deg (numeric N-by-2 matrix)
+%       Polygonal path whose intermediate direction changes are abrupt.
+%   - options (scalar struct)
+%       Grid and exact-shortcut spacing used to size and sample each bend.
+%**************************************************************************
+% OUTPUTS
+%   - blendedPath_deg (numeric M-by-2 matrix)
+%       Densely sampled line-and-bend path with unchanged endpoints.
+%**************************************************************************
+% UNITS
+%   - Input, output, blend distances, and sample spacing are degrees.
+% Every bend starts along the incoming line and finishes along the outgoing
+% line. That matching direction is what lets velocity stay continuous.
+routeStep_deg = diff(routePositions_deg, 1, 1);
+keepWaypoint = [true; hypot( ...
+    routeStep_deg(:, 1), routeStep_deg(:, 2)) > 1e-12];
+routePositions_deg = routePositions_deg(keepWaypoint, :);
+if size(routePositions_deg, 1) <= 1
+    blendedPath_deg = routePositions_deg;
+    return;
+end
+
+spatialSampleStep_deg = min( ...
+    options.RouteShortcutStep_deg, options.GridStep_deg / 4);
+maximumBlendDistance_deg = 4 * options.GridStep_deg;
+blendFraction = 0.35;
+blendedPath_deg = routePositions_deg(1, :);
+for waypointIndex = 2:size(routePositions_deg, 1) - 1
+    previousPosition_deg = routePositions_deg(waypointIndex - 1, :);
+    cornerPosition_deg = routePositions_deg(waypointIndex, :);
+    nextPosition_deg = routePositions_deg(waypointIndex + 1, :);
+    incomingVector_deg = cornerPosition_deg - previousPosition_deg;
+    outgoingVector_deg = nextPosition_deg - cornerPosition_deg;
+    incomingLength_deg = hypot( ...
+        incomingVector_deg(1), incomingVector_deg(2));
+    outgoingLength_deg = hypot( ...
+        outgoingVector_deg(1), outgoingVector_deg(2));
+    blendDistance_deg = min([ ...
+        blendFraction * incomingLength_deg, ...
+        blendFraction * outgoingLength_deg, ...
+        maximumBlendDistance_deg]);
+    entryPosition_deg = cornerPosition_deg - ...
+        blendDistance_deg * incomingVector_deg / incomingLength_deg;
+    exitPosition_deg = cornerPosition_deg + ...
+        blendDistance_deg * outgoingVector_deg / outgoingLength_deg;
+    blendedPath_deg = appendStraightPathSamples( ...
+        blendedPath_deg, entryPosition_deg, spatialSampleStep_deg);
+
+    bendLengthEstimate_deg = 2 * blendDistance_deg;
+    bendSampleCount = max(3, ...
+        ceil(bendLengthEstimate_deg / spatialSampleStep_deg) + 1);
+    bendFraction = linspace(0, 1, bendSampleCount).';
+    bendPosition_deg = (1 - bendFraction).^2 .* entryPosition_deg + ...
+        2 * (1 - bendFraction) .* bendFraction .* cornerPosition_deg + ...
+        bendFraction.^2 .* exitPosition_deg;
+    blendedPath_deg = [ ...
+        blendedPath_deg; bendPosition_deg(2:end, :)]; %#ok<AGROW>
+end
+blendedPath_deg = appendStraightPathSamples(blendedPath_deg, ...
+    routePositions_deg(end, :), spatialSampleStep_deg);
+end
+
+function path_deg = appendStraightPathSamples( ...
+        path_deg, goalPosition_deg, sampleStep_deg)
+%% Section 0: Header & Readme
+% SYNTAX
+%   path_deg = appendStraightPathSamples( ...
+%       path_deg, goalPosition_deg, sampleStep_deg)
+%**************************************************************************
+% PURPOSE
+%   - Append evenly spaced samples without duplicating the shared endpoint.
+%**************************************************************************
+% INPUTS
+%   - path_deg (numeric N-by-2 matrix)
+%       Path accumulated so far.
+%   - goalPosition_deg (numeric two-vector)
+%       Endpoint of the straight portion being appended.
+%   - sampleStep_deg (positive scalar)
+%       Maximum requested spacing along the straight portion.
+%**************************************************************************
+% OUTPUTS
+%   - path_deg (numeric M-by-2 matrix)
+%       Extended path with the original rows preserved.
+%**************************************************************************
+% UNITS
+%   - Positions and spacing are degrees.
+initialPosition_deg = path_deg(end, :);
+displacement_deg = goalPosition_deg - initialPosition_deg;
+distance_deg = hypot(displacement_deg(1), displacement_deg(2));
+if distance_deg <= 1e-12
+    return;
+end
+sampleCount = max(2, ceil(distance_deg / sampleStep_deg) + 1);
+sampleFraction = linspace(0, 1, sampleCount).';
+linePosition_deg = initialPosition_deg + sampleFraction .* displacement_deg;
+path_deg = [path_deg; linePosition_deg(2:end, :)];
+end
+
+function [pathModel, diagnosticPath_deg, pathDistance_deg] = ...
+        makeContinuousPathModel(pathSamples_deg, options)
+%% Section 0: Header & Readme
+% SYNTAX
+%   [pathModel, diagnosticPath_deg, pathDistance_deg] = ...
+%       makeContinuousPathModel(pathSamples_deg, options)
+%**************************************************************************
+% PURPOSE
+%   - Build a shape-preserving path interpolant and its two derivatives.
+%**************************************************************************
+% INPUTS
+%   - pathSamples_deg (numeric N-by-2 matrix)
+%       Dense line-and-bend samples in travel order.
+%   - options (scalar struct)
+%       Spacing controls for the published diagnostic path.
+%**************************************************************************
+% OUTPUTS
+%   - pathModel (scalar struct)
+%       Position, first-derivative, and second-derivative polynomials.
+%   - diagnosticPath_deg (numeric M-by-2 matrix)
+%       Dense representation of the exact interpolated path.
+%   - pathDistance_deg (nonnegative scalar)
+%       Sampled arc length of the interpolated path.
+%**************************************************************************
+% UNITS
+%   - Path coordinates and distance are degrees; model progress is unitless.
+% The independent variable is progress from zero to one. Keeping position,
+% tangent, and curvature together lets the time scaler compute honest axis
+% velocity and acceleration rather than estimating them after the fact.
+sampleStep_deg = diff(pathSamples_deg, 1, 1);
+cumulativeDistance_deg = [0; cumsum(hypot( ...
+    sampleStep_deg(:, 1), sampleStep_deg(:, 2)))];
+pathDistanceEstimate_deg = cumulativeDistance_deg(end);
+if pathDistanceEstimate_deg <= 1e-12
+    normalizedDistance = [0; 1];
+    pathSamples_deg = [pathSamples_deg(1, :); pathSamples_deg(1, :)];
+else
+    normalizedDistance = cumulativeDistance_deg / pathDistanceEstimate_deg;
+end
+
+pathModel = struct();
+pathModel.Position = cell(1, 2);
+pathModel.FirstDerivative = cell(1, 2);
+pathModel.SecondDerivative = cell(1, 2);
+for axisIndex = 1:2
+    positionPolynomial = pchip( ...
+        normalizedDistance, pathSamples_deg(:, axisIndex));
+    firstDerivativePolynomial = differentiatePiecewisePolynomial( ...
+        positionPolynomial);
+    secondDerivativePolynomial = differentiatePiecewisePolynomial( ...
+        firstDerivativePolynomial);
+    pathModel.Position{axisIndex} = positionPolynomial;
+    pathModel.FirstDerivative{axisIndex} = firstDerivativePolynomial;
+    pathModel.SecondDerivative{axisIndex} = secondDerivativePolynomial;
+end
+pathModel.StartPosition_deg = pathSamples_deg(1, :);
+pathModel.GoalPosition_deg = pathSamples_deg(end, :);
+
+diagnosticSampleStep_deg = min( ...
+    options.RouteShortcutStep_deg, options.GridStep_deg / 8);
+diagnosticSampleCount = min(20000, max(1001, ...
+    ceil(pathDistanceEstimate_deg / diagnosticSampleStep_deg) + 1));
+diagnosticProgress = linspace(0, 1, diagnosticSampleCount).';
+diagnosticPath_deg = evaluatePathPosition(pathModel, diagnosticProgress);
+diagnosticStep_deg = diff(diagnosticPath_deg, 1, 1);
+pathDistance_deg = sum(hypot( ...
+    diagnosticStep_deg(:, 1), diagnosticStep_deg(:, 2)));
+end
+
+function derivativePolynomial = differentiatePiecewisePolynomial(polynomial)
+%% Section 0: Header & Readme
+% SYNTAX
+%   derivativePolynomial = ...
+%       differentiatePiecewisePolynomial(polynomial)
+%**************************************************************************
+% PURPOSE
+%   - Differentiate a scalar MATLAB piecewise polynomial without requiring
+%     an additional toolbox.
+%**************************************************************************
+% INPUTS
+%   - polynomial (MATLAB piecewise-polynomial struct)
+%       Scalar polynomial returned by pchip or this helper.
+%**************************************************************************
+% OUTPUTS
+%   - derivativePolynomial (piecewise-polynomial struct)
+%       Analytic derivative over the original break intervals.
+%**************************************************************************
+% UNITS
+%   - Units follow the input polynomial divided by its independent variable.
+[breaks, coefficients, ~, order, dimension] = unmkpp(polynomial);
+if order <= 1
+    derivativeCoefficients = zeros(size(coefficients, 1), 1);
+else
+    powers = order - 1:-1:1;
+    derivativeCoefficients = coefficients(:, 1:end - 1) .* powers;
+end
+derivativePolynomial = mkpp( ...
+    breaks, derivativeCoefficients, dimension);
+end
+
+function position_deg = evaluatePathPosition(pathModel, progress)
+%% Section 0: Header & Readme
+% SYNTAX
+%   position_deg = evaluatePathPosition(pathModel, progress)
+%**************************************************************************
+% PURPOSE
+%   - Evaluate the two path coordinates at normalized progress samples.
+%**************************************************************************
+% INPUTS
+%   - pathModel (scalar struct)
+%       Two-axis position polynomials.
+%   - progress (numeric vector)
+%       Requested path fractions from zero through one.
+%**************************************************************************
+% OUTPUTS
+%   - position_deg (numeric N-by-2 matrix)
+%       Unwrapped azimuth/elevation samples.
+%**************************************************************************
+% UNITS
+%   - Progress is unitless and position is degrees.
+position_deg = zeros(numel(progress), 2);
+for axisIndex = 1:2
+    position_deg(:, axisIndex) = reshape(ppval( ...
+        pathModel.Position{axisIndex}, progress), [], 1);
+end
+end
+
+function minimumDuration_s = minimumContinuousPathDuration( ...
+        pathModel, axisLimits)
+%% Section 0: Header & Readme
+% SYNTAX
+%   minimumDuration_s = minimumContinuousPathDuration( ...
+%       pathModel, axisLimits)
+%**************************************************************************
+% PURPOSE
+%   - Find one conservative duration that keeps the continuous path inside
+%     both axes' velocity and acceleration limits.
+%**************************************************************************
+% INPUTS
+%   - pathModel (scalar struct)
+%       Path position and analytic progress derivatives.
+%   - axisLimits (scalar struct)
+%       Per-axis maximum velocity and acceleration.
+%**************************************************************************
+% OUTPUTS
+%   - minimumDuration_s (positive scalar)
+%       Time-scaled maneuver duration including a small sampling margin.
+%**************************************************************************
+% UNITS
+%   - Output is seconds; limits use deg/s and deg/s^2.
+% We first evaluate a one-second maneuver. Velocity scales as 1/T and
+% acceleration as 1/T^2, so the required duration follows directly from
+% the measured ratios. A small margin covers samples between this grid.
+normalizedTime = linspace(0, 1, 4001).';
+[pathProgress, progressRate, progressAcceleration] = ...
+    minimumJerkProgress(normalizedTime, 1);
+velocityDuration_s = 0;
+accelerationDuration_s = 0;
+for axisIndex = 1:2
+    pathSlope_deg = reshape(ppval( ...
+        pathModel.FirstDerivative{axisIndex}, pathProgress), [], 1);
+    pathCurvature_deg = reshape(ppval( ...
+        pathModel.SecondDerivative{axisIndex}, pathProgress), [], 1);
+    velocityAtOneSecond_deg_s = pathSlope_deg .* progressRate;
+    accelerationAtOneSecond_deg_s2 = ...
+        pathCurvature_deg .* progressRate.^2 + ...
+        pathSlope_deg .* progressAcceleration;
+    velocityDuration_s = max(velocityDuration_s, ...
+        max(abs(velocityAtOneSecond_deg_s)) / ...
+        axisLimits.maxVelocity_deg_s(axisIndex));
+    accelerationDuration_s = max(accelerationDuration_s, sqrt( ...
+        max(abs(accelerationAtOneSecond_deg_s2)) / ...
+        axisLimits.maxAcceleration_deg_s2(axisIndex)));
+end
+minimumDuration_s = 1.02 * max( ...
+    [velocityDuration_s, accelerationDuration_s, 1e-6]);
+end
+
+function profile = makeContinuousPathProfile( ...
+        pathModel, initialTime_s, goalTime_s, maneuverDuration_s, ...
+        sampleTime_s, axisLimits, options)
+%% Section 0: Header & Readme
+% SYNTAX
+%   profile = makeContinuousPathProfile( ...
+%       pathModel, initialTime_s, goalTime_s, maneuverDuration_s, ...
+%       sampleTime_s, axisLimits, options)
+%**************************************************************************
+% PURPOSE
+%   - Sample one continuous corner-blended maneuver and its final wait.
+%**************************************************************************
+% INPUTS
+%   - pathModel (scalar struct)
+%       Two-axis position and derivative polynomials.
+%   - initialTime_s, goalTime_s, maneuverDuration_s, sampleTime_s
+%       Mission horizon, active-motion duration, and output spacing.
+%   - axisLimits, options (scalar structs)
+%       Azimuth canonicalization limits and wrapping policy.
+%**************************************************************************
+% OUTPUTS
+%   - profile (scalar struct)
+%       Time, position, velocity, acceleration, and waiting samples.
+%**************************************************************************
+% UNITS
+%   - Angles are degrees; time is seconds.
+time_s = (initialTime_s:sampleTime_s:goalTime_s).';
+if time_s(end) < goalTime_s - 1e-9
+    time_s(end + 1, 1) = goalTime_s;
+else
+    time_s(end) = goalTime_s;
+end
+elapsedTime_s = min(max(time_s - initialTime_s, 0), maneuverDuration_s);
+normalizedTime = elapsedTime_s / maneuverDuration_s;
+[pathProgress, progressRate_1_s, progressAcceleration_1_s2] = ...
+    minimumJerkProgress(normalizedTime, maneuverDuration_s);
+
+positionUnwrapped_deg = evaluatePathPosition(pathModel, pathProgress);
+velocity_deg_s = zeros(numel(time_s), 2);
+acceleration_deg_s2 = zeros(numel(time_s), 2);
+for axisIndex = 1:2
+    pathSlope_deg = reshape(ppval( ...
+        pathModel.FirstDerivative{axisIndex}, pathProgress), [], 1);
+    pathCurvature_deg = reshape(ppval( ...
+        pathModel.SecondDerivative{axisIndex}, pathProgress), [], 1);
+    velocity_deg_s(:, axisIndex) = ...
+        pathSlope_deg .* progressRate_1_s;
+    acceleration_deg_s2(:, axisIndex) = ...
+        pathCurvature_deg .* progressRate_1_s.^2 + ...
+        pathSlope_deg .* progressAcceleration_1_s2;
+end
+positionUnwrapped_deg(1, :) = pathModel.StartPosition_deg;
+positionUnwrapped_deg(end, :) = pathModel.GoalPosition_deg;
+position_deg = positionUnwrapped_deg;
+position_deg(:, 1) = canonicalAzimuth( ...
+    position_deg(:, 1), axisLimits, options);
+velocity_deg_s([1 end], :) = 0;
+acceleration_deg_s2([1 end], :) = 0;
+profile = struct( ...
+    "time_s", time_s, ...
+    "position_deg", position_deg, ...
+    "positionUnwrapped_deg", positionUnwrapped_deg, ...
+    "velocity_deg_s", velocity_deg_s, ...
+    "acceleration_deg_s2", acceleration_deg_s2, ...
+    "isWaiting", all(abs(velocity_deg_s) <= 1e-10, 2) & ...
+        all(abs(acceleration_deg_s2) <= 1e-10, 2));
+end
+
+function [progress, progressRate_1_s, progressAcceleration_1_s2] = ...
+        minimumJerkProgress(normalizedTime, duration_s)
+%% Section 0: Header & Readme
+% SYNTAX
+%   [progress, progressRate_1_s, progressAcceleration_1_s2] = ...
+%       minimumJerkProgress(normalizedTime, duration_s)
+%**************************************************************************
+% PURPOSE
+%   - Move from zero to one with zero rate and acceleration at both ends.
+%**************************************************************************
+% INPUTS
+%   - normalizedTime (numeric vector)
+%       Clamped maneuver time from zero through one.
+%   - duration_s (positive scalar)
+%       Physical duration represented by normalizedTime.
+%**************************************************************************
+% OUTPUTS
+%   - progress, progressRate_1_s, progressAcceleration_1_s2
+%       Path fraction and its first two physical-time derivatives.
+%**************************************************************************
+% UNITS
+%   - Progress is unitless; derivatives are 1/s and 1/s^2.
+% This fifth-order curve supplies a gentle global start and stop while the
+% blended spatial path supplies continuous direction through its corners.
+progress = 10 * normalizedTime.^3 - 15 * normalizedTime.^4 + ...
+    6 * normalizedTime.^5;
+progressRate_1_s = (30 * normalizedTime.^2 - ...
+    60 * normalizedTime.^3 + 30 * normalizedTime.^4) / duration_s;
+progressAcceleration_1_s2 = (60 * normalizedTime - ...
+    180 * normalizedTime.^2 + 120 * normalizedTime.^3) / duration_s^2;
+end
+
 function profile = makeStaticRouteProfile( ...
         initialTime_s, goalTime_s, routePositions_deg, ...
         segmentDisplacement_deg, segmentInitialTime_s, ...
@@ -1608,12 +2146,14 @@ function retimed = failedRetiming(message, elapsed_s)
 retimed = struct( ...
     "Success", false, ...
     "Message", string(message), ...
+    "MotionStyle", "", ...
     "Profile", struct(), ...
     "RouteDistance_deg", Inf, ...
     "MinimumManeuverTime_s", Inf, ...
     "SegmentDuration_s", zeros(1, 0), ...
     "SegmentInitialTime_s", zeros(1, 0), ...
     "RoutePositions_deg", zeros(0, 2), ...
+    "SmoothedPath_deg", zeros(0, 2), ...
     "SearchElapsed_s", elapsed_s);
 end
 

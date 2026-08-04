@@ -142,7 +142,11 @@ options.FallbackToProfile = true;
 ```
 
 The resulting timed command is densely checked against the full moving
-obstacle field. If it passes, `plan.method` is
+obstacle field. Interior corners are replaced with short direction-matched
+blends, and one minimum-jerk progress clock carries the boresight from start
+to goal without stopping at every waypoint. Velocity and acceleration are
+calculated analytically and used to time-scale the complete motion. If it
+passes, `plan.method` is
 `"pathFirstThenKinematicDijkstra"`. If it fails and fallback is enabled, the
 planner uses the established safe-interval profile search, which may choose
 different positions or wait for an obstacle to pass. Half of
@@ -150,6 +154,10 @@ different positions or wait for an obstacle to pass. Half of
 `plan.motionPlanning` to see the requested and selected modes, whether
 fallback was used, and each path-first resolution attempt. The default
 `MotionMode` remains `"profile"` for backward-compatible behavior.
+
+Animation frame decimation also gives moving samples more weight than a long
+stationary hold. This changes playback smoothness only; the command and
+collision-validation samples are never discarded.
 
 ### Moving rendezvous and trailing
 

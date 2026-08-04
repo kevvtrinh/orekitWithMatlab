@@ -348,9 +348,13 @@ the safe-interval graph is built. It deliberately separates the questions:
    deadline, and moving-polygon constraints?
 
 The first question uses the same complete goal-rooted Dijkstra grids as the
-static planner. The second applies synchronized rest-to-rest motion to every
-retained segment and densely queries the full time-varying obstacle field.
-The route is returned only when that independent timed validation succeeds.
+static planner. The second replaces hard interior corners with quadratic
+direction-matched blends and applies one minimum-jerk progress clock to the
+complete route. Position, velocity, and acceleration come from the blended
+path and its analytic derivatives. A conservative duration keeps both axes
+inside their supplied limits without forcing an intermediate stop. The full
+time-varying obstacle field is then queried densely, and the route is returned
+only when that independent timed validation succeeds.
 
 An opening-scene path can fail when an obstacle later crosses it or when its
 minimum slew time misses the deadline. With `FallbackToProfile=true`, the
@@ -364,6 +368,8 @@ minimum-time objective or nonzero terminal state uses the profile fallback
 when enabled and otherwise reports an incompatible option combination.
 `plan.motionPlanning` records the requested mode, selected mode, fallback
 decision, failure explanation, and path-first resolution attempts.
+`plan.retiming.MotionStyle` identifies `continuousCornerBlend`, while the raw
+polygonal shortcut remains available in `plan.routeShortcut` for diagnosis.
 
 The planner instead uses a safe-interval state:
 

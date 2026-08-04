@@ -255,20 +255,25 @@ test preserves the blocked-chord detour.
 
 The subsequent motion-policy extension keeps `profile` as the default and
 adds the opt-in `pathFirstThenKinematic` mode for moving scenes. That mode
-reuses the maintained static path search, applies the existing kinematic
-retimer, and accepts the result only after full time-aware validation. When
-enabled, `FallbackToProfile` reserves half the wall-time budget for the
+reuses the maintained static path search, replaces hard corners with short
+direction-matched blends, and time-scales one analytic minimum-jerk motion.
+It no longer introduces a rest at every retained waypoint. The continuous
+command is accepted only after limit and full time-aware polygon validation.
+When enabled, `FallbackToProfile` reserves half the wall-time budget for the
 established safe-interval search. The stable `motionPlanning` report makes the
 attempt, selected mode, and fallback decision visible without changing older
-result fields.
+result fields. Animation decimation now weights moving samples more heavily
+than long stationary holds without changing the underlying command.
 
 Latest verification:
 
 ```text
 MATLAB Code Analyzer messages in touched MATLAB files: 0
-Complete test suite:                              41 passed, 0 failed, 0 incomplete
+Complete test suite:                              42 passed, 0 failed, 0 incomplete
 Numbered example campaign:                        15 passed, 0 failed
-Path-first oscillating-wall integration:          selected path-first, 0 blocked samples
+Five-turn spiral continuous motion:               0 interior stops, 0 blocked samples
+Five-turn spiral path / completion:                236.368 deg / 159.5 s
+Path-first oscillating-wall integration:          selected profile fallback, 0 blocked samples
 Path-first rotating-slot integration:             selected profile fallback, 0 blocked samples
 ```
 

@@ -244,16 +244,12 @@ planningSummary = struct( ...
     "SelectedPathSampleCount", numel(plan.time_s));
 
 %% Section 4: Render The Animation
-% Frame decimation affects display only. The plan and collision obstacle field
-% retain all samples for analysis and validation. The final sample is always
-% present because linspace includes both ends.
-planSampleCount = numel(plan.time_s);
-if planSampleCount <= options.MaximumAnimationFrames
-    frameIndices = (1:planSampleCount).';
-else
-    frameIndices = unique(round(linspace( ...
-        1, planSampleCount, options.MaximumAnimationFrames))).';
-end
+% Frame decimation affects display only. The plan and collision obstacle
+% field retain all samples for analysis and validation. Moving samples carry
+% more visual information than a long final hold, so the display budget is
+% weighted toward motion while still spanning the complete mission time.
+frameIndices = selectAnimationFrameIndices( ...
+    plan, options.MaximumAnimationFrames);
 colors = lines(max(1, numel(dataList)));
 figureHandle = figure( ...
     "Name", "Az/El avoidance-plan playback", ...
@@ -1550,6 +1546,56 @@ if isVisible
     value = "on";
 else
     value = "off";
+end
+end
+
+function frameIndices = selectAnimationFrameIndices(plan, maximumFrameCount)
+%% Section 0: Header & Readme
+% SYNTAX
+%   frameIndices = selectAnimationFrameIndices(plan, maximumFrameCount)
+%**************************************************************************
+% PURPOSE
+%   - Spend a limited playback-frame budget primarily where motion occurs.
+%**************************************************************************
+% INPUTS
+%   - plan (scalar struct)
+%       Command time history and optional per-sample waiting mask.
+%   - maximumFrameCount (positive integer)
+%       Maximum number of display updates allowed.
+%**************************************************************************
+% OUTPUTS
+%   - frameIndices (numeric column vector)
+%       Ordered command rows selected for display.
+%**************************************************************************
+% UNITS
+%   - Inputs and output are sample counts or indices.
+% A uniformly thinned long mission can devote most frames to an uneventful
+% final hold and make the actual slew jump several command samples at once.
+% Giving moving samples six times the display weight makes motion visibly
+% smoother without changing the command, timing, or validation data.
+planSampleCount = numel(plan.time_s);
+if planSampleCount <= maximumFrameCount
+    frameIndices = (1:planSampleCount).';
+    return;
+end
+
+frameWeight = ones(planSampleCount, 1);
+hasWaitingMask = isfield(plan, "isWaiting") && ...
+    numel(plan.isWaiting) == planSampleCount;
+if hasWaitingMask
+    sampleIsMoving = ~logical(plan.isWaiting(:));
+    frameWeight(sampleIsMoving) = 6;
+end
+cumulativeFrameWeight = cumsum(frameWeight);
+targetFrameWeight = linspace(cumulativeFrameWeight(1), ...
+    cumulativeFrameWeight(end), maximumFrameCount).';
+frameIndices = interp1(cumulativeFrameWeight, ...
+    (1:planSampleCount).', targetFrameWeight, "nearest");
+frameIndices = unique([1; frameIndices; planSampleCount]);
+if numel(frameIndices) > maximumFrameCount
+    retainedPositions = unique(round(linspace( ...
+        1, numel(frameIndices), maximumFrameCount)));
+    frameIndices = frameIndices(retainedPositions);
 end
 end
 
