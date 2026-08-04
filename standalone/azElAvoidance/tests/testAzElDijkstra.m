@@ -94,6 +94,84 @@ verifyEqual(testCase, plan.angularPathLength_deg, 8, "AbsTol", 1e-9);
 verifyPlan(testCase, plan);
 end
 
+function testPathFirstMotionAppliesKinematicsBeforeReturning(testCase)
+% The obstacle changes shape, so this is a time-aware scene, but it remains
+% far from the route. Path-first motion should therefore keep its spatial
+% route after the kinematic and moving-obstacle checks.
+time_s = (0:0.5:20).';
+azimuth = repmat({zeros(0, 1)}, numel(time_s), 1);
+elevation = repmat({zeros(0, 1)}, numel(time_s), 1);
+azimuth{2} = [-9; -8; -8; -9; -9];
+elevation{2} = [3; 3; 4; 4; 3];
+data = makeAzElObstacleData( ...
+    "Irrelevant moving obstacle", time_s, azimuth, elevation);
+[initialState, goalState, limits] = standardProblem(20);
+
+plan = planAzElDijkstra(data, initialState, goalState, limits, struct( ...
+    "SampleTime_s", 0.25, ...
+    "GridStepSchedule_deg", [2 1], ...
+    "MotionMode", "path-first-then-kinematic", ...
+    "FallbackToProfile", true, ...
+    "MaxSearchTime_s", 8));
+
+verifyTrue(testCase, plan.success);
+verifyEqual(testCase, plan.method, "pathFirstThenKinematicDijkstra");
+verifyEqual(testCase, ...
+    plan.motionPlanning.RequestedMode, "pathFirstThenKinematic");
+verifyEqual(testCase, ...
+    plan.motionPlanning.SelectedMode, "pathFirstThenKinematic");
+verifyTrue(testCase, plan.motionPlanning.PathFirstAttempted);
+verifyTrue(testCase, plan.motionPlanning.PathFirstSucceeded);
+verifyFalse(testCase, plan.motionPlanning.FallbackUsed);
+verifyNotEmpty(testCase, ...
+    plan.motionPlanning.PathFirstResolutionAttempts);
+verifyPlan(testCase, plan);
+end
+
+function testPathFirstMotionFallsBackToProfile(testCase)
+% The opening snapshot has a clear direct path. The obstacle then crosses
+% that path while an immediate slew is in progress. Path-first validation
+% must reject the command, after which the profile search may wait until the
+% crossing is over.
+[data, initialState, goalState, limits] = crossingObstacleProblem();
+
+plan = planAzElDijkstra(data, initialState, goalState, limits, struct( ...
+    "SampleTime_s", 0.25, ...
+    "GridStepSchedule_deg", [2 1], ...
+    "MotionMode", "pathFirstThenKinematic", ...
+    "FallbackToProfile", true, ...
+    "MaxSearchTime_s", 8));
+
+verifyTrue(testCase, plan.success);
+verifyEqual(testCase, plan.method, "progressiveSafeIntervalDijkstra");
+verifyEqual(testCase, plan.motionPlanning.SelectedMode, "profile");
+verifyTrue(testCase, plan.motionPlanning.PathFirstAttempted);
+verifyFalse(testCase, plan.motionPlanning.PathFirstSucceeded);
+verifyTrue(testCase, plan.motionPlanning.FallbackUsed);
+verifyNotEmpty(testCase, plan.motionPlanning.PathFirstMessage);
+verifyPlan(testCase, plan);
+end
+
+function testPathFirstMotionCanDisableProfileFallback(testCase)
+[data, initialState, goalState, limits] = crossingObstacleProblem();
+
+plan = planAzElDijkstra(data, initialState, goalState, limits, struct( ...
+    "SampleTime_s", 0.25, ...
+    "GridStepSchedule_deg", [2 1], ...
+    "MotionMode", "pathFirstThenKinematic", ...
+    "FallbackToProfile", false, ...
+    "PrintFailureSuggestions", false, ...
+    "MaxSearchTime_s", 8));
+
+verifyFalse(testCase, plan.success);
+verifyEqual(testCase, plan.method, "pathFirstThenKinematicDijkstra");
+verifyFalse(testCase, plan.motionPlanning.FallbackEnabled);
+verifyFalse(testCase, plan.motionPlanning.FallbackUsed);
+verifyTrue(testCase, plan.motionPlanning.PathFirstAttempted);
+verifyFalse(testCase, plan.motionPlanning.PathFirstSucceeded);
+verifyTrue(testCase, contains(plan.message, "fallback is disabled"));
+end
+
 function testWrappedAzimuthUsesShortChord(testCase)
 time_s = (0:20).';
 empty = repmat({zeros(0, 1)}, numel(time_s), 1);
@@ -172,6 +250,8 @@ verifyEqual(testCase, queryOptions.CollisionMode, "polygon");
 [startState, stopState, limits] = standardProblem(10);
 plannerDefaults = planAzElDijkstra(limits, "defaults");
 verifyTrue(testCase, isfield(plannerDefaults, "AllowAzimuthWrap"));
+verifyEqual(testCase, plannerDefaults.MotionMode, "profile");
+verifyTrue(testCase, plannerDefaults.FallbackToProfile);
 plan = planAzElDijkstra(obstacleField, startState, stopState, limits, ...
     struct("GridStep_deg", 5, "GridStepSchedule_deg", 5, ...
     "MaxSearchTime_s", 5, "PrintFailureSuggestions", false));
@@ -211,4 +291,21 @@ state = struct( ...
     "position_deg", position, ...
     "velocity_deg_s", [0 0], ...
     "acceleration_deg_s2", [0 0]);
+end
+
+function [data, initialState, goalState, limits] = ...
+        crossingObstacleProblem()
+% The obstacle starts beyond the goal, crosses the direct chord near the
+% time an immediate slew reaches its center, and leaves early enough that a
+% wait-then-slew profile still meets the deadline.
+time_s = [0; 3; 6; 20];
+azimuth = { ...
+    [7; 8; 8; 7; 7]; ...
+    [-1; 1; 1; -1; -1]; ...
+    [7; 8; 8; 7; 7]; ...
+    [7; 8; 8; 7; 7]};
+elevation = repmat({[-1; -1; 1; 1; -1]}, numel(time_s), 1);
+data = makeAzElObstacleData( ...
+    "Crossing obstacle", time_s, azimuth, elevation);
+[initialState, goalState, limits] = standardProblem(20);
 end

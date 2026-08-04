@@ -338,6 +338,33 @@ $$
 This becomes large quickly. A 720-by-360 angular grid over 86,400 time
 samples would contain more than 22 billion possible states.
 
+### 5.1 Optional path-first-then-kinematic motion
+
+`MotionMode="pathFirstThenKinematic"` adds a lower-cost first attempt before
+the safe-interval graph is built. It deliberately separates the questions:
+
+1. Which spatial route avoids the obstacle geometry in the opening scene?
+2. Can that route be traversed under the supplied velocity, acceleration,
+   deadline, and moving-polygon constraints?
+
+The first question uses the same complete goal-rooted Dijkstra grids as the
+static planner. The second applies synchronized rest-to-rest motion to every
+retained segment and densely queries the full time-varying obstacle field.
+The route is returned only when that independent timed validation succeeds.
+
+An opening-scene path can fail when an obstacle later crosses it or when its
+minimum slew time misses the deadline. With `FallbackToProfile=true`, the
+planner reserves half of `MaxSearchTime_s` and then runs the normal
+safe-interval profile search. That fallback can wait or choose a different
+route. With fallback disabled, the failed path-first evidence is returned
+without starting the profile search.
+
+This option supports rest-to-rest `minimumAngularDistance` requests. A
+minimum-time objective or nonzero terminal state uses the profile fallback
+when enabled and otherwise reports an incompatible option combination.
+`plan.motionPlanning` records the requested mode, selected mode, fallback
+decision, failure explanation, and path-first resolution attempts.
+
 The planner instead uses a safe-interval state:
 
 $$
@@ -613,6 +640,8 @@ Wrapped limits must span exactly 360 degrees.
 | `TimePaddingSamples` | `1` | Temporal obstacle padding |
 | `AllowAzimuthWrap` | inferred | Enable circular azimuth |
 | `AllowNonzeroTerminalState` | `false` | Enable a quintic terminal capture edge |
+| `MotionMode` | `profile` | Use the safe-interval profile search or try `pathFirstThenKinematic` first |
+| `FallbackToProfile` | `true` | Run the profile search when requested path-first motion fails |
 | `Objective` | `minimumAngularDistance` | Public candidate-selection objective |
 | `MaximumVerticesPerRegion` | `500` | Boundary cap while packing obstacles |
 

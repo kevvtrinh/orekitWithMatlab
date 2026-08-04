@@ -130,6 +130,27 @@ use progressive event-compressed safe-interval Dijkstra. Both modes use
 analytic rest-to-rest slews and validate the command against the original
 packed polygons.
 
+### Optional path-first motion for moving scenes
+
+For a moving scene where spatial planning is expected to be easy, the planner
+can first find a route from the opening obstacle snapshot and only then apply
+the velocity and acceleration limits:
+
+```matlab
+options.MotionMode = "pathFirstThenKinematic";
+options.FallbackToProfile = true;
+```
+
+The resulting timed command is densely checked against the full moving
+obstacle field. If it passes, `plan.method` is
+`"pathFirstThenKinematicDijkstra"`. If it fails and fallback is enabled, the
+planner uses the established safe-interval profile search, which may choose
+different positions or wait for an obstacle to pass. Half of
+`MaxSearchTime_s` is reserved for that fallback. Inspect
+`plan.motionPlanning` to see the requested and selected modes, whether
+fallback was used, and each path-first resolution attempt. The default
+`MotionMode` remains `"profile"` for backward-compatible behavior.
+
 ### Moving rendezvous and trailing
 
 `planAzElMovingTargetIntercept` can match a moving target's position,
