@@ -39,6 +39,7 @@ verifyTrue(testCase, reverse.executed);
 verifyTrue(testCase, reverse.usedByForward);
 verifyTrue(testCase, reverse.forwardProjectionUsesMacroStencil);
 verifyGreaterThan(testCase, reverse.goalSeedCount, 0);
+verifyEqual(testCase, reverse.maximumGoalSeedCost, 0);
 verifyGreaterThanOrEqual(testCase, reverse.heapPushes, ...
     reverse.goalSeedCount);
 verifyGreaterThanOrEqual(testCase, reverse.heapPops, reverse.settledCount);

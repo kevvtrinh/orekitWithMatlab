@@ -146,10 +146,9 @@ remain as optimistic tunneling edges, preserving the lower bound.
 
 Fixed goals seed the goal cell and neighboring cells that may contain an exact
 terminal connector. Moving goals seed the union of cells occupied by target
-samples in the admissible arrival window. Each seed starts with the connector
-chord cost (or chord divided by the maximum speed norm), which is no greater
-than the corresponding forward terminal cost; derivative and timing overhead
-remain ignored.
+samples in the admissible arrival window. Every accepted seed starts at exactly
+zero cost. The relaxed stage therefore ignores connector travel, derivative
+matching, and timing overhead rather than encoding a preferred terminal route.
 
 Reverse Dijkstra uses a binary min-heap ordered by accumulated cost, cell id,
 and insertion serial. A popped entry whose cost no longer matches the best
@@ -186,8 +185,8 @@ therefore projects to a relaxed path whose accumulated cost is no greater than
 the forward cost.
 
 The Dijkstra value at a projected state is consequently a lower bound on that
-implemented finite graph. Connector-chord seeding remains optimistic for
-off-grid terminal derivatives and timing. The always-valid analytic
+implemented finite graph. Zero-cost goal seeding remains optimistic for
+off-grid terminal position, derivatives, and timing. The always-valid analytic
 straight-line bound is used in all cases. A proved reverse or
 dynamic-relaxation value may strengthen it by taking the maximum of lower
 bounds; an unproved table contributes nothing.
