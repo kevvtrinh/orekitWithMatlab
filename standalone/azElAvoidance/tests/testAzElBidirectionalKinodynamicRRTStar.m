@@ -1,10 +1,29 @@
 function tests = testAzElBidirectionalKinodynamicRRTStar
+%% Section 0: Header & Readme
+% SYNTAX
+%   results = runtests("testAzElBidirectionalKinodynamicRRTStar.m")
+%**************************************************************************
+% PURPOSE
+%   - Verify independent bidirectional RRT* search, validation, defaults,
+%     and stable public result schemas.
+%**************************************************************************
+% INPUTS
+%   - None; MATLAB supplies local function-test fixtures.
+%**************************************************************************
+% OUTPUTS
+%   - tests (matlab.unittest.FunctionTestCase array)
+%       Local tests discovered by functiontests.
+%**************************************************************************
+% UNITS
+%   - Test quantities follow the planner's degree/second conventions.
+
+%% Section 1: Register Local Tests
 tests = functiontests(localfunctions);
 end
 
 function setupOnce(~)
-root = fileparts(fileparts(mfilename("fullpath")));
-addpath(genpath(root));
+packageRoot = fileparts(fileparts(mfilename("fullpath")));
+addpath(genpath(packageRoot));
 end
 
 function testDirectTrajectoryCertifiesAngularLowerBound(testCase)
@@ -27,6 +46,7 @@ verifyFalse(testCase, isfield(plan.options, "GoalBias"));
 verifyEqual(testCase, plan.angularPathLength_deg, hypot(5, 3), ...
     "AbsTol", 1e-9);
 verifyEqual(testCase, plan.blockedValidationSampleCount, 0);
+verifyEqual(testCase, plan.obstacleField, plan.workspace);
 verifyLessThanOrEqual(testCase, ...
     max(abs(plan.velocity_deg_s), [], 1), ...
     limits.maxVelocity_deg_s + 1e-9);
@@ -71,7 +91,7 @@ verifyLessThanOrEqual(testCase, ...
     double(plan.backwardTree.CreationIteration), plan.completedIterations);
 verifyGreaterThan(testCase, plan.angularPathLength_deg, 12);
 verifyEqual(testCase, plan.blockedValidationSampleCount, 0);
-blocked = queryAzElTimeObstacle(plan.workspace, ...
+blocked = queryAzElTimeObstacle(plan.obstacleField, ...
     plan.position_deg(:, 1), plan.position_deg(:, 2), plan.time_s, ...
     struct("SafetyMarginDeg", options.SafetyMargin_deg, ...
     "TimePaddingSamples", plan.options.TimePaddingSamples));
@@ -79,10 +99,11 @@ verifyFalse(testCase, any(blocked));
 end
 
 function testRrtDoesNotDelegateOrAcceptRouteGuidance(testCase)
-root = fileparts(fileparts(mfilename("fullpath")));
+packageRoot = fileparts(fileparts(mfilename("fullpath")));
 rrtSource = string(fileread(fullfile( ...
-    root, "planAzElBidirectionalKinodynamicRRTStar.m")));
-dijkstraSource = string(fileread(fullfile(root, "planAzElDijkstra.m")));
+    packageRoot, "planAzElBidirectionalKinodynamicRRTStar.m")));
+dijkstraSource = string(fileread(fullfile( ...
+    packageRoot, "planAzElDijkstra.m")));
 
 verifyFalse(testCase, contains(rrtSource, "planAzElDijkstra"));
 verifyFalse(testCase, contains( ...
@@ -92,6 +113,39 @@ for forbiddenInput = [ ...
         """DirectionAngles_deg""", """GoalBias"""]
     verifyFalse(testCase, contains(rrtSource, forbiddenInput));
 end
+end
+
+function testDefaultsAndFailuresUseStablePublicSchema(testCase)
+limits = standardLimits([-10 10], [-10 10]);
+defaults = planAzElBidirectionalKinodynamicRRTStar(limits, "defaults");
+verifyEqual(testCase, defaults.RandomSeed, 5489);
+verifyEqual(testCase, defaults.AllowAzimuthWrap, false);
+
+time_s = (0:10).';
+emptyBoundary = repmat({zeros(0, 1)}, numel(time_s), 1);
+clearData = makeAzElObstacleData( ...
+    "Empty", time_s, emptyBoundary, emptyBoundary);
+initialState = restState(0, [-2 0]);
+goalState = restState(10, [2 0]);
+successPlan = planAzElBidirectionalKinodynamicRRTStar( ...
+    clearData, initialState, goalState, limits, struct( ...
+    "MaxIterations", 0, ...
+    "MaxSearchTime_s", 1));
+
+blockedData = makeAzElObstacleData( ...
+    "Full field", time_s, ...
+    [-10; 10; 10; -10; -10], [-10; -10; 10; 10; -10]);
+failurePlan = planAzElBidirectionalKinodynamicRRTStar( ...
+    blockedData, initialState, goalState, limits, struct( ...
+    "TimePaddingSamples", 0, ...
+    "MaxIterations", 0, ...
+    "MaxSearchTime_s", 1));
+
+verifyTrue(testCase, successPlan.success);
+verifyFalse(testCase, failurePlan.success);
+verifyEqual(testCase, sort(string(fieldnames(failurePlan))), ...
+    sort(string(fieldnames(successPlan))));
+verifyEqual(testCase, failurePlan.obstacleField, failurePlan.workspace);
 end
 
 function state = restState(time_s, position_deg)

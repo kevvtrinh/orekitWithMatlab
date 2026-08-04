@@ -17,8 +17,8 @@ azimuth/elevation/time workspace.
 |---:|---|---|---|
 | 01 | `example01PlanFromAzElData` | Dijkstra workflow: direct certificate | User-supplied `azElData`; a collision-free direct wait-and-slew reaches the angular lower bound. |
 | 02 | `example02VietnamChinaAvoidance` | Goal-rooted Dijkstra | Progressive complete-grid Dijkstra, rest-to-rest retiming, and polygon validation around two obstacles. |
-| 03 | `example03KinodynamicDetour` | Goal-rooted Dijkstra | A rate- and acceleration-limited detour around a static blocker. |
-| 04 | `example04DynamicSafeIntervals` | Safe-interval Dijkstra | Event-compressed Dijkstra through two moving volumes. |
+| 03 | `example03KinodynamicDetour` | Bidirectional kinodynamic RRT* | Both fixed-time trees find and validate a rate- and acceleration-limited detour around a static blocker. |
+| 04 | `example04DynamicSafeIntervals` | Bidirectional kinodynamic RRT* | Seeded space-time tree growth through two moving obstacle volumes. |
 | 05 | `example05FiveTurnSpiral` | Goal-rooted Dijkstra | Unguided global coarse-to-fine Dijkstra through a deep spiral. |
 | 06 | `example06StopGoGates` | Safe-interval Dijkstra | Uniform-cost search through sequentially opening gates; waiting is planner-selected. |
 | 07 | `example07WrappedAzimuthSeam` | Goal-rooted Dijkstra | Shortest wrapped lattice route across the `-180/180` azimuth seam. |
@@ -37,20 +37,27 @@ Examples 05-09 can be run as a set:
 results = runStaticGauntletExamples();
 ```
 
-## Unified Planner
+## Planner Routing
 
-Every fixed-goal example calls `planAzElDijkstra`, either directly or
-through `runAzElGauntletCase`. Example 13 uses
-`planAzElMovingTargetIntercept`, which tests interception times by calling
-the same Dijkstra planner.
+Examples 03 and 04 call
+`planAzElBidirectionalKinodynamicRRTStar` directly. Their fixed seeds make
+the demonstrations repeatable, and both examples independently recheck the
+returned command against the packed polygons. The retained forward and
+backward trees appear in the common planning animation.
 
-The planner routes static geometry through progressive goal-rooted Dijkstra.
-Moving volumes use progressive event-compressed safe-interval Dijkstra. Both modes
-retime analytic rest-to-rest internal slews and validate against the packed
-polygons. Example 14 enables the optional quintic terminal edge to match a
-moving target's nonzero rate before trailing it.
+The remaining fixed-goal examples call `planAzElDijkstra`, either directly
+or through `runAzElGauntletCase`. Examples 13 and 14 use
+`planAzElMovingTargetIntercept`, which tests interception times with the
+Dijkstra planner. The RRT* comparison planner currently requires rest at a
+fixed-time goal, so it cannot perform example 14's nonzero-rate rendezvous.
 
-The static search, exact shortcutter, and retimer are local functions inside
-the unified planner. The dynamic safe-interval search remains a separate
-private kernel because it is an independently complex algorithm. Scenario
-construction and diagnostics remain under `support`.
+The Dijkstra planner routes static geometry through progressive goal-rooted
+Dijkstra. Moving volumes use progressive event-compressed safe-interval
+Dijkstra. Both modes retime analytic rest-to-rest internal slews and validate
+against the packed polygons. Example 14 enables the optional quintic terminal
+edge to match a moving target's nonzero rate before trailing it.
+
+The Dijkstra static search, exact shortcutter, and retimer are local
+functions inside its public planner. The dynamic safe-interval search remains
+a separate private kernel because it is an independently complex algorithm.
+Scenario construction and diagnostics remain under `support`.

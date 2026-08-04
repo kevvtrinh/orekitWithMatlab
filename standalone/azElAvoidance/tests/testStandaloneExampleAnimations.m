@@ -1,4 +1,23 @@
 function tests = testStandaloneExampleAnimations
+%% Section 0: Header & Readme
+% SYNTAX
+%   results = runtests("testStandaloneExampleAnimations.m")
+%**************************************************************************
+% PURPOSE
+%   - Verify numbered-example discovery, advertised planner routing,
+%     animation integration, and scenario-specific regression checks.
+%**************************************************************************
+% INPUTS
+%   - None; MATLAB supplies local function-test fixtures.
+%**************************************************************************
+% OUTPUTS
+%   - tests (matlab.unittest.FunctionTestCase array)
+%       Local tests discovered by functiontests.
+%**************************************************************************
+% UNITS
+%   - Test quantities follow the examples' degree/second conventions.
+
+%% Section 1: Register Local Tests
 tests = functiontests(localfunctions);
 end
 
@@ -17,13 +36,14 @@ folder = fullfile(root, "examples");
 examples = dir(fullfile(folder, "example*.m"));
 names = sort(string({examples.name}));
 numbers = zeros(numel(names), 1);
-for k = 1:numel(names)
-    token = regexp(names(k), "^example(\d\d).+\.m$", ...
+for exampleIndex = 1:numel(names)
+    token = regexp(names(exampleIndex), "^example(\d\d).+\.m$", ...
         "tokens", "once");
     verifyNotEmpty(testCase, token, ...
-        sprintf('%s does not use the exampleNNName convention.', names(k)));
-    numbers(k) = str2double(token{1});
-    functionName = erase(names(k), ".m");
+        sprintf('%s does not use the exampleNNName convention.', ...
+        names(exampleIndex)));
+    numbers(exampleIndex) = str2double(token{1});
+    functionName = erase(names(exampleIndex), ".m");
     verifyNotEmpty(testCase, which(functionName), ...
         sprintf('%s is not callable.', functionName));
 end
@@ -35,30 +55,69 @@ root = fileparts(fileparts(mfilename("fullpath")));
 folder = fullfile(root, "examples");
 examples = dir(fullfile(folder, "example*.m"));
 verifyGreaterThan(testCase, numel(examples), 0);
-for k = 1:numel(examples)
-    source = string(fileread(fullfile(folder, examples(k).name)));
+for exampleIndex = 1:numel(examples)
+    source = string(fileread( ...
+        fullfile(folder, examples(exampleIndex).name)));
     usesAnimator = contains(source, "animateAzElAvoidancePlan");
     usesGauntletRunner = contains(source, "runAzElGauntletCase");
     verifyTrue(testCase, usesAnimator || usesGauntletRunner, ...
-        sprintf('%s has no 2-D/3-D animation path.', examples(k).name));
+        sprintf('%s has no 2-D/3-D animation path.', ...
+        examples(exampleIndex).name));
 end
 end
 
-function testEveryExampleUsesUnifiedDijkstraPlanner(testCase)
+function testEveryExampleUsesItsAdvertisedPlanner(testCase)
 root = fileparts(fileparts(mfilename("fullpath")));
 folder = fullfile(root, "examples");
 examples = dir(fullfile(folder, "example*.m"));
-for k = 1:numel(examples)
+rrtExampleNames = [ ...
+    "example03KinodynamicDetour.m", ...
+    "example04DynamicSafeIntervals.m"];
+for exampleIndex = 1:numel(examples)
     source = string(fileread( ...
-        fullfile(examples(k).folder, examples(k).name)));
+        fullfile(examples(exampleIndex).folder, ...
+        examples(exampleIndex).name)));
+    if ismember(string(examples(exampleIndex).name), rrtExampleNames)
+        verifyTrue(testCase, contains( ...
+            source, "planAzElBidirectionalKinodynamicRRTStar"), ...
+            sprintf('%s does not call bidirectional RRT*.', ...
+            examples(exampleIndex).name));
+        verifyFalse(testCase, contains(source, "planAzElDijkstra"), ...
+            sprintf('%s still delegates to Dijkstra.', ...
+            examples(exampleIndex).name));
+        continue;
+    end
     usesPlanner = contains(source, "planAzElDijkstra");
     usesRunner = contains(source, "runAzElGauntletCase");
     usesInterceptWrapper = ...
         contains(source, "planAzElMovingTargetIntercept");
     verifyTrue(testCase, ...
         usesPlanner || usesRunner || usesInterceptWrapper, ...
-        sprintf('%s bypasses the unified Dijkstra planner.', examples(k).name));
+        sprintf('%s bypasses its documented Dijkstra path.', ...
+        examples(exampleIndex).name));
 end
+end
+
+function testRrtExamplesExecuteRrtAndValidateCollision(testCase)
+viewOptions = struct( ...
+    "FigureVisible", "off", ...
+    "PauseSeconds", 0, ...
+    "MaximumAnimationFrames", 2, ...
+    "MaximumDisplayedSlices", 2);
+
+staticPlan = example03KinodynamicDetour(viewOptions);
+dynamicResult = example04DynamicSafeIntervals(viewOptions);
+
+verifyEqual(testCase, ...
+    staticPlan.method, "bidirectionalKinodynamicRRTStar");
+verifyGreaterThan(testCase, staticPlan.forwardTree.Count, 1);
+verifyGreaterThan(testCase, staticPlan.backwardTree.Count, 1);
+verifyEqual(testCase, staticPlan.blockedValidationSampleCount, 0);
+verifyEqual(testCase, ...
+    dynamicResult.plan.method, "bidirectionalKinodynamicRRTStar");
+verifyGreaterThan(testCase, dynamicResult.plan.forwardTree.Count, 1);
+verifyGreaterThan(testCase, dynamicResult.plan.backwardTree.Count, 1);
+verifyEqual(testCase, dynamicResult.blockedSampleCount, 0);
 end
 
 function testPlannerFilesAreConsolidated(testCase)
@@ -111,8 +170,8 @@ time_s = (0:1).';
 empty = repmat({zeros(0, 1)}, numel(time_s), 1);
 data = repmat(makeAzElObstacleData( ...
     "Obstacle", time_s, empty, empty), 7, 1);
-for k = 1:numel(data)
-    data(k).targetName = "Obstacle " + k;
+for obstacleIndex = 1:numel(data)
+    data(obstacleIndex).targetName = "Obstacle " + obstacleIndex;
 end
 plan = struct( ...
     "success", true, ...
@@ -200,13 +259,14 @@ files = [ ...
     dir(fullfile(supportFolder, "make*Gauntlet.m"))];
 [~, uniqueIndex] = unique({files.name}, "stable");
 files = files(uniqueIndex);
-for k = 1:numel(files)
-    source = string(fileread(fullfile(files(k).folder, files(k).name)));
+for fileIndex = 1:numel(files)
+    source = string(fileread( ...
+        fullfile(files(fileIndex).folder, files(fileIndex).name)));
     verifyEmpty(testCase, regexp(source, ...
         """GuidePath_deg""\s*,|""StateCorridor""\s*,|" + ...
         """ReferencePath[^""]*""\s*,", ...
         "match"), sprintf('%s injects a route or search corridor.', ...
-        files(k).name));
+        files(fileIndex).name));
     direction = regexp(source, ...
         '"DirectionAngles_deg"\s*,\s*([^,\r\n]+)', ...
         "tokens");
@@ -214,7 +274,7 @@ for k = 1:numel(files)
         value = erase(string(direction{directionIndex}{1}), " ");
         verifyEqual(testCase, value, "0:45:315", ...
             sprintf('%s uses an asymmetric direction hint.', ...
-            files(k).name));
+            files(fileIndex).name));
     end
 end
 end

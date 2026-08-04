@@ -24,8 +24,9 @@ See [`examples/README.md`](examples/README.md) for the numbered example list
 and an algorithm-by-algorithm breakdown.
 
 The mathematical design, pseudocode, guarantees, complexity, and maintenance
-boundaries for the planner used by every numbered example are documented in
-[`DIJKSTRA_PLANNER.md`](docs/DIJKSTRA_PLANNER.md).
+boundaries for the Dijkstra examples are documented in
+[`DIJKSTRA_PLANNER.md`](docs/DIJKSTRA_PLANNER.md). The RRT* comparison API,
+limitations, benchmark, and examples are documented below.
 The all-Dijkstra branch comparison and measured runtime tradeoffs are in
 [`ALL_DIJKSTRA_EXPERIMENT.md`](docs/ALL_DIJKSTRA_EXPERIMENT.md).
 
@@ -120,7 +121,8 @@ plan = planAzElDijkstra( ...
 The steering command is in `plan.time_s` and `plan.position_deg`.
 `plan.positionUnwrapped_deg` preserves continuous azimuth across the
 `-180/180` seam. Velocity, acceleration, waiting samples, search statistics,
-and the packed obstacle workspace are also returned.
+and `plan.obstacleField` are also returned. `plan.workspace` is retained as a
+deprecated compatibility alias.
 
 Static obstacle volumes use progressive goal-rooted Dijkstra. Moving volumes
 use progressive event-compressed safe-interval Dijkstra. Both modes use
@@ -164,7 +166,13 @@ report = benchmarkBidirectionalRRTStar([7 19 31]);
 ```
 
 The benchmark runs deterministic Dijkstra once and RRT* once per seed using
-the same packed workspace, dynamics, safety margin, and final validation.
+the same packed obstacle field, dynamics, safety margin, and final validation.
+
+Numbered examples 03 and 04 invoke RRT* directly with repeatable seeds. They
+cover a static detour and moving space-time obstacles, respectively, and
+their tests assert the returned planner method, retained tree growth, and
+independent collision validation. The narrow Dijkstra stress gauntlets and
+moving-target rendezvous remain labeled separately in `examples/README.md`.
 
 ### Moving rendezvous and trailing
 
@@ -197,12 +205,6 @@ Command Window. Set `options.PrintFailureSuggestions=false` for quiet batch
 runs; the structured assessment remains available in the returned plan.
 
 ## Dynamic safe-interval Dijkstra
-
-Run the moving two-obstacle example:
-
-```matlab
-result = example04DynamicSafeIntervals();
-```
 
 Run the animated four-ring timing gauntlet:
 
