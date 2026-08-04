@@ -113,10 +113,11 @@ No unproved cross-time or cross-derivative dominance is applied. In the proved
 static, time-invariant, resting fixed-goal specialization only, an earlier
 label at the same resting cell with no greater cost dominates a later label:
 every static suffix remains available earlier and the extra terminal slack can
-be absorbed by the terminal maneuver or hold. The dense table keeps the
-resulting cost/time Pareto frontier and retires only labels satisfying both
-inequalities. Elsewhere, an improved label replaces only the exact identity,
-and an older heap record becomes stale; improved closed identities can reopen.
+be absorbed by the terminal maneuver or hold. A per-cell linked frontier works
+with either exact-identity representation, retains the resulting cost/time
+Pareto labels, and retires only labels satisfying both inequalities. Elsewhere,
+an improved label replaces only the exact identity, and an older heap record
+becomes stale; improved closed identities can reopen.
 Spatial, temporal, velocity, and acceleration tolerances are centralized.
 Quantization never overwrites a propagated physical state. Finite-search
 failure is reported as resolution- or resource-limited, not as continuous

@@ -454,9 +454,9 @@ denseLookupEntryCount = double(gridCellCount) * ...
 useDenseStateLookup = isempty(dynamicRelaxedCostToGo) && ...
     ~initialStateHasNonzeroDerivatives && ...
     denseLookupEntryCount <= options.MaximumDenseStateLookupEntries;
-staticRestDominanceEnabled = useDenseStateLookup && ...
-    staticEnvironmentTimeInvariant && ...
+staticRestDominanceEnabled = staticEnvironmentTimeInvariant && ...
     scenario.requestKind == "fixed-goal" && ...
+    ~initialStateHasNonzeroDerivatives && ...
     all(abs(terminalCandidates(1).velocity_deg_s) <= ...
         options.KinematicTolerance) && ...
     all(abs(terminalCandidates(1).acceleration_deg_s2) <= ...
@@ -531,6 +531,14 @@ stateParentEdgeKind = zeros(maximumStoredStates, 1, "uint8");
 stateClosed = false(maximumStoredStates, 1);
 stateDominated = false(maximumStoredStates, 1);
 statePathHasWait = false(maximumStoredStates, 1);
+if staticRestDominanceEnabled
+    stateDominanceNext = zeros(maximumStoredStates, 1, "uint32");
+    dominanceHeadByCell = zeros(gridCellCount, 1, "uint32");
+    dominanceHeadByCell(startCellId) = uint32(1);
+else
+    stateDominanceNext = zeros(0, 1, "uint32");
+    dominanceHeadByCell = zeros(0, 1, "uint32");
+end
 stateCellId(1) = uint32(startCellId);
 stateTimeIndex(1) = uint32(0);
 statePosition_deg(1, :) = initialPositionUnwrapped_deg;
@@ -564,6 +572,8 @@ else
     stateLookupStorageBytes = 8 * numel(stateHashKeys) + ...
         4 * numel(stateHashValues);
 end
+stateLookupStorageBytes = stateLookupStorageBytes + ...
+    4 * numel(stateDominanceNext) + 4 * numel(dominanceHeadByCell);
 
 heapState = zeros(maximumStoredStates, 1, "uint32");
 heapPriority = inf(maximumStoredStates, 1);
@@ -1001,6 +1011,10 @@ while heapCount > 0
                 locateStateHashSlot( ...
                 stateHashKeys, stateHashValues, nextKey);
         end
+        if existingExactStateIndex ~= 0 && ...
+                stateDominated(existingExactStateIndex)
+            existingExactStateIndex = uint32(0);
+        end
         if existingExactStateIndex ~= 0
             if stateCost(existingExactStateIndex) <= nextCost + 1e-12
                 counters.prunedStates = counters.prunedStates + 1;
@@ -1008,14 +1022,38 @@ while heapCount > 0
             end
         end
         if staticRestDominanceEnabled
-            earlierStateIndex = stateIndexByCellTime( ...
-                nextCellId, 1:nextTimeIndex + 1);
-            earlierStateIndex = double( ...
-                earlierStateIndex(earlierStateIndex ~= 0));
-            counters.dominanceComparisons = ...
-                counters.dominanceComparisons + ...
-                numel(earlierStateIndex);
-            if any(stateCost(earlierStateIndex) <= nextCost + 1e-12)
+            previousFrontierStateIndex = 0;
+            frontierStateIndex = double( ...
+                dominanceHeadByCell(nextCellId));
+            candidateIsDominated = false;
+            while frontierStateIndex ~= 0
+                nextFrontierStateIndex = double( ...
+                    stateDominanceNext(frontierStateIndex));
+                if stateDominated(frontierStateIndex)
+                    if previousFrontierStateIndex == 0
+                        dominanceHeadByCell(nextCellId) = ...
+                            uint32(nextFrontierStateIndex);
+                    else
+                        stateDominanceNext(previousFrontierStateIndex) = ...
+                            uint32(nextFrontierStateIndex);
+                    end
+                    frontierStateIndex = nextFrontierStateIndex;
+                    continue;
+                end
+                counters.dominanceComparisons = ...
+                    counters.dominanceComparisons + 1;
+                frontierArrivesNoLater = double( ...
+                    stateTimeIndex(frontierStateIndex)) <= nextTimeIndex;
+                frontierCostsNoMore = stateCost(frontierStateIndex) <= ...
+                    nextCost + 1e-12;
+                if frontierArrivesNoLater && frontierCostsNoMore
+                    candidateIsDominated = true;
+                    break;
+                end
+                previousFrontierStateIndex = frontierStateIndex;
+                frontierStateIndex = nextFrontierStateIndex;
+            end
+            if candidateIsDominated
                 counters.dominanceRejections = ...
                     counters.dominanceRejections + 1;
                 continue;
@@ -1108,27 +1146,38 @@ while heapCount > 0
             continue;
         end
         if staticRestDominanceEnabled
-            laterLookupColumns = nextTimeIndex + 1: ...
-                size(stateIndexByCellTime, 2);
-            laterStateIndex = stateIndexByCellTime( ...
-                nextCellId, laterLookupColumns);
-            occupiedLaterColumn = laterStateIndex ~= 0;
-            laterStateIndex = double( ...
-                laterStateIndex(occupiedLaterColumn));
-            counters.dominanceComparisons = ...
-                counters.dominanceComparisons + numel(laterStateIndex);
-            retireState = stateCost(laterStateIndex) >= nextCost - 1e-12;
-            if any(retireState)
-                retiredStateIndex = laterStateIndex(retireState);
-                stateDominated(retiredStateIndex) = true;
-                occupiedColumnIndex = find(occupiedLaterColumn);
-                retiredColumnIndex = occupiedColumnIndex(retireState);
-                stateIndexByCellTime( ...
-                    nextCellId, ...
-                    laterLookupColumns(retiredColumnIndex)) = uint32(0);
-                counters.dominanceRetirements = ...
-                    counters.dominanceRetirements + ...
-                    numel(retiredStateIndex);
+            previousFrontierStateIndex = 0;
+            frontierStateIndex = double( ...
+                dominanceHeadByCell(nextCellId));
+            while frontierStateIndex ~= 0
+                nextFrontierStateIndex = double( ...
+                    stateDominanceNext(frontierStateIndex));
+                counters.dominanceComparisons = ...
+                    counters.dominanceComparisons + 1;
+                candidateArrivesNoLater = nextTimeIndex <= double( ...
+                    stateTimeIndex(frontierStateIndex));
+                candidateCostsNoMore = nextCost <= ...
+                    stateCost(frontierStateIndex) + 1e-12;
+                retireFrontierState = ...
+                    stateDominated(frontierStateIndex) || ...
+                    (candidateArrivesNoLater && candidateCostsNoMore);
+                if retireFrontierState
+                    if ~stateDominated(frontierStateIndex)
+                        stateDominated(frontierStateIndex) = true;
+                        counters.dominanceRetirements = ...
+                            counters.dominanceRetirements + 1;
+                    end
+                    if previousFrontierStateIndex == 0
+                        dominanceHeadByCell(nextCellId) = ...
+                            uint32(nextFrontierStateIndex);
+                    else
+                        stateDominanceNext(previousFrontierStateIndex) = ...
+                            uint32(nextFrontierStateIndex);
+                    end
+                else
+                    previousFrontierStateIndex = frontierStateIndex;
+                end
+                frontierStateIndex = nextFrontierStateIndex;
             end
         end
         if existingExactStateIndex ~= 0
@@ -1150,6 +1199,11 @@ while heapCount > 0
         stateCost(stateCount) = nextCost;
         stateParent(stateCount) = currentStateIndex;
         stateParentEdgeKind(stateCount) = parentEdgeKind;
+        if staticRestDominanceEnabled
+            stateDominanceNext(stateCount) = ...
+                dominanceHeadByCell(nextCellId);
+            dominanceHeadByCell(nextCellId) = uint32(stateCount);
+        end
         statePathHasWait(stateCount) = ...
             statePathHasWait(currentStateIndex) || ...
             currentIsStationary && ~transitionIsMacro && ...

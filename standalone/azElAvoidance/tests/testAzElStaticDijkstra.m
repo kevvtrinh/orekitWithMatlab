@@ -123,6 +123,28 @@ verifyGreaterThan(testCase, plan.angularPathLength_deg, 8);
 verifyTrue(testCase, plan.validation.collisionFree);
 end
 
+function testStaticDominanceSupportsHashedExactIdentity(testCase)
+staticWall = staticWallData(20);
+scenario = fixedScenario({staticWall}, [-4 0], [4 0], 20, false);
+denseOptions = plannerOptions("reverseDijkstra");
+hashedOptions = denseOptions;
+hashedOptions.MaximumDenseStateLookupEntries = 1;
+densePlan = planAzElTrajectory(scenario, denseOptions);
+hashedPlan = planAzElTrajectory(scenario, hashedOptions);
+
+verifyTrue(testCase, densePlan.success);
+verifyTrue(testCase, hashedPlan.success);
+verifyFalse(testCase, ...
+    hashedPlan.diagnostics.forwardAStar.useDenseStateLookup);
+verifyTrue(testCase, ...
+    hashedPlan.diagnostics.forwardAStar.staticRestDominanceEnabled);
+verifyGreaterThan(testCase, ...
+    hashedPlan.diagnostics.forwardAStar.dominanceComparisons, 0);
+verifyEqual(testCase, hashedPlan.objectiveCost, ...
+    densePlan.objectiveCost, "AbsTol", 1e-9);
+verifyTrue(testCase, hashedPlan.validation.passed);
+end
+
 function testAzimuthWrapUsesShortUnwrappedRoute(testCase)
 scenario = fixedScenario({}, [170 0], [-170 0], 30, true);
 scenario.limits.azimuth_deg = [-180 180];
