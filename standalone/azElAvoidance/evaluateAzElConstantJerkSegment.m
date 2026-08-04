@@ -1,5 +1,5 @@
 function evaluation = evaluateAzElConstantJerkSegment( ...
-        firstInput, secondInput, duration_s, localTime_s)
+        firstInput, secondInput, duration_s, localTime_s, evaluationMode)
 %% Section 0: Header & Readme
 % SYNTAX
 %   evaluation = evaluateAzElConstantJerkSegment( ...
@@ -7,6 +7,8 @@ function evaluation = evaluateAzElConstantJerkSegment( ...
 %   evaluation = evaluateAzElConstantJerkSegment( ...
 %       firstState, stopState, duration_s, localTime_s)
 %   evaluation = evaluateAzElConstantJerkSegment(law, localTime_s)
+%   evaluation = evaluateAzElConstantJerkSegment( ...
+%       law, localTime_s, "samplesOnly")
 %**************************************************************************
 % PURPOSE
 %   - Build and evaluate the authoritative three-phase constant-jerk law.
@@ -32,11 +34,15 @@ function evaluation = evaluateAzElConstantJerkSegment( ...
 %   - Position is degrees; time is seconds; derivatives use deg/s powers.
 
 %% Section 1: Validate Inputs & Build Or Reuse The Law
-isPackedLawCall = nargin == 2 && isnumeric(firstInput) && ...
+isPackedLawCall = nargin >= 2 && isnumeric(firstInput) && ...
     isequal(size(firstInput), [18 2]);
+requestedEvaluationMode = "full";
 if isPackedLawCall
     law = double(firstInput);
     localTime_s = secondInput;
+    if nargin >= 3 && ~isempty(duration_s)
+        requestedEvaluationMode = string(duration_s);
+    end
     duration_s = law(18, 1) + law(17, 1);
     requestedStopState = struct();
 else
@@ -52,7 +58,15 @@ else
     if nargin < 4 || isempty(localTime_s)
         localTime_s = [0; duration_s];
     end
+    if nargin >= 5 && ~isempty(evaluationMode)
+        requestedEvaluationMode = string(evaluationMode);
+    end
     law = buildLaw(firstState, requestedStopState, duration_s);
+end
+if ~isscalar(requestedEvaluationMode) || ...
+        ~any(requestedEvaluationMode == ["full" "samplesOnly"])
+    error("evaluateAzElConstantJerkSegment:InvalidEvaluationMode", ...
+        "Evaluation mode must be full or samplesOnly.");
 end
 
 validateattributes(localTime_s, {'numeric'}, ...
@@ -75,7 +89,16 @@ end
     evaluateLaw(law, localTime_s);
 
 %% Section 3: Evaluate Analytic Continuous Extrema
-extrema = analyticExtrema(law);
+if requestedEvaluationMode == "full"
+    extrema = analyticExtrema(law);
+else
+    extrema = struct( ...
+        "minimumPosition_deg", [NaN NaN], ...
+        "maximumPosition_deg", [NaN NaN], ...
+        "maximumVelocity_deg_s", [NaN NaN], ...
+        "maximumAcceleration_deg_s2", [NaN NaN], ...
+        "maximumJerk_deg_s3", [NaN NaN]);
+end
 [finalPosition_deg, finalVelocity_deg_s, ...
     finalAcceleration_deg_s2, ~] = evaluateLaw(law, duration_s);
 if isempty(fieldnames(requestedStopState))
