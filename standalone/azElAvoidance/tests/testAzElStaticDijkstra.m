@@ -100,19 +100,25 @@ verifyEqual(testCase, firstPlan.generatedStateCount, ...
     secondPlan.generatedStateCount);
 end
 
-function testStaticGeometryUsesOnlyProvedStraightLineBound(testCase)
+function testStaticGeometryUsesProvedProjectedField(testCase)
 staticWall = staticWallData(20);
 scenario = fixedScenario({staticWall}, [-4 0], [4 0], 20, false);
 plan = planAzElTrajectory(scenario, plannerOptions("reverseDijkstra"));
 
 verifyTrue(testCase, plan.success);
 verifyTrue(testCase, plan.diagnostics.reverseDijkstra.executed);
-verifyFalse(testCase, plan.diagnostics.reverseDijkstra.usedByForward);
+verifyTrue(testCase, plan.diagnostics.reverseDijkstra.usedByForward);
 verifyGreaterThan(testCase, ...
     plan.diagnostics.reverseDijkstra.blockedBinCount, 0);
-verifyEqual(testCase, ...
-    plan.diagnostics.reverseDijkstra.initialForwardHeuristic, 8, ...
-    "AbsTol", 1e-12);
+verifyTrue(testCase, ...
+    plan.diagnostics.reverseDijkstra.exactEdgeFilteringExecuted);
+verifyGreaterThan(testCase, ...
+    plan.diagnostics.reverseDijkstra.collisionRejectedEdges, 0);
+verifyGreaterThan(testCase, ...
+    plan.diagnostics.reverseDijkstra.initialForwardHeuristic, 8);
+verifyLessThanOrEqual(testCase, ...
+    plan.diagnostics.reverseDijkstra.initialForwardHeuristic, ...
+    plan.objectiveCost + 1e-9);
 verifyGreaterThan(testCase, plan.angularPathLength_deg, 8);
 verifyTrue(testCase, plan.validation.collisionFree);
 end

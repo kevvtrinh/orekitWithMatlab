@@ -109,32 +109,46 @@ the derivative bins are invariant and a dense `(positionCell,timeIndex)` table
 is an exact specialization. It is never selected for a nonzero initial
 derivative or the aligned rolling graph.
 
-No unproved cross-time or cross-derivative dominance is applied. An improved
-label replaces the identity-table entry, and an older heap record becomes
-stale; improved closed identities can reopen. Spatial, temporal, velocity, and
-acceleration tolerances are centralized. Quantization never overwrites a
-propagated physical state. Finite-search failure is reported as resolution- or
-resource-limited, not as continuous infeasibility.
+No unproved cross-time or cross-derivative dominance is applied. In the proved
+static, time-invariant, resting fixed-goal specialization only, an earlier
+label at the same resting cell with no greater cost dominates a later label:
+every static suffix remains available earlier and the extra terminal slack can
+be absorbed by the terminal maneuver or hold. The dense table keeps the
+resulting cost/time Pareto frontier and retires only labels satisfying both
+inequalities. Elsewhere, an improved label replaces only the exact identity,
+and an older heap record becomes stale; improved closed identities can reopen.
+Spatial, temporal, velocity, and acceleration tolerances are centralized.
+Quantization never overwrites a propagated physical state. Finite-search
+failure is reported as resolution- or resource-limited, not as continuous
+infeasibility.
 
 ## 4. Relaxed spatial graph
 
 The reverse graph projects a forward state to its position cell and discards
 velocity, acceleration, time, moving obstacles, and terminal derivatives. Its
-edge table contains every stationary macro offset in both directions. The
-angular edge weight is the Euclidean chord between endpoint cells. The duration
-lower-bound edge weight is that chord divided by
+edge table contains every stationary macro offset in both directions, plus
+optimistic eight-neighbor edges. A direct macro projection remains present even
+when blocked position cells disconnect the eight-neighbor raster, so a valid
+long forward edge is never lost merely because it jumps over those cells. The
+angular edge weight is no greater than the Euclidean chord between endpoint
+cells. The duration lower-bound edge weight is that chord divided by
 `hypot(maxVelocityAz, maxVelocityEl)`.
 
 Only nodes whose representative endpoint is blocked by geometry proved static
 over the complete planning horizon may be removed. Moving or questionable
-geometry is ignored. Relaxed edges are never removed merely because a sampled
-line appears blocked; keeping an optimistic tunneling edge is safer than
-invalidating the lower bound.
+geometry is ignored. Within a documented edge-check budget, the planner also
+tests every projected chord in batches with the same exact polygon-intersection
+and safety-distance rules used by the forward static edge cache. A projected
+edge is removed only when that exact test proves the corresponding forward
+macro edge unavailable. If the budget would be exceeded, all uncertain edges
+remain as optimistic tunneling edges, preserving the lower bound.
 
 Fixed goals seed the goal cell and neighboring cells that may contain an exact
 terminal connector. Moving goals seed the union of cells occupied by target
-samples in the admissible arrival window. Every seed starts at zero, ignoring
-terminal derivative and timing costs.
+samples in the admissible arrival window. Each seed starts with the connector
+chord cost (or chord divided by the maximum speed norm), which is no greater
+than the corresponding forward terminal cost; derivative and timing overhead
+remain ignored.
 
 Reverse Dijkstra uses a binary min-heap ordered by accumulated cost, cell id,
 and insertion serial. A popped entry whose cost no longer matches the best
@@ -146,9 +160,11 @@ nodes, and circular azimuth before the planner integrates its result.
 
 The reverse field is always built and reported. Its value is combined with the
 forward heuristic only when preprocessing proves that the enabled forward
-projection is the stationary macro stencil and no questionable static-node
-removal was used. Otherwise the forward search retains the analytic
-straight-line lower bound; a computed but unproved reverse value is never used.
+projection is the stationary macro stencil. Static cells guaranteed blocked
+for the horizon may be removed because no accepted forward edge can end there;
+the direct projected macro edges preserve every remaining forward transition.
+Otherwise the forward search retains the analytic straight-line lower bound; a
+computed but unproved reverse value is never used.
 
 For an aligned rolling fixed-goal graph with moving obstacles, a supplementary
 time-layered spatial dynamic program may be built within a general entry
@@ -169,10 +185,11 @@ therefore projects to a relaxed path whose accumulated cost is no greater than
 the forward cost.
 
 The Dijkstra value at a projected state is consequently a lower bound on that
-implemented finite graph. Goal-cell zero seeding is optimistic for off-grid
-terminal connectors. The always-valid analytic straight-line bound is used in
-all cases. A proved reverse or dynamic-relaxation value may strengthen it by
-taking the maximum of lower bounds; an unproved table contributes nothing.
+implemented finite graph. Connector-chord seeding remains optimistic for
+off-grid terminal derivatives and timing. The always-valid analytic
+straight-line bound is used in all cases. A proved reverse or
+dynamic-relaxation value may strengthen it by taking the maximum of lower
+bounds; an unproved table contributes nothing.
 
 For `minimumAngularDistance`, `h` has degree units. For `minimumTime`, the
 angular field is divided by the maximum speed norm and `h` has second units.

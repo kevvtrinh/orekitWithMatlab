@@ -1,7 +1,8 @@
 function [costToGo, settled, diagnostics, settlementOrder] = ...
         computeAzElReverseDijkstra( ...
         elevationCount, azimuthCount, blocked, goalCellIds, ...
-        predecessorOffsets, edgeCost, allowAzimuthWrap)
+        predecessorOffsets, edgeCost, allowAzimuthWrap, ...
+        predecessorAllowed, goalCost)
 %% Section 0: Header & Readme
 % SYNTAX
 %   [costToGo, settled, diagnostics] = computeAzElReverseDijkstra( ...
@@ -27,6 +28,11 @@ function [costToGo, settled, diagnostics, settlementOrder] = ...
 %       Optimistic cost for each predecessor offset.
 %   - allowAzimuthWrap (logical scalar)
 %       Whether predecessor azimuth indices wrap circularly.
+%   - predecessorAllowed (cellCount-by-edgeCount logical, optional)
+%       Exact edge-availability mask indexed by predecessor cell. Empty
+%       admits every in-bounds edge.
+%   - goalCost (goalCount-by-1 numeric, optional)
+%       Nonnegative initial source labels. Empty uses zero labels.
 %**************************************************************************
 % OUTPUTS
 %   - costToGo (cellCount-by-1 double)
@@ -49,7 +55,7 @@ if numel(blocked) ~= cellCount
     error("computeAzElReverseDijkstra:InvalidBlockedMask", ...
         "blocked must contain one value per grid cell.");
 end
-goalCellIds = unique(double(goalCellIds(:)), "sorted");
+goalCellIds = double(goalCellIds(:));
 if any(goalCellIds < 1 | goalCellIds > cellCount | ...
         goalCellIds ~= round(goalCellIds))
     error("computeAzElReverseDijkstra:InvalidGoalCell", ...
@@ -69,7 +75,31 @@ if ~isscalar(allowAzimuthWrap)
     error("computeAzElReverseDijkstra:InvalidWrap", ...
         "allowAzimuthWrap must be a logical scalar.");
 end
-goalCellIds(blocked(goalCellIds)) = [];
+if nargin < 8 || isempty(predecessorAllowed)
+    predecessorAllowed = false(0, 0);
+else
+    predecessorAllowed = logical(predecessorAllowed);
+    if ~isequal(size(predecessorAllowed), ...
+            [cellCount, size(predecessorOffsets, 1)])
+        error("computeAzElReverseDijkstra:InvalidEdgeMask", ...
+            "predecessorAllowed must have one row per cell and one column per edge.");
+    end
+end
+if nargin < 9 || isempty(goalCost)
+    goalCost = zeros(numel(goalCellIds), 1);
+else
+    goalCost = double(goalCost(:));
+    if numel(goalCost) ~= numel(goalCellIds) || ...
+            any(~isfinite(goalCost) | goalCost < 0)
+        error("computeAzElReverseDijkstra:InvalidGoalCost", ...
+            "goalCost must contain one finite nonnegative label per goal cell.");
+    end
+end
+[goalCellIds, ~, goalGroup] = unique(goalCellIds, "sorted");
+goalCost = accumarray(goalGroup, goalCost, [], @min);
+unblockedGoal = ~blocked(goalCellIds);
+goalCellIds = goalCellIds(unblockedGoal);
+goalCost = goalCost(unblockedGoal);
 
 %% Section 2: Initialize The Multi-Source Binary Heap
 costToGo = inf(cellCount, 1);
@@ -81,9 +111,10 @@ heapCount = 0;
 heapPushes = 0;
 for seedIndex = 1:numel(goalCellIds)
     seedCellId = goalCellIds(seedIndex);
-    costToGo(seedCellId) = 0;
+    seedCost = goalCost(seedIndex);
+    costToGo(seedCellId) = seedCost;
     [heapCell, heapPriority, heapCount] = reverseHeapPush( ...
-        heapCell, heapPriority, heapCount, uint32(seedCellId), 0);
+        heapCell, heapPriority, heapCount, uint32(seedCellId), seedCost);
     heapPushes = heapPushes + 1;
 end
 if nargout >= 4
@@ -137,6 +168,10 @@ while heapCount > 0
             [elevationCount azimuthCount], predecessorElevationIndex, ...
             predecessorAzimuthIndex);
         if blocked(predecessorCellId) || settled(predecessorCellId)
+            continue;
+        end
+        if ~isempty(predecessorAllowed) && ...
+                ~predecessorAllowed(predecessorCellId, edgeIndex)
             continue;
         end
         trialCost = poppedPriority + edgeCost(edgeIndex);

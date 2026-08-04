@@ -69,8 +69,30 @@ verifyEqual(testCase, costToGo, [0; 1; 2; 2; 1], "AbsTol", 1e-12);
 verifyTrue(testCase, all(settled));
 end
 
+function testEdgeAvailabilityAndNonzeroSourceLabels(testCase)
+edgeAllowed = true(4, 1);
+edgeAllowed(2) = false;
+[costToGo, settled] = computeAzElReverseDijkstra( ...
+    1, 4, false(4, 1), [4; 4], [1 0], 1, false, ...
+    edgeAllowed, [3; 2]);
+
+verifyEqual(testCase, costToGo(3:4), [3; 2], "AbsTol", 1e-12);
+verifyEqual(testCase, costToGo(1:2), [Inf; Inf]);
+verifyFalse(testCase, any(settled(1:2)));
+verifyTrue(testCase, all(settled(3:4)));
+end
+
 function testRejectsNegativeEdgeCost(testCase)
 verifyError(testCase, @() computeAzElReverseDijkstra( ...
     1, 2, false(2, 1), 2, [1 0], -1, false), ...
     "computeAzElReverseDijkstra:InvalidEdges");
+end
+
+function testRejectsInvalidEdgeMaskAndSourceCost(testCase)
+verifyError(testCase, @() computeAzElReverseDijkstra( ...
+    1, 2, false(2, 1), 2, [1 0], 1, false, true(1, 1)), ...
+    "computeAzElReverseDijkstra:InvalidEdgeMask");
+verifyError(testCase, @() computeAzElReverseDijkstra( ...
+    1, 2, false(2, 1), 2, [1 0], 1, false, [], -1), ...
+    "computeAzElReverseDijkstra:InvalidGoalCost");
 end
