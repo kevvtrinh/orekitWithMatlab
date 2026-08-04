@@ -56,8 +56,15 @@ else
 end
 
 validateattributes(localTime_s, {'numeric'}, ...
-    {'vector', 'real', 'finite', '>=', 0, '<=', duration_s});
+    {'vector', 'real', 'finite'});
 localTime_s = double(localTime_s(:));
+timeTolerance_s = 64 * eps(max(1, duration_s));
+if any(localTime_s < -timeTolerance_s) || ...
+        any(localTime_s > duration_s + timeTolerance_s)
+    error("evaluateAzElConstantJerkSegment:TimeOutsideSegment", ...
+        "Query times must lie in the closed segment duration.");
+end
+localTime_s = min(duration_s, max(0, localTime_s));
 if any(~isfinite(law), "all")
     error("evaluateAzElConstantJerkSegment:NonfiniteLaw", ...
         "The endpoint request produced a nonfinite jerk law.");
