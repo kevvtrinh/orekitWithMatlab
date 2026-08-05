@@ -170,6 +170,33 @@ duration that satisfies both axes' velocity and acceleration limits. Run
 `example16NoWrapRisingDiskEfficiency` for a no-wrap crossing that compares
 path length and completion time with stored mathematical lower bounds.
 
+### Experimental path-state kinematics
+
+The `dijstra-motion-study` branch adds a deliberately opt-in motion study:
+
+```matlab
+options.MotionMode = "pathStateSpaceKinematic";
+options.KinematicTimeStep_s = 0.5;
+options.KinematicProgressStep_deg = 0.25;
+options.FallbackToProfile = false;
+```
+
+Spatial Dijkstra still chooses and blends the collision-free route. A second
+uniform-cost Dijkstra search then carries path progress, path speed, elapsed
+time, and a constant-acceleration action. Each transition maps that state to
+azimuth, elevation, both axis rates, and both axis accelerations. Curvature
+acceleration, hardware limits, and the packed time-varying polygons are checked
+before the state is accepted. The returned
+`plan.retiming.StateSpaceSearch` contains the winning physical receipts and
+their discretization.
+
+This is nearer to physical state space than resetting velocity at every route
+node, but it is not a full free-flight `(az, el, azRate, elRate)` topology
+search. It remains constrained to forward progress on the selected spatial
+route and currently supports nonwrapped rest-to-rest requests. See
+[`MOTION_STUDY.md`](docs/MOTION_STUDY.md) and run
+`example17KinematicStateSpaceStudy` for the measured comparison.
+
 Animation frame decimation also gives moving samples more weight than a long
 stationary hold. This changes playback smoothness only; the command and
 collision-validation samples are never discarded.

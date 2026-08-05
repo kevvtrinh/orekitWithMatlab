@@ -382,6 +382,40 @@ decision, failure explanation, and path-first resolution attempts.
 `plan.retiming.TimeScalingStyle` identifies the selected clock. The raw
 polygonal shortcut remains available in `plan.routeShortcut` for diagnosis.
 
+### 5.2 Experimental velocity-state motion
+
+`MotionMode="pathStateSpaceKinematic"` keeps the same spatial Dijkstra and
+corner blending, then searches motion rather than imposing one fixed global
+clock. A state stores route progress, nonnegative path speed, and elapsed time.
+Its mapped public state is
+
+$$
+x=(\alpha,\epsilon,\dot\alpha,\dot\epsilon,t).
+$$
+
+Each edge selects a constant path acceleration from `[-1, 0, +1]` lattice
+levels. Progress and speed integrate exactly over `KinematicTimeStep_s`. The
+route tangent and curvature map them into both axis derivatives:
+
+$$
+\dot q=q_s\dot s,
+\qquad
+\ddot q=q_{ss}\dot s^2+q_s\ddot s.
+$$
+
+Dense edge samples must satisfy position, velocity, acceleration, and packed
+polygon checks before entering the frontier. Equal edge duration means the
+layered uniform-cost implementation is Dijkstra on this lattice; its first
+rest state at the goal is the earliest represented arrival. The stable report
+in `plan.retiming.StateSpaceSearch` retains the winning states, acceleration
+commands, spacing, node counts, collision-query count, and termination reason.
+
+This study is intentionally narrower than a full kinodynamic topology search.
+It does not change spatial homotopy after routing, reverse along the path,
+carry acceleration as a state, impose jerk, or support wrapped azimuth. Its
+guarantee is earliest arrival on the configured path-state lattice, not global
+optimality in continuous five-dimensional state space.
+
 The planner instead uses a safe-interval state:
 
 $$
@@ -657,7 +691,10 @@ Wrapped limits must span exactly 360 degrees.
 | `TimePaddingSamples` | `1` | Temporal obstacle padding |
 | `AllowAzimuthWrap` | inferred | Enable circular azimuth |
 | `AllowNonzeroTerminalState` | `false` | Enable a quintic terminal capture edge |
-| `MotionMode` | `profile` | Use the safe-interval profile search or try `pathFirstThenKinematic` first |
+| `MotionMode` | `profile` | Use the safe-interval profile, the continuous-clock path-first mode, or the path-state kinematic study |
+| `KinematicTimeStep_s` | `0.5` | Fixed action duration in the path-state lattice |
+| `KinematicProgressStep_deg` | `0.25` | Requested progress-cell size; the exact size is adjusted for rest arrival |
+| `KinematicMaximumLatticeStates` | `25000000` | Refuse a path-state allocation larger than this bound |
 | `FallbackToProfile` | `true` | Run the profile search when requested path-first motion fails |
 | `Objective` | `minimumAngularDistance` | Public candidate-selection objective |
 | `MaximumVerticesPerRegion` | `500` | Boundary cap while packing obstacles |

@@ -273,16 +273,31 @@ limits. Example 16 stores independent tangent-and-arc distance and one-axis
 rest-to-rest time lower bounds. Its report uses separate dimensionless ratios
 and their equal-weight geometric mean, so degrees are never mixed with seconds.
 
+The motion-study branch adds an intentionally explicit next step:
+`MotionMode="pathStateSpaceKinematic"`. After the spatial route is selected,
+a second Dijkstra search carries path progress, path speed, and elapsed time in
+each search state. Every proposed transition is mapped back to azimuth and
+elevation position, velocity, and acceleration before it is allowed into the
+frontier. This removes waypoint-by-waypoint stops while keeping the search,
+its cost, and its current limits visible. Example 17 compares that motion to
+the start-stop profile around the same circular obstacle. `MOTION_STUDY.md`
+records the equations, implementation choices, measured benefit, computation
+cost, and the remaining gap to a full free-flight physical-state planner.
+
 Latest verification:
 
 ```text
 MATLAB Code Analyzer messages in touched MATLAB files: 0
-Complete test suite:                              43 passed, 0 failed, 0 incomplete
-Numbered example campaign:                        16 passed, 0 failed
+Complete test suite:                              45 passed, 0 failed, 0 incomplete
+Numbered example campaign:                        17 passed, 0 failed
 Five-turn spiral continuous motion:               0 interior stops, 0 blocked samples
 Five-turn spiral path / completion:                236.368 deg / 159.5 s
 No-wrap rising-disk path / time ratios:            1.002656 / 1.026083
 No-wrap rising-disk combined ratio / stops:        1.014302 / 0
+State-space study completion / start-stop:         12.000 s / 13.000 s
+State-space study interior stops:                  0 / 1 start-stop
+State-space progress / velocity residuals:         3.11e-15 deg / 3.33e-16 deg/s
+State-space physical states expanded/generated:   4347 / 4780
 Path-first oscillating-wall integration:          selected profile fallback, 0 blocked samples
 Path-first rotating-slot integration:             selected profile fallback, 0 blocked samples
 ```
