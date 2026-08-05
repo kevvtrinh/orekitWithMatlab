@@ -142,23 +142,50 @@ dimensionless combined ratio.
 
 ### Measured circular study
 
-`example18JointBoundedJerkStudy` stores an independent tangent-plus-arc
-distance bound and an obstacle-free rest-to-rest time bound. Its verified fine
-result is:
+`example18JointBoundedJerkStudy` now reports three motion levels:
 
-| Measurement | Joint bounded jerk | Earlier path-first clock |
-|---|---:|---:|
-| Path length | 22.234738 deg | 21.478052 deg |
-| Completion time | 10.000 s | 14.187 s |
-| Bound-based combined ratio | 1.222954 | 1.431644 |
-| Peak jerk | 1.500 deg/s^3 | 39.589 deg/s^3 sampled equivalent |
-| Blocked samples | 0 | 0 |
+| Measurement | Continuous Pareto replay | Joint A* lattice | Earlier path-first clock |
+|---|---:|---:|---:|
+| Path length | 21.321906 deg | 22.234738 deg | 21.478052 deg |
+| Completion time | 7.258250 s | 10.000 s | 14.187 s |
+| Peak jerk | 7.999 deg/s^3 | 1.500 deg/s^3 | 39.589 deg/s^3 sampled equivalent |
+| Blocked samples | 0 | 0 | 0 |
+
+The continuous result comes from
+`optimizeCircularBoundedJerkTrajectory`. Duration and 80 two-axis jerk
+commands are the only optimization variables. Position, velocity, and
+acceleration are integrated from those commands exactly, so they cannot drift
+apart during the solve. The stored controls are plain MATLAB source in
+`storedCircularBoundedJerkReference`, and every example run replays them at a
+fine time step and rechecks the circle, axis limits, jerk, and terminal state.
+
+The replay's dense receipt is:
+
+| Check | Value |
+|---|---:|
+| Exact tangent-plus-arc distance lower bound | 21.237991721 deg |
+| Distance ratio | 1.003951 |
+| Best known jerk-limited completion time | 7.257400000 s |
+| Time ratio | 1.000117 |
+| Worst of the two ratios | 1.003951 |
+| Minimum protected-circle clearance | 0.000099 deg |
+| Maximum dense limit violation | 0 |
+| Terminal-state residual | 1.2e-9 |
+
+This deliberately does not claim that one trajectory can equal both
+independent lower bounds. The exact shortest curve changes from a straight
+tangent to a circular arc without a curvature ramp. At nonzero speed that
+would change acceleration direction instantly, which requires unbounded jerk.
+The fastest bounded-jerk path is therefore slightly longer. Conversely, a
+trajectory can approach the exact geometric curve by slowing through those
+transitions, but it is no longer the fastest trajectory. The reported worst
+ratio makes that tradeoff visible instead of hiding it in a single average.
 
 The fine 0.25-degree level expanded 3,604 states and generated 9,255. Its
 position, velocity, and acceleration integration residual was below
 `3e-15`. The joint route is slightly longer, but it is substantially faster
-and removes the large acceleration jumps, so its combined physical tradeoff is
-better for this case.
+than the original path-first clock and removes its large acceleration jumps.
+The continuous pass then improves both lattice path length and lattice time.
 
 The timed-gate regression also verifies a capability the path-first study did
 not have: the joint search found the shortest 24-degree route through three
@@ -186,6 +213,11 @@ budget after expanding 31,124 states. Profile fallback remains necessary for
 such cases. Adaptive action sets, dominance pruning, and better kinodynamic
 heuristics are the next scaling improvements.
 
+The circular direct optimizer is a study tool, not a general replacement for
+the polygon planner. It uses a smooth analytic circle constraint so MATLAB can
+refine the path efficiently. General moving polygons still use the joint A*
+lattice and its exact collision validation.
+
 ## Reproduce
 
 ```matlab
@@ -199,5 +231,20 @@ Inspect:
 result.studyPlan.retiming.StateSpaceSearch
 result.diagnostics
 jointResult.jointPlan.retiming.StateSpaceSearch
+jointResult.continuousRefinement
 jointResult.diagnostics
+```
+
+To continue optimizing from the stored Pareto trajectory:
+
+```matlab
+options = optimizeCircularBoundedJerkTrajectory();
+options.IntervalCount = 80;
+options.Objective = "minimumTime";
+reference = storedCircularBoundedJerkReference();
+circle = struct("Center_deg", [0 0], "ProtectedRadius_deg", 3.5);
+
+continued = optimizeCircularBoundedJerkTrajectory( ...
+    jointResult.initialState, jointResult.goalState, jointResult.limits, ...
+    circle, reference.trajectorySeed, options);
 ```
