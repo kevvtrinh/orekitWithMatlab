@@ -416,6 +416,51 @@ carry acceleration as a state, impose jerk, or support wrapped azimuth. Its
 guarantee is earliest arrival on the configured path-state lattice, not global
 optimality in continuous five-dimensional state space.
 
+### 5.3 Joint bounded-jerk physical-state A*
+
+`MotionMode="jointStateSpaceKinematic"` removes the fixed-path restriction.
+Its sparse search state is
+
+$$
+x=(\alpha,\epsilon,\dot\alpha,\dot\epsilon,
+\ddot\alpha,\ddot\epsilon,t),
+$$
+
+and each action selects constant azimuth/elevation jerk levels from
+`[-1, 0, +1]`. For one axis, constant jerk integrates exactly as
+
+$$
+a_{k+1}=a_k+j\Delta t,
+$$
+
+$$
+v_{k+1}=v_k+a_k\Delta t+\tfrac12j\Delta t^2,
+$$
+
+$$
+q_{k+1}=q_k+v_k\Delta t+\tfrac12a_k\Delta t^2
+          +\tfrac16j\Delta t^3.
+$$
+
+The position cell is adjusted so the terminal position, zero velocity, and
+zero acceleration are exactly representable. The requested time step is then
+increased in whole increments until the implied acceleration and jerk steps
+fit both axes. Each continuous primitive is densely checked against axis
+limits and moving polygons before entering the frontier.
+
+The frontier uses an admissible A* lower bound. Its accumulated cost is a
+weighted sum of elapsed-time and path-length ratios, so degrees and seconds
+are never added directly. The default adaptive schedule tries a cell twice the
+requested size and then the requested size, retaining the successful result
+with the smaller combined ratio. This search supports wrapped azimuth,
+backtracking, and time-dependent openings. Terminal rates and accelerations
+are supported when they and the requested terminal time lie exactly on the
+chosen lattice.
+
+The guarantee remains discrete: the selected result minimizes the configured
+weighted cost on the searched lattice. It is not a proof of the continuous
+global optimum, and complex moving scenes may still require profile fallback.
+
 The planner instead uses a safe-interval state:
 
 $$
@@ -695,6 +740,12 @@ Wrapped limits must span exactly 360 degrees.
 | `KinematicTimeStep_s` | `0.5` | Fixed action duration in the path-state lattice |
 | `KinematicProgressStep_deg` | `0.25` | Requested progress-cell size; the exact size is adjusted for rest arrival |
 | `KinematicMaximumLatticeStates` | `25000000` | Refuse a path-state allocation larger than this bound |
+| `JointKinematicTimeStep_s` | `0.5` | Requested minimum joint action duration |
+| `JointKinematicPositionStep_deg` | `0.5` | Finest requested joint position cell |
+| `JointKinematicPositionStepSchedule_deg` | `[]` | Optional explicit coarse-to-fine joint cell schedule |
+| `JointKinematicMaximumJerk_deg_s3` | `[8 8]` | Two-axis jerk bounds for joint primitives |
+| `JointKinematicTimeWeight` | `0.5` | Normalized elapsed-time-ratio weight |
+| `JointKinematicDistanceWeight` | `0.5` | Normalized path-length-ratio weight |
 | `FallbackToProfile` | `true` | Run the profile search when requested path-first motion fails |
 | `Objective` | `minimumAngularDistance` | Public candidate-selection objective |
 | `MaximumVerticesPerRegion` | `500` | Boundary cap while packing obstacles |

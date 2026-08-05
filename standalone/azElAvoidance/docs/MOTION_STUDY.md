@@ -99,15 +99,98 @@ This is near physical state space, not yet full free-flight state space:
   discrete path-state lattice.
 - Dense polygon checks make the study slower than the start-stop retimer.
 
-These limits are explicit so a later full kinodynamic implementation has a
-clear target: jointly search `(az, el, azRate, elRate, time)`, add bounded-jerk
-actions, and use adaptive state resolution without losing exact polygon
-validation.
+Those explicit limits supplied the target for the joint extension below:
+search both axes and their derivative states together, add bounded-jerk
+actions, and use adaptive resolution without losing exact polygon validation.
+
+## Joint Bounded-Jerk Extension
+
+The next study step is now available as
+`MotionMode="jointStateSpaceKinematic"`. It searches seven state dimensions:
+
+```text
+(azimuth, elevation,
+ azimuth rate, elevation rate,
+ azimuth acceleration, elevation acceleration,
+ time)
+```
+
+Each edge carries one constant two-axis jerk action. Position, rate, and
+acceleration therefore remain continuous across action boundaries. The search
+does not need a spatial route first, so it can reverse, cross wrapped azimuth,
+choose a different obstacle side, or wait for a moving opening as part of the
+same state search.
+
+Sparse A* orders the frontier with optimistic time and distance bounds. The
+accumulated objective is
+
+```text
+time weight     * elapsed time / obstacle-free time bound
++ distance weight * path length / straight-line distance bound
+```
+
+The weights are normalized automatically. The default equal weighting makes
+`1.0` the unattainable-or-ideal reference when obstacles or jerk limits add no
+cost. This is an additive planning objective; examples may also report the
+geometric-mean ratio used by the no-wrap benchmark.
+
+The requested position step controls spatial fidelity. A coarse-to-fine
+schedule first tries twice that step and then the requested step. For each
+level, the time step grows automatically until its exact jerk lattice fits the
+axis acceleration and jerk limits. Successful levels are compared by their
+dimensionless combined ratio.
+
+### Measured circular study
+
+`example18JointBoundedJerkStudy` stores an independent tangent-plus-arc
+distance bound and an obstacle-free rest-to-rest time bound. Its verified fine
+result is:
+
+| Measurement | Joint bounded jerk | Earlier path-first clock |
+|---|---:|---:|
+| Path length | 22.234738 deg | 21.478052 deg |
+| Completion time | 10.000 s | 14.187 s |
+| Bound-based combined ratio | 1.222954 | 1.431644 |
+| Peak jerk | 1.500 deg/s^3 | 39.589 deg/s^3 sampled equivalent |
+| Blocked samples | 0 | 0 |
+
+The fine 0.25-degree level expanded 3,604 states and generated 9,255. Its
+position, velocity, and acceleration integration residual was below
+`3e-15`. The joint route is slightly longer, but it is substantially faster
+and removes the large acceleration jumps, so its combined physical tradeoff is
+better for this case.
+
+The timed-gate regression also verifies a capability the path-first study did
+not have: the joint search found the shortest 24-degree route through three
+moving openings with zero blocked samples. Wrapped `-175` to `+175` motion is
+covered by a separate exact-integration regression.
+
+The broader examples show why this remains opt-in:
+
+| Existing example | Joint result | Interpretation |
+|---|---:|---|
+| 08, alternating slalom | 48.881 deg / 18.000 s | Succeeds, but coarse jerk primitives lengthen the route |
+| 09, U-trap | 40.659 deg / 14.000 s | Jointly backtracks and finishes, but spatial Dijkstra remains shorter |
+| 10, rotating slots | 90 s study limit | Sparse frontier does not yet scale to this moving 2-D maze |
+| 16, rising disk | 390.356 deg / 35.000 s | Coarse 5-degree level succeeds; the specialized path-first result remains much closer to its absolute bounds |
+
+These are direct, no-fallback study runs. They demonstrate capability, not a
+claim that joint state space always produces a better command.
+
+### Remaining boundary
+
+This is much closer to physical state space, but still discrete. Its guarantee
+is optimal weighted cost on the searched lattice. Fine two-dimensional moving
+scenes can be expensive: the rotating-slot example reached a 90-second study
+budget after expanding 31,124 states. Profile fallback remains necessary for
+such cases. Adaptive action sets, dominance pruning, and better kinodynamic
+heuristics are the next scaling improvements.
 
 ## Reproduce
 
 ```matlab
 result = example17KinematicStateSpaceStudy();
+jointResult = example18JointBoundedJerkStudy();
 ```
 
 Inspect:
@@ -115,4 +198,6 @@ Inspect:
 ```matlab
 result.studyPlan.retiming.StateSpaceSearch
 result.diagnostics
+jointResult.jointPlan.retiming.StateSpaceSearch
+jointResult.diagnostics
 ```

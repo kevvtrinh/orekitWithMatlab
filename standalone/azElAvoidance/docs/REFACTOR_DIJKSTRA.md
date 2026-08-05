@@ -284,12 +284,21 @@ the start-stop profile around the same circular obstacle. `MOTION_STUDY.md`
 records the equations, implementation choices, measured benefit, computation
 cost, and the remaining gap to a full free-flight physical-state planner.
 
+The subsequent joint study removes that fixed-path boundary with
+`MotionMode="jointStateSpaceKinematic"`. Sparse A* now carries both positions,
+both rates, both accelerations, and time, while constant-jerk actions create
+continuous acceleration. A normalized time/distance objective avoids mixing
+units, and a coarse-to-fine position schedule exposes the fidelity/cost trade.
+Moving openings, reverse motion, and wrapped azimuth are part of the same
+search. The established profile remains the explicit fallback because complex
+two-dimensional moving scenes can still exhaust the sparse frontier.
+
 Latest verification:
 
 ```text
 MATLAB Code Analyzer messages in touched MATLAB files: 0
-Complete test suite:                              45 passed, 0 failed, 0 incomplete
-Numbered example campaign:                        17 passed, 0 failed
+Complete test suite:                              49 passed, 0 failed, 0 incomplete
+Numbered example campaign:                        18 passed, 0 failed
 Five-turn spiral continuous motion:               0 interior stops, 0 blocked samples
 Five-turn spiral path / completion:                236.368 deg / 159.5 s
 No-wrap rising-disk path / time ratios:            1.002656 / 1.026083
@@ -298,6 +307,11 @@ State-space study completion / start-stop:         12.000 s / 13.000 s
 State-space study interior stops:                  0 / 1 start-stop
 State-space progress / velocity residuals:         3.11e-15 deg / 3.33e-16 deg/s
 State-space physical states expanded/generated:   4347 / 4780
+Joint study path / completion:                     22.234738 deg / 10.000 s
+Joint study distance / time ratios:                1.046932 / 1.428571
+Joint / baseline combined ratios:                  1.222954 / 1.431644
+Joint / sampled-baseline peak jerk:                1.500 / 39.589 deg/s^3
+Joint integration residual:                        < 3e-15
 Path-first oscillating-wall integration:          selected profile fallback, 0 blocked samples
 Path-first rotating-slot integration:             selected profile fallback, 0 blocked samples
 ```

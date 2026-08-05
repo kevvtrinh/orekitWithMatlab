@@ -197,6 +197,35 @@ route and currently supports nonwrapped rest-to-rest requests. See
 [`MOTION_STUDY.md`](docs/MOTION_STUDY.md) and run
 `example17KinematicStateSpaceStudy` for the measured comparison.
 
+### Joint bounded-jerk state space
+
+The motion-study branch also provides a higher-fidelity opt-in search that
+does not require a spatial route first:
+
+```matlab
+options.MotionMode = "jointStateSpaceKinematic";
+options.JointKinematicPositionStep_deg = 0.25;
+options.JointKinematicPositionStepSchedule_deg = [0.5 0.25];
+options.JointKinematicTimeStep_s = 0.5;
+options.JointKinematicMaximumJerk_deg_s3 = [8 8];
+options.JointKinematicTimeWeight = 0.5;
+options.JointKinematicDistanceWeight = 0.5;
+```
+
+This sparse A* search carries azimuth, elevation, both rates, both
+accelerations, and time. Its actions are constant two-axis jerk commands.
+The actual time step grows automatically when necessary so one lattice action
+fits the acceleration and jerk limits. Coarse and fine position lattices are
+compared using a dimensionless weighted blend of obstacle-free time and
+distance ratios. Wrapped azimuth, reverse motion, and moving openings are
+handled directly. `FallbackToProfile=true` retains the established planner
+when the larger state space exceeds its budget.
+
+Every edge is densely checked against position, rate, acceleration, jerk, and
+the moving packed polygons. The first A* goal is optimal for the configured
+weighted discrete lattice, not for continuous physics. Example 18 records the
+resolution study, exact jerk-state residuals, and independent lower bounds.
+
 Animation frame decimation also gives moving samples more weight than a long
 stationary hold. This changes playback smoothness only; the command and
 collision-validation samples are never discarded.

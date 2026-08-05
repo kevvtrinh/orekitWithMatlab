@@ -32,6 +32,7 @@ azimuth/elevation/time obstacle field.
 | 15 | `example15SpinningRodSpiral` | Safe-interval Dijkstra | Unguided traversal of a two-turn spiral while a faster rotating rod forces planner-selected waits in three protected wall notches. |
 | 16 | `example16NoWrapRisingDiskEfficiency` | Goal-rooted Dijkstra | A no-wrap `-175` to `+175` crossing over a large slowly rising disk, using continuous minimum-time path scaling and stored analytic distance/time comparisons. |
 | 17 | `example17KinematicStateSpaceStudy` | Path-state Dijkstra | Compares a velocity-carrying path-state search, mapped into five-dimensional position/rate/time receipts, with the waypoint start-stop profile on the same circular detour. |
+| 18 | `example18JointBoundedJerkStudy` | Joint physical-state A* | Searches route, two-axis velocity, acceleration, time, and bounded jerk together; compares adaptive resolutions and stored physical lower bounds on a circular detour. |
 
 Examples 05-09 can be run as a set:
 
