@@ -7,9 +7,14 @@ root = "C:\path\to\standalone\azElAvoidance";
 addpath(genpath(root));
 ```
 
-Every numbered example uses the common combined animation, with current 2-D
+Every numbered example requests the maintained `jointParetoKinematic` motion
+policy and uses the common combined animation, with current 2-D
 azimuth/elevation geometry beside the accumulated 3-D
-azimuth/elevation/time obstacle field.
+azimuth/elevation/time obstacle field. The policy tries joint bounded-jerk A*
+first, allows an explicit path-first/profile fallback when that larger state
+space cannot finish, and then runs dense continuous time/distance Pareto
+refinement. Examples 17 and 18 also retain older policies as labeled study
+baselines; those comparison plans are not presented as the maintained result.
 
 ## Algorithm Map
 
@@ -31,8 +36,8 @@ azimuth/elevation/time obstacle field.
 | 14 | `example14MovingRendezvousAndTrail` | Velocity-matched Dijkstra | Crossy Road-style capture through twelve nonoverlapping four-vehicle rows in a narrow central corridor; rows 9-12 sweep the center slot as timed gates. |
 | 15 | `example15SpinningRodSpiral` | Safe-interval Dijkstra | Unguided traversal of a two-turn spiral while a faster rotating rod forces planner-selected waits in three protected wall notches. |
 | 16 | `example16NoWrapRisingDiskEfficiency` | Goal-rooted Dijkstra | A no-wrap `-175` to `+175` crossing over a large slowly rising disk, using continuous minimum-time path scaling and stored analytic distance/time comparisons. |
-| 17 | `example17KinematicStateSpaceStudy` | Path-state Dijkstra | Compares a velocity-carrying path-state search, mapped into five-dimensional position/rate/time receipts, with the waypoint start-stop profile on the same circular detour. |
-| 18 | `example18JointBoundedJerkStudy` | Joint A* plus continuous refinement | Searches route, two-axis velocity, acceleration, time, and bounded jerk together, then replays a continuously optimized 80-control Pareto trajectory and compares separate shortest-path and fastest-time references. |
+| 17 | `example17KinematicStateSpaceStudy` | Joint A* plus Pareto refinement | Audits the maintained joint/Pareto receipt and its smooth, stop-free command beside the historical waypoint start-stop profile. |
+| 18 | `example18JointBoundedJerkStudy` | Joint A* plus continuous refinement | Searches route, two-axis velocity, acceleration, time, and bounded jerk together, runs the general Pareto pass, then replays a continuously optimized 80-control trajectory and compares separate shortest-path and fastest-time references. |
 
 Examples 05-09 can be run as a set:
 

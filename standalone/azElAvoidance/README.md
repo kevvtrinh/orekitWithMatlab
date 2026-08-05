@@ -226,6 +226,27 @@ the moving packed polygons. The first A* goal is optimal for the configured
 weighted discrete lattice, not for continuous physics. Example 18 records the
 resolution study, exact jerk-state residuals, and independent lower bounds.
 
+For the maintained example policy, request the joint search and the general
+continuous time/distance refinement together:
+
+```matlab
+options.MotionMode = "jointParetoKinematic";
+options.PathFirstTimeScaling = "minimumTime";
+options.JointKinematicAttemptTime_s = 1;
+options.FallbackToProfile = true;
+```
+
+The joint lattice is tried first. If it finishes, its bounded-jerk command is
+the starting point for continuous Pareto refinement. If it does not finish
+within `JointKinematicAttemptTime_s`, a compatible request first tries the
+smooth path-first clock and then the safe-interval profile if needed. The
+fallback keeps its full `MaxSearchTime_s` budget. Every refinement candidate
+is represented by piecewise quintics, checked densely against axis and jerk
+limits and the original moving polygons, and accepted only when its weighted
+time/distance ratio improves. `plan.motionPlanning` records which search won,
+whether fallback was used, and the complete Pareto receipt; a failed or
+unhelpful refinement never replaces the already validated command.
+
 Animation frame decimation also gives moving samples more weight than a long
 stationary hold. This changes playback smoothness only; the command and
 collision-validation samples are never discarded.

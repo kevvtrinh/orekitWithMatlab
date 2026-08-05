@@ -82,7 +82,8 @@ commonOptions = struct( ...
 % finer lattice. Its time step may grow from the requested 0.5 seconds so a
 % single jerk action cannot exceed acceleration or jerk limits.
 jointOptions = commonOptions;
-jointOptions.MotionMode = "jointStateSpaceKinematic";
+jointOptions.MotionMode = "jointParetoKinematic";
+jointOptions.PathFirstTimeScaling = "minimumTime";
 jointOptions.JointKinematicPositionStep_deg = 0.25;
 jointOptions.JointKinematicPositionStepSchedule_deg = [0.5 0.25];
 jointOptions.JointKinematicTimeStep_s = 0.5;
@@ -120,9 +121,12 @@ if ~baselinePlan.success
         "Path-first baseline failed: %s", baselinePlan.message);
 end
 if jointPlan.method ~= "jointStateSpaceKinematicAStar" || ...
-        jointPlan.retiming.MotionStyle ~= "jointStateSpaceKinematic"
+        jointPlan.motionPlanning.RequestedMode ~= ...
+            "jointParetoKinematic" || ...
+        ~jointPlan.motionPlanning.ParetoRefinementAttempted || ...
+        ~jointPlan.motionPlanning.ParetoRefinementSucceeded
     error("example18JointBoundedJerkStudy:WrongMode", ...
-        "The study silently selected a different motion mode.");
+        "The joint search and continuous Pareto refinement did not finish.");
 end
 
 reference = storedCircularBoundedJerkReference();

@@ -140,15 +140,24 @@ level, the time step grows automatically until its exact jerk lattice fits the
 axis acceleration and jerk limits. Successful levels are compared by their
 dimensionless combined ratio.
 
+The maintained examples request `MotionMode="jointParetoKinematic"`. This
+uses the same joint search, then tests continuous piecewise-quintic candidates
+across a time/distance Pareto schedule. Each candidate is densely rechecked
+against the original polygons and physical limits. If the joint lattice cannot
+finish within its short attempt budget, the explicit fallback starts from a
+validated path-first or safe-interval command and records that fact before the
+same refinement pass. No candidate is published unless it improves the
+weighted ratio without weakening validation.
+
 ### Measured circular study
 
 `example18JointBoundedJerkStudy` now reports three motion levels:
 
 | Measurement | Continuous Pareto replay | Joint A* lattice | Earlier path-first clock |
 |---|---:|---:|---:|
-| Path length | 21.321906 deg | 22.234738 deg | 21.478052 deg |
-| Completion time | 7.258250 s | 10.000 s | 14.187 s |
-| Peak jerk | 7.999 deg/s^3 | 1.500 deg/s^3 | 39.589 deg/s^3 sampled equivalent |
+| Path length | 21.321906 deg | 21.757974 deg | 21.478052 deg |
+| Completion time | 7.258250 s | 8.349 s | 14.187 s |
+| Peak jerk | 7.999 deg/s^3 | 2.405 deg/s^3 | 39.589 deg/s^3 sampled equivalent |
 | Blocked samples | 0 | 0 | 0 |
 
 The continuous result comes from
