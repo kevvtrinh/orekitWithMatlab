@@ -141,13 +141,21 @@ axis acceleration and jerk limits. Successful levels are compared by their
 dimensionless combined ratio.
 
 The maintained examples request `MotionMode="jointParetoKinematic"`. This
-uses the same joint search, then tests continuous piecewise-quintic candidates
-across a time/distance Pareto schedule. Each candidate is densely rechecked
-against the original polygons and physical limits. If the joint lattice cannot
-finish within its short attempt budget, the explicit fallback starts from a
-validated path-first or safe-interval command and records that fact before the
-same refinement pass. No candidate is published unless it improves the
-weighted ratio without weakening validation.
+uses the same joint search, then builds an adaptive piecewise-quintic direct-
+collocation mesh. Regular time knots describe the whole maneuver; additional
+knots preserve sharp turns and stop/start transitions. A deterministic local
+search moves important interior knot positions and refines the common clock.
+It has no Optimization Toolbox dependency, and exact quintic interpolation
+prevents state columns from drifting apart between knots.
+
+Each candidate is densely rechecked against the original polygons and physical
+limits. If the joint lattice cannot finish within its short attempt budget,
+the explicit fallback starts from a validated path-first or safe-interval
+command and records that fact before the same refinement pass. No candidate is
+published unless it improves the weighted ratio without weakening validation
+or needlessly increasing jerk. A separate physical receipt makes an important
+distinction explicit: collision-valid profile fallback is not labeled
+bounded-jerk when it has no analytic jerk history.
 
 ### Measured circular study
 

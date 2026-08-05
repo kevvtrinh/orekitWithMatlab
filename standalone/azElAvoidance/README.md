@@ -240,12 +240,25 @@ The joint lattice is tried first. If it finishes, its bounded-jerk command is
 the starting point for continuous Pareto refinement. If it does not finish
 within `JointKinematicAttemptTime_s`, a compatible request first tries the
 smooth path-first clock and then the safe-interval profile if needed. The
-fallback keeps its full `MaxSearchTime_s` budget. Every refinement candidate
-is represented by piecewise quintics, checked densely against axis and jerk
-limits and the original moving polygons, and accepted only when its weighted
-time/distance ratio improves. `plan.motionPlanning` records which search won,
-whether fallback was used, and the complete Pareto receipt; a failed or
-unhelpful refinement never replaces the already validated command.
+fallback keeps its full `MaxSearchTime_s` budget.
+
+The continuous stage uses adaptive piecewise-quintic direct collocation. It
+starts with regularly spaced knots, retains extra knots at sharp turns and
+stop/start transitions, and then moves the most curved interior knots toward
+their local and endpoint chords. A final common-clock pass looks for shorter
+completion time. This deterministic coordinate search requires no additional
+optimization toolbox. Every proposed segment exactly matches position,
+velocity, and acceleration at both ends; every complete candidate is checked
+densely against axis and jerk limits and the original moving polygons.
+
+`plan.motionPlanning.ParetoRefinement` reports the knot and candidate counts,
+selected time/distance ratio, and whether the trajectory changed.
+`plan.motionPlanning.PhysicalVerification` separately reports analytic-jerk
+availability, maximum velocity/acceleration/jerk ratios, position limits, and
+blocked samples. This distinction matters when explicit fallback is enabled:
+a valid historical profile can remain selected when no better collocation
+candidate exists, but it is clearly marked as lacking an analytic bounded-
+jerk receipt instead of being mistaken for a fully physical trajectory.
 
 Animation frame decimation also gives moving samples more weight than a long
 stationary hold. This changes playback smoothness only; the command and
