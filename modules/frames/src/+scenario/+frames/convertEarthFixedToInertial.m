@@ -33,9 +33,7 @@ validateattributes(positionsEcef_m, {'numeric'}, ...
 
 %% Section 2: Transform Positions
 
-positionsEci_m = zeros(size(positionsEcef_m));
-for positionIndex = 1:size(positionsEcef_m, 1)
-    transformed_m = ecef2eci(epochUtc, positionsEcef_m(positionIndex, :)');
-    positionsEci_m(positionIndex, :) = transformed_m';
-end
+rotationEcefToEci = ...
+    scenario.frames.calculateEarthFixedToInertialRotation(epochUtc);
+positionsEci_m = (rotationEcefToEci * positionsEcef_m')';
 end

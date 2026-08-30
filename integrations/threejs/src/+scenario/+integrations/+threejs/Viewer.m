@@ -29,6 +29,7 @@ classdef Viewer < handle
         SunDirectionProvider
         TrajectoryProvider
         SatelliteStateProvider
+        SceneCache
     end
 
     methods
@@ -74,6 +75,7 @@ classdef Viewer < handle
             viewer.SunDirectionProvider = sunDirectionProvider;
             viewer.TrajectoryProvider = trajectoryProvider;
             viewer.SatelliteStateProvider = satelliteStateProvider;
+            viewer.SceneCache = [];
             webRoot = fullfile(viewer.integrationRoot(), "dist");
             commandHandler = @(request) viewer.applyCommand(request);
             viewer.LocalServer = ...
@@ -89,10 +91,10 @@ classdef Viewer < handle
         function refresh(viewer)
             % Publish an ITRF renderer snapshot at the Scenario start epoch.
 
-            sceneData = ...
+            [sceneData, viewer.SceneCache] = ...
                 scenario.integrations.threejs.createSceneData( ...
                     viewer.Study, viewer.SunDirectionProvider, ...
-                    viewer.TrajectoryProvider);
+                    viewer.TrajectoryProvider, viewer.SceneCache);
             viewer.LocalServer.setScene(sceneData);
         end
 

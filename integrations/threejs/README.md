@@ -19,6 +19,11 @@ viewer = openOhioScenarioViewer();
 
 The browser controls use same-origin HTTP requests. MATLAB changes the `Scenario`
 and sends a complete renderer-neutral snapshot back to React and Three.js.
+The viewer keeps an explicit MATLAB-owned calculation cache between refreshes.
+Scenario-wide epochs, Sun directions, and frame rotations are reused when the
+interval and providers are unchanged. Each satellite trajectory is reused only
+while its name and complete initial state match. Adding another satellite therefore
+calculates that satellite without propagating the unchanged collection again.
 
 The top menu provides New, Save, Load, Add Satellite, and Add Place commands. Saved
 files use the provider-neutral scenario-definition JSON contract. The satellite form
@@ -72,6 +77,8 @@ explicitly report `hasEphemeris = false`, so the renderer does not invent an orb
 
 The localhost server is serviced by a MATLAB timer. Browser requests wait while the
 owning MATLAB process is executing a long, uninterrupted foreground calculation.
+Scene refreshes use batched Aerospace Toolbox direction cosine matrices to avoid
+three scalar frame conversions at every playback epoch.
 
 ## Rebuilding the browser bundle
 

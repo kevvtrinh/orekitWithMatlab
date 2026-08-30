@@ -5,6 +5,10 @@
 - Added MATLAB-backed New, Save, Load, Add Satellite, and Add Place authoring menus.
 - Added classical-element satellite entry through an explicitly injected state
   provider and versioned provider-neutral scenario-definition persistence.
+- Added explicit scene calculation caching for unchanged time histories and
+  authoritative satellite trajectories.
+- Removed a duplicate initial Sun query and consumed batched ECEF-to-ECI rotation
+  histories from the frames module.
 
 ## 0.3.0
 

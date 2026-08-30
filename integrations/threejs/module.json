@@ -1,6 +1,6 @@
 {
   "name": "scenario-threejs-integration",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "publicPackages": ["scenario.integrations.threejs"],
   "requiredModules": [
     "scenario-platforms",

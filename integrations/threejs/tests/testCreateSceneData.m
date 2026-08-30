@@ -121,6 +121,71 @@ verifyNumElements(testCase, sceneData.warnings, 1);
 verifySubstring(testCase, sceneData.warnings, "120-second intervals");
 end
 
+function testReuseTimeAndUnchangedSatelliteCalculations(testCase)
+% Verify refreshes calculate only newly added authoritative trajectories.
+
+startTime = datetime(2026, 1, 1, "TimeZone", "UTC");
+study = scenario.Scenario("Cached", startTime, startTime + minutes(1));
+firstState = createTestInitialState(startTime, [7000000, 0, 0]);
+study.addSatellite("LEO-1", firstState);
+callCounts = containers.Map( ...
+    {'Sun', 'Trajectory'}, {0, 0});
+sunProvider = @(epochUtc) countedSunProvider(epochUtc, callCounts);
+trajectoryProvider = @(state, epochs) ...
+    countedTrajectoryProvider(state, epochs, callCounts);
+
+[firstScene, sceneCache] = ...
+    scenario.integrations.threejs.createSceneData( ...
+        study, sunProvider, trajectoryProvider);
+sunCountAfterFirstRefresh = callCounts('Sun');
+trajectoryCountAfterFirstRefresh = callCounts('Trajectory');
+[secondScene, sceneCache] = ...
+    scenario.integrations.threejs.createSceneData( ...
+        study, sunProvider, trajectoryProvider, sceneCache);
+
+verifyEqual(testCase, callCounts('Sun'), sunCountAfterFirstRefresh);
+verifyEqual(testCase, callCounts('Trajectory'), ...
+    trajectoryCountAfterFirstRefresh);
+verifyEqual(testCase, secondScene, firstScene);
+
+secondState = createTestInitialState(startTime, [7100000, 0, 0]);
+study.addSatellite("LEO-2", secondState);
+thirdScene = scenario.integrations.threejs.createSceneData( ...
+    study, sunProvider, trajectoryProvider, sceneCache);
+
+verifyEqual(testCase, callCounts('Sun'), sunCountAfterFirstRefresh);
+verifyEqual(testCase, callCounts('Trajectory'), ...
+    trajectoryCountAfterFirstRefresh + 1);
+verifyNumElements(testCase, thirdScene.satellites, 2);
+end
+
+function initialState = createTestInitialState(epochUtc, position_m)
+% Create one deterministic ITRF state for cache-behavior tests.
+
+initialState = struct( ...
+    "epoch", epochUtc, ...
+    "frame", "ITRF", ...
+    "position_m", position_m, ...
+    "velocity_m_s", [0, 7546, 0]);
+end
+
+function result = countedSunProvider(epochUtc, callCounts)
+% Count calls before returning the deterministic Sun contract.
+
+% containers.Map mutation persists by handle; the analyzer sees reassignment.
+callCounts('Sun') = callCounts('Sun') + 1; %#ok<NASGU>
+result = fixedSunProvider(epochUtc);
+end
+
+function result = countedTrajectoryProvider( ...
+        initialState, sampleEpochsUtc, callCounts)
+% Count calls before returning the deterministic trajectory contract.
+
+% containers.Map mutation persists by handle; the analyzer sees reassignment.
+callCounts('Trajectory') = callCounts('Trajectory') + 1; %#ok<NASGU>
+result = fixedTrajectoryProvider(initialState, sampleEpochsUtc);
+end
+
 function result = fixedSunProvider(epochUtc)
 % Return a deterministic provider-neutral Sun direction for injection tests.
 

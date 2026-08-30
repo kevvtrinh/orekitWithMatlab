@@ -34,6 +34,33 @@ outputEcef_m = scenario.frames.convertInertialToEarthFixed( ...
 verifyEqual(testCase, outputEcef_m, inputEcef_m, "AbsTol", 1e-3);
 end
 
+function testBatchedRotationsMatchToolboxConversion(testCase)
+% Verify batched matrices reproduce independent Aerospace Toolbox results.
+
+startEpochUtc = datetime(2026, 8, 29, 12, 0, 0, "TimeZone", "UTC");
+epochUtc = startEpochUtc + minutes([0; 15; 30]);
+rotationsEcefToEci = ...
+    scenario.frames.calculateEarthFixedToInertialRotation(epochUtc);
+inputEcef_m = [6378137; -2500000; 1200000];
+
+verifySize(testCase, rotationsEcefToEci, [3, 3, 3]);
+for epochIndex = 1:numel(epochUtc)
+    expectedEci_m = ecef2eci(epochUtc(epochIndex), inputEcef_m);
+    actualEci_m = rotationsEcefToEci(:, :, epochIndex) * inputEcef_m;
+    verifyEqual(testCase, actualEci_m, expectedEci_m, "AbsTol", 1e-3);
+end
+end
+
+function testRejectUnzonedRotationEpochs(testCase)
+% Verify batched rotation calculation rejects an implicit time scale.
+
+operation = @() ...
+    scenario.frames.calculateEarthFixedToInertialRotation( ...
+        datetime(2026, 1, 1) + minutes(0:2));
+verifyError(testCase, operation, ...
+    "calculateEarthFixedToInertialRotation:InvalidEpoch");
+end
+
 function testRejectUnzonedEpoch(testCase)
 % Verify that an implicit time scale is rejected.
 
