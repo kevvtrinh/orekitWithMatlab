@@ -98,10 +98,6 @@ h1 { margin: 0; font-size: 15px; letter-spacing: 0.02em; }
 }
 .object-label--satellite { border-color: rgba(216, 178, 90, 0.55); }
 .object-label--place { border-color: rgba(90, 160, 216, 0.55); }
-.object-label--sun {
-  border-color: rgba(255, 218, 117, 0.7);
-  color: #fff1bd;
-}
 .viewport-badge, .viewport-help {
   position: absolute;
   bottom: 14px;

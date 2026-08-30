@@ -36,8 +36,7 @@ export function createViewer(container) {
   scene.add(earthLayer);
   const sunlight = addLighting(scene);
   const sunSprite = createSunSprite();
-  scene.add(camera);
-  camera.add(sunSprite);
+  scene.add(sunSprite);
   addStars(scene);
   addEarth(earthLayer, renderer);
 
@@ -104,9 +103,8 @@ export function createViewer(container) {
 }
 
 function addLighting(scene) {
-  scene.add(new THREE.HemisphereLight(0x9ecbff, 0x06101d, 1.35));
-  const sunlight = new THREE.DirectionalLight(0xffffff, 3.2);
-  sunlight.position.set(4, 2, 3);
+  scene.add(new THREE.AmbientLight(0x30343c, 1.6));
+  const sunlight = new THREE.DirectionalLight(0xfff4e0, 2.4);
   scene.add(sunlight);
   return sunlight;
 }
@@ -116,11 +114,10 @@ function createSunSprite() {
   canvas.width = 128;
   canvas.height = 128;
   const context = canvas.getContext("2d");
-  const gradient = context.createRadialGradient(64, 64, 2, 64, 64, 64);
-  gradient.addColorStop(0, "rgba(255,255,255,1)");
-  gradient.addColorStop(0.18, "rgba(255,250,224,1)");
-  gradient.addColorStop(0.4, "rgba(255,232,150,0.72)");
-  gradient.addColorStop(0.7, "rgba(255,200,80,0.22)");
+  const gradient = context.createRadialGradient(64, 64, 4, 64, 64, 64);
+  gradient.addColorStop(0, "rgba(255,248,224,1)");
+  gradient.addColorStop(0.25, "rgba(255,236,170,0.85)");
+  gradient.addColorStop(0.6, "rgba(255,214,110,0.25)");
   gradient.addColorStop(1, "rgba(255,200,80,0)");
   context.fillStyle = gradient;
   context.fillRect(0, 0, 128, 128);
@@ -128,20 +125,10 @@ function createSunSprite() {
   texture.colorSpace = THREE.SRGBColorSpace;
   const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
     map: texture,
-    color: 0xffffff,
     transparent: true,
-    blending: THREE.AdditiveBlending,
     depthWrite: false,
-    depthTest: false,
-    toneMapped: false,
   }));
-  sprite.position.set(1.1, 0.7, -3);
-  sprite.scale.setScalar(0.38);
-  sprite.add(createLabel(
-    "Sun · display proxy",
-    "object-label object-label--sun",
-  ));
-  sprite.renderOrder = 10;
+  sprite.scale.setScalar(14);
   return sprite;
 }
 
@@ -265,8 +252,10 @@ function updateSun(sprite, sunlight, directionValue) {
   sprite.visible = isValid;
   sunlight.visible = isValid;
   if (!isValid) return;
-  const direction = physicalToRender(directionValue).normalize();
-  sunlight.position.copy(direction.multiplyScalar(50));
+  const directionPhysical = new THREE.Vector3(...directionValue);
+  const direction = physicalToRender(directionPhysical).normalize();
+  sunlight.position.copy(direction).multiplyScalar(50);
+  sprite.position.copy(direction.multiplyScalar(100));
 }
 
 function updateEarthOrientation(earthLayer, matrix, referenceFrame) {

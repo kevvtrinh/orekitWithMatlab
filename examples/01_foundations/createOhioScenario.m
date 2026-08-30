@@ -20,7 +20,9 @@ function study = createOhioScenario()
 
 %% Section 1: Create The Scenario
 
-startTime = datetime(2026, 1, 1, 0, 0, 0, "TimeZone", "UTC");
+% Noon in Ohio keeps the first visual example on Earth's daylight side while
+% preserving a fully explicit UTC epoch for all physical calculations.
+startTime = datetime(2026, 1, 1, 17, 0, 0, "TimeZone", "UTC");
 stopTime = startTime + hours(1);
 study = scenario.Scenario("Ohio Demonstration", startTime, stopTime);
 
