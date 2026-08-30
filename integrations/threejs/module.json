@@ -1,6 +1,6 @@
 {
   "name": "scenario-threejs-integration",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publicPackages": ["scenario.integrations.threejs"],
   "requiredModules": [
     "scenario-platforms",
@@ -14,7 +14,7 @@
     "runtimePath": "dist",
     "sourcePath": "web-src",
     "reactVersion": "18.3.1",
-    "threeVersion": "0.185.1",
+    "threeVersion": "0.170.0",
     "requiresNodeAtRuntime": false
   }
 }

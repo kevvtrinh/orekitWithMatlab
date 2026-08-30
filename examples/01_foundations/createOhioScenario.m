@@ -14,7 +14,8 @@ function study = createOhioScenario()
 %       Scenario containing one Satellite and one PointTarget.
 %**************************************************************************
 % UNITS
-%   - Satellite position is metres in GCRF and velocity is metres per second.
+%   - Satellite position is metres in ITRF and velocity is metres per second
+%     relative to the rotating ITRF frame.
 %   - Target coordinates are WGS84 geodetic degrees and ellipsoidal metres.
 %**************************************************************************
 
@@ -23,7 +24,7 @@ function study = createOhioScenario()
 % Noon in Ohio keeps the first visual example on Earth's daylight side while
 % preserving a fully explicit UTC epoch for all physical calculations.
 startTime = datetime(2026, 1, 1, 17, 0, 0, "TimeZone", "UTC");
-stopTime = startTime + hours(1);
+stopTime = startTime + hours(6);
 study = scenario.Scenario("Ohio Demonstration", startTime, stopTime);
 
 %% Section 2: Add The Satellite

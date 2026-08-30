@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from "react";
 import { createViewer } from "./three/createViewer.js";
 
-export function ScenarioViewport({ sceneData, referenceFrame }) {
+export function ScenarioViewport({ sceneData, referenceFrame, samplePosition }) {
   const containerRef = useRef(null);
   const viewerRef = useRef(null);
 
@@ -12,9 +12,9 @@ export function ScenarioViewport({ sceneData, referenceFrame }) {
 
   useEffect(() => {
     if (sceneData && viewerRef.current) {
-      viewerRef.current.update(sceneData, referenceFrame);
+      viewerRef.current.update(sceneData, referenceFrame, samplePosition);
     }
-  }, [sceneData, referenceFrame]);
+  }, [sceneData, referenceFrame, samplePosition]);
 
   return <div className="viewport" ref={containerRef} />;
 }

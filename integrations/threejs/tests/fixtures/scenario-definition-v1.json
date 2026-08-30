@@ -1,0 +1,17 @@
+{
+  "Format": "scenario-definition",
+  "Version": 1,
+  "Name": "Loaded Button Scenario",
+  "StartEpochUnix_s": 1767286800,
+  "StopEpochUnix_s": 1767290400,
+  "Satellites": [],
+  "Places": [
+    {
+      "Name": "Cleveland, Ohio",
+      "Latitude_deg": 41.4993,
+      "Longitude_deg": -81.6944,
+      "Altitude_m": 199
+    }
+  ],
+  "Targets": []
+}

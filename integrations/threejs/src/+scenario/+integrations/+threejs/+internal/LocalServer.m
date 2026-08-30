@@ -157,12 +157,27 @@ classdef LocalServer < handle
                         "scene", server.SceneData);
                     response = server.jsonResponse(200, payload);
                 case "POST /api/command"
-                    commandRequest = jsondecode(request.Body);
-                    server.CommandHandler(string(commandRequest.command));
-                    response = server.jsonResponse(200, ...
-                        struct("status", "ok"));
+                    response = server.commandResponse(request.Body);
                 otherwise
                     response = server.staticResponse(request);
+            end
+        end
+
+        function response = commandResponse(server, requestBody)
+            % Execute one MATLAB command and preserve identified diagnostics.
+
+            try
+                commandRequest = jsondecode(requestBody);
+                result = server.CommandHandler(commandRequest);
+                response = server.jsonResponse(200, struct( ...
+                    "status", "ok", ...
+                    "result", result));
+            catch commandError
+                payload = struct( ...
+                    "status", "error", ...
+                    "message", string(commandError.message), ...
+                    "identifier", string(commandError.identifier));
+                response = server.jsonResponse(400, payload);
             end
         end
 
@@ -273,8 +288,9 @@ classdef LocalServer < handle
             % Return a reason phrase for this server's small status set.
 
             reasons = containers.Map( ...
-                {200, 403, 404, 405}, ...
-                {'OK', 'Forbidden', 'Not Found', 'Method Not Allowed'});
+                {200, 400, 403, 404, 405}, ...
+                {'OK', 'Bad Request', 'Forbidden', 'Not Found', ...
+                 'Method Not Allowed'});
             if isKey(reasons, status)
                 reason = reasons(status);
             else

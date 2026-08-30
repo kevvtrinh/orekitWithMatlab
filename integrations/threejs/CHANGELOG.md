@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+- Added MATLAB-backed New, Save, Load, Add Satellite, and Add Place authoring menus.
+- Added classical-element satellite entry through an explicitly injected state
+  provider and versioned provider-neutral scenario-definition persistence.
+
+## 0.3.0
+
+- Added optional MATLAB-owned, time-tagged trajectory playback.
+- Added Orekit-backed ECI and ECEF satellite histories to the Ohio example.
+- Added play, pause, epoch display, and timeline scrubbing controls.
+- Added refresh-rate interpolation and selectable 60x-2400x playback speeds.
+- Extended the default Ohio scenario from two hours to six hours.
+- Added frame-specific orbit paths and time-varying Earth orientation.
+- Mapped both left and right drag to globe-centered rotation and disabled pan.
+
 ## 0.2.0
 
 - Replaced the embedded HTML viewer with a React and Three.js application.

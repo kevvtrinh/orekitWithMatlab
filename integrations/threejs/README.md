@@ -14,12 +14,19 @@ MATLAB `uihtml`. Node and Vite are build-time dependencies only.
 ```matlab
 setupScenario("threejs");
 addpath(fullfile(pwd, "examples", "01_foundations"));
-study = createOhioScenario();
-viewer = scenario.integrations.threejs.Viewer(study);
+viewer = openOhioScenarioViewer();
 ```
 
 The browser controls use same-origin HTTP requests. MATLAB changes the `Scenario`
 and sends a complete renderer-neutral snapshot back to React and Three.js.
+
+The top menu provides New, Save, Load, Add Satellite, and Add Place commands. Saved
+files use the provider-neutral scenario-definition JSON contract. The satellite form
+accepts epoch, semimajor-axis altitude, eccentricity, inclination, RAAN, argument of
+perigee, and true anomaly. When the product composition supplies the Orekit
+satellite-state provider, MATLAB converts those elements to the authoritative ITRF
+Cartesian state before adding the satellite. JavaScript performs no orbital
+conversion or propagation.
 
 ## Dependencies
 
@@ -28,9 +35,12 @@ and sends a complete renderer-neutral snapshot back to React and Three.js.
 - Aerospace Toolbox for MATLAB-side WGS84-to-ECEF conversion
 - React 18.3.1 and Three.js 0.170.0, compiled into `dist`
 
-The first viewer displays a snapshot at the scenario start time. It does not yet
-propagate satellites. The viewer runs offline and does not fetch scripts, textures,
-or other assets at runtime.
+The viewer displays MATLAB-provided snapshots. When composition supplies a
+trajectory provider, MATLAB publishes time-tagged ECI/ECEF histories and the
+browser enables timeline playback. Without that optional provider, the viewer
+remains an honest non-playable snapshot and does not invent orbital motion. The
+viewer runs offline and does not fetch scripts, textures, or other assets at
+runtime.
 
 The viewport provides ECEF and mean-equator/mean-equinox ECI display modes. MATLAB
 supplies both object positions, Earth orientation, and the Sun direction at the
@@ -38,6 +48,21 @@ scenario epoch. Orekit controls the physical directional light. The Sun uses the
 reference React viewer's radial sprite, warm light, scale, and placement 100 Earth
 radii along the calculated direction. As in that viewer, it can be outside the
 camera field of view or behind Earth.
+
+The default Ohio example composes the Orekit Keplerian trajectory provider. Its
+six-hour scenario is sampled every 60 seconds and defaults to 240 scenario
+seconds per real second. The viewer interpolates the MATLAB-supplied samples at
+the browser refresh rate and offers playback speeds from 60x through 2400x. ECI
+playback rotates Earth beneath the inertial orbit. ECEF
+playback keeps Earth fixed and shows the corresponding ground-relative path.
+Both frame modes render their MATLAB-supplied orbit histories. Left and right
+drag both rotate the view around Earth; panning is intentionally disabled.
+
+Visualization sampling defaults to 60 seconds. For intervals longer than 12 hours,
+the MATLAB payload increases the cadence in whole-minute increments to remain at or
+below 721 samples and reports that reduction in `warnings`. A 24-hour scenario uses
+120-second samples. Browser-frame interpolation remains continuous between those
+authoritative samples.
 
 The Earth uses the local NASA Blue Marble texture carried by the reference React
 viewer. Satellite and place markers, CSS labels, camera controls, atmosphere, and

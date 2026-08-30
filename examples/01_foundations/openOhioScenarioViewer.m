@@ -14,19 +14,24 @@ function viewer = openOhioScenarioViewer()
 %       MATLAB-owned localhost viewer. Call viewer.close() to stop its server.
 %**************************************************************************
 % UNITS
-%   - The initial snapshot uses ITRF metres and WGS84 geodetic coordinates.
+%   - Trajectory positions use ECI/ECEF metres. Epochs use UTC. The default
+%     playback rate is 240 scenario seconds per real second.
 %**************************************************************************
 
 %% Section 1: Create The Default Scenario
 
 study = createOhioScenario();
 
-%% Section 2: Select The Orekit Sun Provider
+%% Section 2: Select The Orekit Providers
 
 sunDirectionProvider = @scenario.integrations.orekit.calculateSunDirection;
+trajectoryProvider = ...
+    @scenario.integrations.orekit.propagateSatelliteTrajectory;
+satelliteStateProvider = ...
+    @scenario.integrations.orekit.createSatelliteStateFromKeplerian;
 
 %% Section 3: Open The Three.js Viewer
 
 viewer = scenario.integrations.threejs.Viewer( ...
-    study, sunDirectionProvider);
+    study, sunDirectionProvider, trajectoryProvider, satelliteStateProvider);
 end

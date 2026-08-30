@@ -11,6 +11,8 @@ study = scenario.Scenario(name, startTime, stopTime);
 satellite = study.addSatellite(name, initialState);
 target = study.addTarget(name, latitude_deg, longitude_deg, altitude_m);
 place = study.addPlace(name, latitude_deg, longitude_deg, altitude_m);
+definition = scenario.createScenarioDefinition(study);
+study = scenario.createScenarioFromDefinition(definition);
 ```
 
 ## Dependencies
@@ -18,8 +20,13 @@ place = study.addPlace(name, latitude_deg, longitude_deg, altitude_m);
 - `scenario-platforms` 0.1.0
 - `scenario-targets` 0.1.0
 
+Scenario definitions are versioned, provider-neutral MATLAB structures suitable for
+JSON persistence. They preserve the scenario interval, Cartesian satellite initial
+states, places, and point targets. Runtime providers and derived analysis results are
+intentionally excluded.
+
 ## Known limitations
 
 - Only satellites and Earth-fixed point targets/places are supported.
-- Object removal, persistence, propagation, access, and visualization are not yet
-  implemented.
+- Object removal, propagation, access, and visualization are not implemented by this
+  module. Persistence currently supports scenario-definition Version 1 only.

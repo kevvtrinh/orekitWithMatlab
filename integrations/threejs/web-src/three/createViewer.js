@@ -28,7 +28,9 @@ export function createViewer(container) {
   controls.minDistance = 1.2;
   controls.maxDistance = 40;
   controls.zoomSpeed = 0.9;
-  controls.enablePan = true;
+  controls.enablePan = false;
+  controls.mouseButtons.LEFT = THREE.MOUSE.ROTATE;
+  controls.mouseButtons.RIGHT = THREE.MOUSE.ROTATE;
 
   const scenarioLayer = new THREE.Group();
   const earthLayer = new THREE.Group();
@@ -42,6 +44,10 @@ export function createViewer(container) {
 
   const resizeObserver = new ResizeObserver(resize);
   resizeObserver.observe(container);
+  let currentSceneData = null;
+  let currentReferenceFrame = null;
+  let satelliteMarkers = [];
+  let placeMarkers = [];
   let animationFrame;
   animate();
 
@@ -55,36 +61,72 @@ export function createViewer(container) {
   }
 
   function animate() {
-    controls.update();
-    renderer.render(scene, camera);
-    labelRenderer.render(scene, camera);
+    renderScene();
     animationFrame = requestAnimationFrame(animate);
   }
 
-  function update(sceneData, referenceFrame) {
+  function renderScene() {
+    controls.update();
+    renderer.render(scene, camera);
+    labelRenderer.render(scene, camera);
+  }
+
+  function update(sceneData, referenceFrame, sampleIndex = 0) {
+    const shouldRebuild = sceneData !== currentSceneData ||
+      referenceFrame !== currentReferenceFrame;
+    if (shouldRebuild) {
+      rebuildScenario(sceneData, referenceFrame);
+      currentSceneData = sceneData;
+      currentReferenceFrame = referenceFrame;
+    }
+    updateTimeSample(sceneData, referenceFrame, sampleIndex);
+    renderScene();
+  }
+
+  function rebuildScenario(sceneData, referenceFrame) {
     clearLayer(scenarioLayer);
+    satelliteMarkers = [];
+    placeMarkers = [];
     const radius_m = Number(sceneData.earthRadius_m) || EARTH_RADIUS_M;
-    const positionField = referenceFrame === "ECI" ? "positionEci_m" : "positionEcef_m";
     normalizeArray(sceneData.satellites).forEach((satellite) => {
       addOrbitPath(scenarioLayer, satellite, referenceFrame, radius_m);
-      addSatelliteMarker(
-        scenarioLayer,
-        satellite.name,
-        satellite[positionField],
-        radius_m,
-      );
+      const marker = addSatelliteMarker(scenarioLayer, satellite.name);
+      satelliteMarkers.push({ marker, satellite });
     });
     normalizeArray(sceneData.places).forEach((place) => {
-      addPlaceMarker(
-        scenarioLayer,
-        place.name,
-        place[positionField],
-        radius_m,
-      );
+      const handles = addPlaceMarker(scenarioLayer, place.name);
+      placeMarkers.push({ ...handles, place });
     });
-    updateEarthOrientation(earthLayer, sceneData.ecefToEciMatrix, referenceFrame);
-    const sunField = referenceFrame === "ECI" ? "unitDirectionEci" : "unitDirectionEcef";
-    updateSun(sunSprite, sunlight, sceneData.sun?.[sunField]);
+  }
+
+  function updateTimeSample(sceneData, referenceFrame, requestedPosition) {
+    const timeSamples = normalizeArray(sceneData.timeSamples);
+    const bounds = calculateSampleBounds(requestedPosition, timeSamples.length);
+    const radius_m = Number(sceneData.earthRadius_m) || EARTH_RADIUS_M;
+    satelliteMarkers.forEach(({ marker, satellite }) => {
+      const positionM = readSamplePosition(satellite, referenceFrame, bounds);
+      setSatellitePosition(marker, positionM, radius_m);
+    });
+    placeMarkers.forEach(({ marker, ring, place }) => {
+      const positionM = readSamplePosition(place, referenceFrame, bounds);
+      setPlacePosition(marker, ring, positionM, radius_m);
+    });
+    updateEarthOrientation(
+      earthLayer,
+      timeSamples[bounds.lowerIndex]?.ecefToEciMatrix,
+      timeSamples[bounds.upperIndex]?.ecefToEciMatrix,
+      bounds.fraction,
+      referenceFrame,
+    );
+    const sunField = referenceFrame === "ECI"
+      ? "sunDirectionEci"
+      : "sunDirectionEcef";
+    const sunDirection = interpolateVector(
+      timeSamples[bounds.lowerIndex]?.[sunField],
+      timeSamples[bounds.upperIndex]?.[sunField],
+      bounds.fraction,
+    );
+    updateSun(sunSprite, sunlight, sunDirection);
   }
 
   function dispose() {
@@ -177,26 +219,21 @@ function addStars(scene) {
   })));
 }
 
-function addSatelliteMarker(layer, name, positionM, earthRadiusM) {
-  if (!Array.isArray(positionM) || positionM.length !== 3) return;
-  const position = positionToRender(positionM, earthRadiusM);
+function addSatelliteMarker(layer, name) {
   const marker = new THREE.Mesh(
     new THREE.SphereGeometry(0.014, 20, 14),
     new THREE.MeshBasicMaterial({ color: 0xd8b25a }),
   );
-  marker.position.copy(position);
   marker.add(createLabel(name, "object-label object-label--satellite"));
   layer.add(marker);
+  return marker;
 }
 
-function addPlaceMarker(layer, name, positionM, earthRadiusM) {
-  if (!Array.isArray(positionM) || positionM.length !== 3) return;
-  const position = positionToRender(positionM, earthRadiusM).normalize().multiplyScalar(1.006);
+function addPlaceMarker(layer, name) {
   const marker = new THREE.Mesh(
     new THREE.OctahedronGeometry(0.012),
     new THREE.MeshBasicMaterial({ color: 0xd9dee6 }),
   );
-  marker.position.copy(position);
   marker.add(createLabel(name, "object-label object-label--place"));
   layer.add(marker);
 
@@ -209,9 +246,27 @@ function addPlaceMarker(layer, name, positionM, earthRadiusM) {
       opacity: 0.85,
     }),
   );
+  layer.add(ring);
+  return { marker, ring };
+}
+
+function setSatellitePosition(marker, positionM, earthRadiusM) {
+  marker.visible = isPosition(positionM);
+  if (!marker.visible) return;
+  marker.position.copy(positionToRender(positionM, earthRadiusM));
+}
+
+function setPlacePosition(marker, ring, positionM, earthRadiusM) {
+  const isVisible = isPosition(positionM);
+  marker.visible = isVisible;
+  ring.visible = isVisible;
+  if (!isVisible) return;
+  const position = positionToRender(positionM, earthRadiusM)
+    .normalize()
+    .multiplyScalar(1.006);
+  marker.position.copy(position);
   ring.position.copy(position);
   ring.lookAt(position.clone().multiplyScalar(2));
-  layer.add(ring);
 }
 
 function addOrbitPath(layer, satellite, referenceFrame, earthRadiusM) {
@@ -247,6 +302,49 @@ function positionToRender(positionM, earthRadiusM) {
   );
 }
 
+function readSamplePosition(object, referenceFrame, bounds) {
+  const historyField = referenceFrame === "ECI"
+    ? "positionSamplesEci_m"
+    : "positionSamplesEcef_m";
+  const snapshotField = referenceFrame === "ECI"
+    ? "positionEci_m"
+    : "positionEcef_m";
+  const history = object[historyField];
+  if (!Array.isArray(history?.[bounds.lowerIndex])) {
+    return object[snapshotField];
+  }
+  return interpolateVector(
+    history[bounds.lowerIndex],
+    history[bounds.upperIndex],
+    bounds.fraction,
+  );
+}
+
+function calculateSampleBounds(samplePosition, sampleCount) {
+  const maximumIndex = Math.max(sampleCount - 1, 0);
+  const position = Math.min(
+    Math.max(Number(samplePosition) || 0, 0),
+    maximumIndex,
+  );
+  const lowerIndex = Math.floor(position);
+  return {
+    lowerIndex,
+    upperIndex: Math.min(lowerIndex + 1, maximumIndex),
+    fraction: position - lowerIndex,
+  };
+}
+
+function interpolateVector(lowerValue, upperValue, fraction) {
+  if (!isPosition(lowerValue) || !isPosition(upperValue)) return lowerValue;
+  return lowerValue.map((component, componentIndex) => (
+    component + fraction * (upperValue[componentIndex] - component)
+  ));
+}
+
+function isPosition(value) {
+  return Array.isArray(value) && value.length === 3;
+}
+
 function updateSun(sprite, sunlight, directionValue) {
   const isValid = Array.isArray(directionValue) && directionValue.length === 3;
   sprite.visible = isValid;
@@ -258,10 +356,24 @@ function updateSun(sprite, sunlight, directionValue) {
   sprite.position.copy(direction.multiplyScalar(100));
 }
 
-function updateEarthOrientation(earthLayer, matrix, referenceFrame) {
+function updateEarthOrientation(
+  earthLayer,
+  lowerMatrix,
+  upperMatrix,
+  fraction,
+  referenceFrame,
+) {
   earthLayer.matrixAutoUpdate = true;
   earthLayer.quaternion.identity();
-  if (referenceFrame !== "ECI" || !Array.isArray(matrix)) return;
+  if (referenceFrame !== "ECI" || !Array.isArray(lowerMatrix)) return;
+  const lowerOrientation = orientationFromPhysicalMatrix(lowerMatrix);
+  const upperOrientation = Array.isArray(upperMatrix)
+    ? orientationFromPhysicalMatrix(upperMatrix)
+    : lowerOrientation;
+  earthLayer.quaternion.copy(lowerOrientation).slerp(upperOrientation, fraction);
+}
+
+function orientationFromPhysicalMatrix(matrix) {
   const transformPhysical = (vector) => new THREE.Vector3(
     matrix[0][0] * vector.x + matrix[0][1] * vector.y + matrix[0][2] * vector.z,
     matrix[1][0] * vector.x + matrix[1][1] * vector.y + matrix[1][2] * vector.z,
@@ -271,7 +383,7 @@ function updateEarthOrientation(earthLayer, matrix, referenceFrame) {
   const basisY = physicalToRender(transformPhysical(new THREE.Vector3(0, 0, 1)));
   const basisZ = physicalToRender(transformPhysical(new THREE.Vector3(0, -1, 0)));
   const rotation = new THREE.Matrix4().makeBasis(basisX, basisY, basisZ);
-  earthLayer.quaternion.setFromRotationMatrix(rotation);
+  return new THREE.Quaternion().setFromRotationMatrix(rotation);
 }
 
 function physicalToRender(vector) {

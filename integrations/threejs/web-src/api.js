@@ -11,10 +11,10 @@ export function loadScene() {
   return requestJson("/api/scene");
 }
 
-export function sendCommand(command) {
+export function sendCommand(command, payload = {}) {
   return requestJson("/api/command", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ command }),
+    body: JSON.stringify({ command, payload }),
   });
 }
