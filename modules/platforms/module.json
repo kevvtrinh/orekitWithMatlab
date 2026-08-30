@@ -1,0 +1,7 @@
+{
+  "name": "scenario-platforms",
+  "version": "0.1.0",
+  "publicPackages": ["scenario.platform"],
+  "requiredModules": [],
+  "optionalModules": []
+}

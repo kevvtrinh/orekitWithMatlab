@@ -1,0 +1,20 @@
+{
+  "name": "scenario-threejs-integration",
+  "version": "0.2.0",
+  "publicPackages": ["scenario.integrations.threejs"],
+  "requiredModules": [
+    "scenario-platforms",
+    "scenario-targets",
+    "scenario-composition",
+    "scenario-frames",
+    "scenario-environment"
+  ],
+  "optionalModules": ["scenario-orekit-integration"],
+  "browserBuild": {
+    "runtimePath": "dist",
+    "sourcePath": "web-src",
+    "reactVersion": "18.3.1",
+    "threeVersion": "0.185.1",
+    "requiresNodeAtRuntime": false
+  }
+}

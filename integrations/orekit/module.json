@@ -1,0 +1,12 @@
+{
+  "name": "scenario-orekit-integration",
+  "version": "0.1.0",
+  "publicPackages": ["scenario.integrations.orekit"],
+  "requiredModules": [],
+  "optionalModules": [],
+  "runtime": {
+    "orekitVersion": "13.1.6",
+    "hipparchusVersion": "4.0.3",
+    "requiresOrekitData": true
+  }
+}

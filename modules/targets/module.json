@@ -1,0 +1,7 @@
+{
+  "name": "scenario-targets",
+  "version": "0.1.0",
+  "publicPackages": ["scenario.target"],
+  "requiredModules": [],
+  "optionalModules": []
+}

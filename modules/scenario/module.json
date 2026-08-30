@@ -1,0 +1,7 @@
+{
+  "name": "scenario-composition",
+  "version": "0.1.0",
+  "publicPackages": ["scenario"],
+  "requiredModules": ["scenario-platforms", "scenario-targets"],
+  "optionalModules": []
+}

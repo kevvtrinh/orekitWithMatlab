@@ -1,20 +1,36 @@
-vendor/orekit/
+# MATLAB generated files
 *.asv
-*.mat
+*.m~
+*.mex*
+slprj/
+codegen/
+*.mlproj/Output/
 
-# STK vendor interface: experimental, not yet run against a real STK
-# install (no license on this machine), kept out of the repo for now.
-stk/
+# Local/runtime dependencies and data
+data/orekit/*
+data/spice/*
+data/catalogs/*
+integrations/orekit/lib/*
+!data/README.md
+!third_party/README.md
 
-# Local Claude Code tooling: worktrees, codex queue scripts, and personal
-# settings are per-machine state, not project config. .claude/settings.json
-# (the shared allow-list/defaults) is intentionally NOT ignored.
-.claude/worktrees/
-.claude/codex-queue/
-.claude/settings.local.json
+# Generated results
+build/
+dist/
+!integrations/threejs/dist/
+!integrations/threejs/dist/**
+node_modules/
+.pnpm-store/
+coverage/
+results/
+*.log
 
-# Vite dev-server cache
-apps/orbit-ui/.vite/
+# Local configuration
+config/local.*
+config/secrets.*
 
-# MATLAB-hosted static UI live output
-apps/orbit-static-ui/data/live/
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

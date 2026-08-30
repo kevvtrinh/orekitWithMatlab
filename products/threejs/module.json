@@ -1,0 +1,12 @@
+{
+  "name": "scenario-threejs-product",
+  "version": "0.1.0",
+  "status": "active",
+  "requiredModules": [
+    "scenario-platforms",
+    "scenario-targets",
+    "scenario-composition",
+    "scenario-frames"
+  ],
+  "requiredIntegrations": ["scenario-threejs-integration"]
+}

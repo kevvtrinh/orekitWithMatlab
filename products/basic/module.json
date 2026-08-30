@@ -1,0 +1,11 @@
+{
+  "name": "scenario-basic-product",
+  "version": "0.1.0",
+  "requiredModules": [
+    "scenario-platforms",
+    "scenario-targets",
+    "scenario-composition",
+    "scenario-frames"
+  ],
+  "optionalIntegrations": []
+}

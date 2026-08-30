@@ -1,0 +1,8 @@
+{
+  "name": "scenario-frames",
+  "version": "0.2.0",
+  "publicPackages": ["scenario.frames"],
+  "requiredModules": [],
+  "optionalModules": [],
+  "requiredMathWorksProducts": ["Aerospace Toolbox"]
+}
