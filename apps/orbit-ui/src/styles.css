@@ -418,3 +418,70 @@ select option { color: var(--text); background: var(--bg-panel); }
   .modal-body { padding: 14px; }
   .modal-title, .modal-footer { padding: 13px 14px; }
 }
+
+/* Sensor-centered camera and angular observation window. */
+.viewport-sensor-view { position: absolute; z-index: 10; right: 68px; top: 114px; font-size: 10px; background: #10171de6; }
+.sensor-view-window { position: absolute; z-index: 30; right: 15px; top: 15px; width: min(560px, calc(100% - 30px)); height: min(510px, calc(100% - 30px)); display: flex; flex-direction: column; background: #111b23; border: 1px solid #648879; border-radius: 8px; box-shadow: 0 12px 45px #0009; overflow: hidden; }
+.sensor-view-window--expanded { inset: 12px; width: auto; height: auto; }
+.sensor-view-header { display: flex; align-items: center; justify-content: space-between; padding: 9px 12px; border-bottom: 1px solid var(--border); }
+.sensor-view-header > div { display: flex; align-items: center; gap: 8px; }
+.sensor-view-header strong { font-size: 12px; font-weight: 600; }
+.sensor-view-header .btn { padding: 4px; }
+.sensor-view-controls { display: flex; gap: 8px; padding: 8px 12px; }
+.sensor-view-controls select { min-width: 0; flex: 1; background: var(--bg-inset); color: var(--text); border: 1px solid var(--border-strong); border-radius: 4px; padding: 6px; font-size: 11px; }
+.sensor-view-controls .btn { font-size: 10px; padding: 5px 9px; }
+.sensor-view-tabs { display: flex; gap: 4px; padding: 0 12px 8px; }
+.sensor-view-tabs button { background: transparent; color: var(--text-muted); border: 1px solid transparent; border-radius: 4px; padding: 5px 13px; font-size: 11px; cursor: pointer; }
+.sensor-view-tabs button[aria-selected="true"] { color: #b3e8d2; background: #b3e8d214; border-color: #b3e8d24a; }
+.sensor-view-stage { position: relative; flex: 1; min-height: 90px; overflow: hidden; background: #070d12; }
+.sensor-view-stage > canvas { position: absolute; inset: 0; }
+.sensor-view-reticle { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.sensor-view-reticle circle, .sensor-view-reticle > path:last-child { fill: none; stroke: #b3e8d2b0; stroke-width: 1; }
+.sensor-view-stamp { position: absolute; left: 9px; top: 8px; color: #d7e6df; font: 9px/1.7 var(--mono); text-shadow: 0 1px 3px #000; pointer-events: none; }
+.sensor-view-marker { position: absolute; display: flex; align-items: center; gap: 3px; transform: translate(-7px, -7px); border: 0; background: transparent; color: #bad6ed; cursor: pointer; font-size: 10px; white-space: nowrap; padding: 0; }
+.sensor-view-marker span { background: #0b141dcc; padding: 2px 4px; border-radius: 3px; }
+.sensor-view-marker--area { color: #e4bd72; }
+.sensor-view-marker--target { color: #f2a790; }
+.sensor-view-empty { position: absolute; inset: 0; display: grid; place-content: center; padding: 30px; color: var(--text-muted); font-size: 12px; text-align: center; }
+.sensor-view-readout { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 5px; padding: 8px 12px; font: 9px var(--mono); color: var(--text-muted); border-top: 1px solid var(--border); }
+.sensor-view-objects { display: flex; flex-wrap: wrap; gap: 5px; max-height: 52px; overflow: auto; padding: 0 12px; font-size: 10px; color: var(--text-muted); }
+.sensor-view-objects button { display: flex; align-items: center; gap: 4px; padding: 4px 6px; color: var(--text); border: 1px solid var(--border); border-radius: 4px; background: var(--bg-inset); cursor: pointer; font-size: 10px; }
+.sensor-view-note { margin: 0; padding: 7px 12px; color: var(--text-faint); font-size: 9px; line-height: 1.5; }
+.sensor-angle-plot { position: absolute; inset: 0; width: 100%; height: 100%; }
+.sensor-angle-plot text { fill: #82979e; font: 10px var(--mono); }
+.sensor-plot-grid { stroke: #2c3b43; stroke-width: 1; fill: none; }
+.sensor-plot-axis { stroke: #536871; stroke-width: 1; fill: none; }
+.sensor-plot-fov { stroke: #a1d6bf; fill: #b3e8d207; stroke-width: 1.3; }
+.sensor-plot-area { stroke: #e4bd72; stroke-width: 1.3; fill: none; }
+.sensor-plot-marker { cursor: pointer; fill: #a9cde7; }
+.sensor-plot-marker text { fill: #d2e0e7; font-size: 10px; paint-order: stroke; stroke: #070d12; stroke-width: 3px; }
+.sensor-plot-marker--target { fill: #f2a790; }
+.sensor-plot-marker--area { fill: #e4bd72; }
+.sensor-plot-origin { fill: #b3e8d2; }
+@media (max-width: 540px) { .sensor-view-window { inset: 6px; width: auto; height: auto; } .sensor-view-controls, .sensor-view-readout { padding-left: 8px; padding-right: 8px; } }
+.sensor-plot-leader { fill: none; stroke: #81968c66; stroke-width: 0.7; }
+.slew-planner { border-top: 1px solid var(--border); flex: 0 0 auto; font-size: 10px; }
+.slew-planner summary { cursor: pointer; padding: 10px 12px; color: #c7e1d6; }
+.slew-planner summary span { float: right; color: var(--text-muted); font-size: 9px; }
+.slew-planner-body { max-height: 225px; overflow: auto; padding: 0 12px 8px; }
+.slew-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 7px 10px; }
+.slew-fields label { display: flex; flex-direction: column; gap: 3px; color: var(--text-muted); }
+.slew-fields select, .slew-fields input { min-width: 0; width: 100%; box-sizing: border-box; padding: 5px; border: 1px solid var(--border-strong); background: var(--bg-inset); color: var(--text); border-radius: 3px; font-size: 10px; }
+.slew-actions { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 9px; }
+.slew-actions .btn { font-size: 10px; padding: 5px 8px; }
+.slew-status { color: #c9dfd5; line-height: 1.5; margin: 7px 0; }
+.slew-export-path { font: 8px/1.5 var(--mono); color: var(--text-muted); overflow-wrap: anywhere; margin: 5px 0; }
+.slew-planner .sensor-view-note { padding: 4px 0; }
+.sensor-view-window:has(.slew-planner[open]) { height: min(720px, calc(100% - 30px)); }
+.sensor-view-header, .sensor-view-controls, .sensor-view-tabs, .sensor-view-readout, .sensor-view-note, .sensor-view-objects { flex-shrink: 0; }
+.slew-planner[open] { overflow: auto; max-height: 43%; flex-shrink: 1; }
+.sensor-view-window:has(.slew-planner[open]) > .sensor-view-objects, .sensor-view-window:has(.slew-planner[open]) > .sensor-view-note { display: none; }
+.viewport-slew-replay { position: absolute; z-index: 12; bottom: 43px; left: 20px; display: flex; gap: 8px; align-items: center; padding: 8px; border: 1px solid #476f5e; border-radius: 5px; background: #101b21ed; color: #c8e1d5; font-size: 10px; }
+.viewport-slew-replay .btn { font-size: 10px; }
+.avoidance-demo-btn { white-space: nowrap; border-color: #476f5e; }
+.avoidance-demo-status { position: absolute; z-index: 11; bottom: 98px; left: 20px; width: min(365px, calc(100% - 40px)); box-sizing: border-box; padding: 11px; border: 1px solid #476f5e; border-radius: 6px; background: #101b21ed; color: #c8e1d5; font-size: 10px; }
+.avoidance-demo-status strong { font-size: 11px; }
+.avoidance-demo-status p { margin: 8px 0 0; line-height: 1.5; }
+.avoidance-demo-status small { display: block; margin-top: 5px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 8px; color: var(--text-muted); }
+.avoidance-demo-stages { display: flex; gap: 12px; margin-top: 9px; color: var(--text-faint); font-size: 9px; }
+.avoidance-demo-stages .active { color: #9ed9bd; }

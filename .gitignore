@@ -16,3 +16,5 @@ stk/
 
 # Vite dev-server cache
 apps/orbit-ui/.vite/
+# Generated Orbit Console avoidance round trips (JSON and MATLAB artifacts).
+standalone/azElAvoidance/exports/orbit-ui/

@@ -5,6 +5,8 @@ import { LineGeometry } from "three/examples/jsm/lines/LineGeometry.js";
 import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
 import { makeAreaGeometry } from "./areaGeometry.js";
 import { createOrbitEditor } from "./orbitEditor.js";
+import { createSensorViewRenderer } from "./sensorViewRenderer.js";
+import { slewDirectionAt, slewMatchesScene } from "../lib/slewPlanning.js";
 import {
   CSS2DObject,
   CSS2DRenderer,
@@ -258,7 +260,7 @@ const ATMOSPHERE_FRAGMENT_SHADER = /* glsl */ `
   }
 `;
 
-export function createViewer(container, { onSelect, onFocusChange, onOrbitEditChange, onOrbitCommit } = {}) {
+export function createViewer(container, { onSelect, onFocusChange, onOrbitEditChange, onOrbitCommit, onSlewPlanChange } = {}) {
   const renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   container.appendChild(renderer.domElement);
@@ -342,6 +344,26 @@ export function createViewer(container, { onSelect, onFocusChange, onOrbitEditCh
 
   // --- Dynamic content, rebuilt on setScenario ---
   let scenarioContent = null; // { group, groundGroup, sats, stations, accessGroup }
+  let sensorView = null;
+  let slewPlan = null, slewTrace = null, replayEnd = null;
+  function clearSlewPlan() {
+    if (slewTrace) disposeObject(slewTrace);
+    slewTrace = null; slewPlan = null; replayEnd = null;
+    onSlewPlanChange?.(null);
+    applySelection();
+  }
+  function setSlewPlan(plan) {
+    clearSlewPlan(); slewPlan = plan;
+    const vertices = [];
+    for (let i = 1; i < plan.groundTrace.length; i++) {
+      if (plan.groundTrace[i-1] && plan.groundTrace[i]) vertices.push(...plan.groundTrace[i-1], ...plan.groundTrace[i]);
+    }
+    slewTrace = new THREE.LineSegments(new THREE.BufferGeometry().setAttribute("position", new THREE.Float32BufferAttribute(vertices, 3)),
+      new THREE.LineBasicMaterial({ color: 0x87e6bd, transparent: true, opacity: 0.95 }));
+    earthGroup.add(slewTrace); applySelection();
+    onSlewPlanChange?.(plan.request.context);
+    clock.setPlaying(false); clock.setTime(plan.request.initialState.time_s);
+  }
   let options = {
     labels: true,
     groundTracks: true,
@@ -374,6 +396,7 @@ export function createViewer(container, { onSelect, onFocusChange, onOrbitEditCh
   }
 
   function setScenario(data) {
+    if (slewPlan && (!data || !slewMatchesScene(slewPlan.request, data))) clearSlewPlan();
     if (scenarioContent) {
       disposeObject(scenarioContent.group);
       disposeObject(scenarioContent.groundGroup);
@@ -544,7 +567,7 @@ export function createViewer(container, { onSelect, onFocusChange, onOrbitEditCh
           new THREE.OctahedronGeometry(isAreaPoint ? 0.004 : 0.012),
           new THREE.MeshBasicMaterial({ color: isAreaPoint ? color : 0xd9dee6 }),
         );
-      latLonToVec3(gp.latitudeDeg, gp.longitudeDeg, 1.006, marker.position);
+      latLonToVec3(gp.latitudeDeg, gp.longitudeDeg, 1.0007 + (gp.altitudeM ?? 0) / 6371000, marker.position);
       marker.userData.objectName = gp.name;
       if (isAreaPoint) marker.visible = Boolean(options.areaGrid);
       groundGroup.add(marker);
@@ -597,7 +620,7 @@ export function createViewer(container, { onSelect, onFocusChange, onOrbitEditCh
       const label = makeLabel(area.name, "obj-label obj-label--area");
       anchor.add(label);
 
-      return { area, lines, fill, anchor, label };
+      return { area, lines, fill, anchor, label, boundaries };
     });
 
     // Access lines: one segment per access pair, shown only inside a window.
@@ -690,14 +713,15 @@ export function createViewer(container, { onSelect, onFocusChange, onOrbitEditCh
       st.label?.element.classList.toggle("obj-label--selected", selected);
     }
     for (const area of scenarioContent.areaOutlines) {
+      const keepOut = area.area.name === slewPlan?.request.context.obstacle;
       const selected = area.area.name === selectedName || scenarioContent.stations.some((st) =>
         st.data.name === selectedName && st.data.area?.name === area.area.name);
       for (const line of area.lines) {
-        line.material.color.setHex(selected ? 0xb3e8d2 : 0xe4bd72);
+        line.material.color.setHex(keepOut ? 0xff796e : selected ? 0xb3e8d2 : 0xe4bd72);
         line.material.linewidth = selected ? 2.4 : 1.6;
       }
-      area.fill.material.color.setHex(selected ? 0xb3e8d2 : 0xe4bd72);
-      area.fill.material.opacity = selected ? 0.24 : 0.14;
+      area.fill.material.color.setHex(keepOut ? 0xff796e : selected ? 0xb3e8d2 : 0xe4bd72);
+      area.fill.material.opacity = keepOut ? 0.32 : selected ? 0.24 : 0.14;
       area.label.element.classList.toggle("obj-label--selected", selected);
     }
   }
@@ -867,7 +891,8 @@ export function createViewer(container, { onSelect, onFocusChange, onOrbitEditCh
     const viz = s.sensor;
     const p = s.marker.position;
     const r = p.length();
-    if (r <= 1.02) {
+    if (r <= 1.000001) {
+      viz.viewDirection = null;
       viz.fovCone.visible = false;
       viz.forDome.visible = false;
       viz.trackLine.visible = false;
@@ -909,7 +934,13 @@ export function createViewer(container, { onSelect, onFocusChange, onOrbitEditCh
       }
     }
     const exported = exportedPointingAt(viz.pointingSeries, tSec, dir);
-    const phase = exported?.phase ?? pointing.phase;
+    const plannedDirection = slewPlan?.request.context.platform === s.data.name ? slewDirectionAt(s.data, slewPlan.result, tSec) : null;
+    if (plannedDirection) dir.copy(plannedDirection);
+    const phase = plannedDirection ? "slew" : exported?.phase ?? pointing.phase;
+    viz.viewDirection ??= new THREE.Vector3();
+    viz.viewDirection.copy(dir);
+    viz.viewPhase = phase;
+    viz.viewSource = plannedDirection ? "MATLAB avoidance" : exported ? "MATLAB pointing" : "Preview pointing";
     const targetName = exported?.targetName ?? pointing.entry?.targetName;
     if (exported && targetName) {
       const target = scenarioContent.stationByName.get(targetName);
@@ -920,6 +951,7 @@ export function createViewer(container, { onSelect, onFocusChange, onOrbitEditCh
         targetPos = tmpTarget;
       }
     }
+    if (plannedDirection) targetPos = new THREE.Ray(p, dir).intersectSphere(new THREE.Sphere(new THREE.Vector3(), 1.001), tmpTarget);
     if (s.detail?.payload) {
       tmpInverseBody.copy(s.detail.root.quaternion).invert();
       tmpLocalDirection.copy(dir).applyQuaternion(tmpInverseBody);
@@ -1029,6 +1061,19 @@ export function createViewer(container, { onSelect, onFocusChange, onOrbitEditCh
     return true;
   }
 
+  function focusSlewPlan() {
+    if (!slewPlan) return;
+    const area = scenarioContent.areaOutlines.find((entry) => entry.area.name === slewPlan.request.context.obstacle)?.area;
+    if (!area) return;
+    finishOrbitEditing(); resetCamera();
+    const radial = latLonToVec3(area.centerLatDeg, area.centerLonDeg, 1, new THREE.Vector3()).applyQuaternion(earthGroup.quaternion);
+    const side = new THREE.Vector3(0, 1, 0).cross(radial).normalize();
+    const span = Math.max(0.16, Math.max(area.widthKm, area.heightKm) / 6371 * 4);
+    controls.target.copy(radial);
+    camera.position.copy(radial).addScaledVector(radial, span).addScaledVector(side, span * 0.65);
+    controls.minDistance = 0.015; camera.near = 0.0001; camera.updateProjectionMatrix(); controls.update();
+  }
+
   function focusSatellite(name) {
     finishOrbitEditing();
     const satellite = scenarioContent?.sats.find((entry) => entry.data.name === name);
@@ -1086,6 +1131,9 @@ export function createViewer(container, { onSelect, onFocusChange, onOrbitEditCh
     const dt = Math.min((now - lastWall) / 1000, 0.25);
     lastWall = now;
     clock.tick(dt);
+    if (replayEnd !== null && clock.getSnapshot().tSec >= replayEnd) {
+      clock.setTime(replayEnd); clock.setPlaying(false); replayEnd = null;
+    }
 
     const { tSec } = clock.getSnapshot();
     const date = new Date(epochMs + tSec * 1000);
@@ -1140,6 +1188,12 @@ export function createViewer(container, { onSelect, onFocusChange, onOrbitEditCh
           const pixels = st.data.name === selectedName ? 31 : 24;
           const scale = pixels * 2 * Math.tan(camera.fov * DEG / 2) / Math.max(container.clientHeight, 1);
           st.marker.scale.setScalar(scale);
+        } else {
+          st.marker.getWorldPosition(tmpVec);
+          const pixels = st.data.area ? (st.data.name === selectedName ? 8 : 4) : (st.data.name === selectedName ? 15 : 11);
+          const perPixel = 2 * camera.position.distanceTo(tmpVec) * Math.tan(camera.fov * DEG / 2) / Math.max(container.clientHeight, 1);
+          st.marker.scale.setScalar(pixels * perPixel / (st.data.area ? 0.008 : 0.024));
+          if (st.ring) st.ring.scale.setScalar((pixels + 10) * perPixel / 0.056);
         }
         if (!st.label) continue;
         st.marker.getWorldPosition(tmpVec);
@@ -1184,6 +1238,7 @@ export function createViewer(container, { onSelect, onFocusChange, onOrbitEditCh
     }
     renderer.render(scene, camera);
     labelRenderer.render(scene, camera);
+    sensorView?.render(now);
   }
 
   function resize() {
@@ -1202,6 +1257,26 @@ export function createViewer(container, { onSelect, onFocusChange, onOrbitEditCh
   raf = requestAnimationFrame(frame);
 
   return {
+    setSlewPlan, clearSlewPlan, focusSlewPlan,
+    getSlewPlan() { return slewPlan; },
+    replaySlewPlan() {
+      if (!slewPlan) return;
+      clock.setTime(slewPlan.request.initialState.time_s);
+      clock.setSpeed(1); replayEnd = slewPlan.request.goalState.time_s; clock.setPlaying(true);
+    },
+    attachSensorView(container, name, onChange, getMode) {
+      sensorView?.dispose();
+      const view = createSensorViewRenderer({ container, scene, onChange, getMode, getFrame: () => {
+        const satellite = scenarioContent?.sats.find((entry) => entry.data.name === name);
+        if (!satellite?.sensor?.viewDirection) return null;
+        return { content: scenarioContent, satellite, position: satellite.marker.position,
+          direction: satellite.sensor.viewDirection, velocity: trackVelocity(satellite, clock.getSnapshot().tSec, new THREE.Vector3()),
+          halfAngleDeg: satellite.data.sensor.coneHalfAngleDeg, earthQuaternion: earthGroup.quaternion,
+          tSec: clock.getSnapshot().tSec, epochMs };
+      } });
+      sensorView = view;
+      return () => { view.dispose(); if (sensorView === view) sensorView = null; };
+    },
     setScenario(data) {
       if (epochMs !== (data?.epochMs ?? 0)) lastEarthAngle = null;
       epochMs = data?.epochMs ?? 0;
@@ -1225,6 +1300,7 @@ export function createViewer(container, { onSelect, onFocusChange, onOrbitEditCh
     resetCamera,
     dispose() {
       cancelAnimationFrame(raf);
+      sensorView?.dispose(); sensorView = null;
       resizeObserver.disconnect();
       orbitEditor.dispose();
       setScenario(null);

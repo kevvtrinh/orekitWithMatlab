@@ -213,6 +213,26 @@ npm run bridge:demo
 
 ## Layout
 
+**Sensor view:** adding a sensor opens a separate viewing window. Reopen it
+using **Sensor view** on the selected satellite, the inspector, or **view** on
+the sensor's object-tree row. The window supports three synchronized tabs:
+
+- **Camera:** a view along the current sensor boresight, with a circular FOV
+  reticle, Earth texture, area boundaries, targets, and ground-station labels.
+- **Az/El:** sensor-frame azimuth (positive right) and elevation (positive up),
+  in degrees, with boresight at the origin and the actual cone boundary.
+- **Polar:** radius is off-boresight angle in degrees; bearing is clockwise
+  from image up. The outer ring is the sensor cone half-angle.
+
+The image-up axis is projected inertial velocity; a deterministic perpendicular
+axis is used when velocity and boresight align. This is a display roll convention,
+not an exported spacecraft roll measurement. All tabs use the same mission
+timeline and fresh MATLAB pointing history when available, with clearly labeled
+preview pointing otherwise. Earth occlusion is geometric on the display sphere;
+these views do not model terrain, detection, or access constraints. Country and
+area boundaries are shown as geometry, not area-coverage estimates. Camera mode
+is cropped to 170 degrees for very wide sensors; angular tabs retain the full FOV.
+
 **Country area targets:** choose **Insert → Country Area Target**, search by
 country, territory, code, or continent, select a boundary, and set grid spacing.
 Adding the area positions the camera over it. All 242 boundaries are available
@@ -236,6 +256,49 @@ must be edited through their TLE input.
 
 Set `ORBIT_UI_DATA_DIR` to use a separate scenario/output directory, for example
 when testing the console in an isolated session. The default is `server/data`.
+
+**One-click demo:** click **Avoidance demo** in the top bar (also available in
+**Scenario → Run Earth Avoidance Demo**). It loads a simulated LEO pass over an
+80 km geographic keep-out in Vietnam, exports the moving Az/El boundaries,
+runs the copied main-branch planner in MATLAB, imports and checks its result,
+focuses the globe, and automatically plays the 30-second slew. Every click
+starts a fresh solve. Progress and the export directory appear on the globe;
+failures are shown without replaying an old result. **Return to scenario**
+restores the previous scenario and timeline; the demo does not overwrite the
+saved server spec. Leaving while MATLAB runs stops automatic import/playback;
+the job can finish and retain its files on disk.
+
+**Avoidance slew for your own objects:** open **Sensor view → Obstacle avoidance**.
+Select two ground objects and an Earth area target, then **Export & plan**.
+The current timeline time is the departure time; duration sets the arrival time.
+The bridge exports moving geographic boundaries to
+`standalone/azElAvoidance/exports/orbit-ui/<job-id>/`, runs MATLAB's
+`obstacleAvoidance.planTrajectory`, imports the result, and checks the moving Earth geometry
+again before enabling **Replay slew**. **Show on globe** reveals the red keep-out
+area and green boresight ground trace. Replay runs at 1× and stops at arrival;
+the mission timeline also scrubs the path. Camera, Az/El and Polar views follow
+the commanded boresight. **Save round trip** creates a portable request/result
+JSON for **Import result**; changed geometry or ephemerides invalidate the plan.
+
+Each export contains `request.json`, canonical `request.mat`, `plan.json`, full
+`plan.mat`, and `orbit-slew.json`. MATLAB with Optimization Toolbox must be installed and available through
+`MATLAB_EXE` or PATH. A failed solve leaves its exported inputs available for
+inspection. Only one MATLAB bridge/planner job runs at a time.
+
+Planner coordinates use nadir as (0°, 0°) and projected inertial velocity as up.
+They differ from the observation tabs, which are centered on the *current*
+boresight. Each axis rate is conservatively limited to the sensor slew rate
+divided by √2; axis acceleration is 2°/s² and jerk is 4°/s³. Obstacles use the display's 6371 km
+spherical Earth and current ephemeris (preview or MATLAB). Outer country rings
+are keep-outs including their holes. A boundary crossing the horizon is rejected.
+Moving polygons are exported at ≤1 s. The upstream planner independently
+validates continuous polynomial motion against its documented interpolated or
+conservatively enclosed obstacle history; Orbit Console additionally checks
+the returned path against the actual moving geographic region at ≤0.05 s.
+This is **boresight** clearance in Az/El degrees, not whole-beam or terrain-height
+avoidance. The nonlinear Earth projection still has a sampled clearance check.
+The pinned production source and revision are documented in
+[`vendor/AzElObsAvoid/UPSTREAM.md`](../../vendor/AzElObsAvoid/UPSTREAM.md).
 
 ```text
 apps/orbit-ui/

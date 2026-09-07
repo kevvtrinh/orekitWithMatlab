@@ -40,6 +40,7 @@ function SatelliteRow({
   onSelect,
   onFocusSatellite,
   onEditSensor,
+  onOpenSensorView,
   onRemoveSensor,
   accessRows,
   taskRows,
@@ -104,11 +105,15 @@ function SatelliteRow({
                 if (e.key === "Enter" || e.key === " ") onSelect(sat.name);
               }}
               title={`Imaging sensor on ${sat.name}`}
+              onDoubleClick={() => onOpenSensorView(sat.name)}
             >
               <span className="branch">|</span>
               <span className="sensor-glyph" />
               <span className="tree-item-name">{sensorName}</span>
               <span className="tree-actions">
+                <button className="tree-action-btn" title="Open sensor view" onClick={(event) => {
+                  event.stopPropagation(); onOpenSensorView(sat.name);
+                }}>view</button>
                 <button
                   className="tree-action-btn"
                   onClick={(e) => {
@@ -201,6 +206,7 @@ function SatelliteRow({
 }
 
 export default function ObjectBrowser({
+  onOpenSensorView,
   scenario,
   selection,
   onSelect,
@@ -437,6 +443,7 @@ export default function ObjectBrowser({
               onToggleExpanded={toggleSatellite}
               onSelect={onSelect}
               onEditSensor={onEditSensor}
+              onOpenSensorView={onOpenSensorView}
               onRemoveSensor={onRemoveSensor}
               {...satelliteContexts.get(sat.name)}
             />
@@ -455,6 +462,7 @@ export default function ObjectBrowser({
                   onToggleExpanded={toggleSatellite}
                   onSelect={onSelect}
                   onEditSensor={onEditSensor}
+                  onOpenSensorView={onOpenSensorView}
                   onRemoveSensor={onRemoveSensor}
                   {...satelliteContexts.get(sat.name)}
                 />

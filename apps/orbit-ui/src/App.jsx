@@ -25,6 +25,9 @@ import {
   validateSpec,
 } from "./lib/spec.js";
 import { clock } from "./lib/clock.js";
+import { avoidanceSpec } from "./lib/avoidanceDemo.js";
+import { makeSlewRequest, validateSlewResult } from "./lib/slewPlanning.js";
+import { runAvoidanceRequest } from "./lib/avoidanceClient.js";
 
 const JOB_POLL_MS = 2500;
 
@@ -42,6 +45,17 @@ export default function App() {
   const [dialog, setDialog] = useState(null);
   const [mobilePanel, setMobilePanel] = useState("view");
   const [focusRequest, setFocusRequest] = useState(null);
+  const [sensorViewName, setSensorViewName] = useState(null);
+  const [avoidanceDemo, setAvoidanceDemo] = useState(null);
+  const [slewPlaybackRequest, setSlewPlaybackRequest] = useState(null);
+  const demoBackup = useRef(null), demoAbort = useRef(null);
+  useEffect(() => () => demoAbort.current?.abort(), []);
+  const openSensorView = useCallback((name) => {
+    setSelection(name); setMobilePanel("view"); setSensorViewName(name);
+  }, []);
+  useEffect(() => {
+    if (sensorViewName && spec && !spec.objects.some((object) => object.name === sensorViewName && object.sensor)) setSensorViewName(null);
+  }, [spec, sensorViewName]);
   const focusSatellite = useCallback((name) => {
     setSelection(name);
     setMobilePanel("view");
@@ -65,6 +79,44 @@ export default function App() {
     () => (spec ? buildRenderScenario(spec, matlabRaw) : null),
     [spec, matlabRaw],
   );
+  const scenarioRef = useRef(scenario); scenarioRef.current = scenario;
+
+  async function startAvoidanceDemo() {
+    if (!spec || job.state === "running" || demoAbort.current) return;
+    if (!demoBackup.current) demoBackup.current = { spec, specMode, matlabRaw, source, selection, viewOptions, time: clock.getSnapshot() };
+    const controller = new AbortController(); demoAbort.current = controller;
+    const demo = avoidanceSpec(), demoScene = buildRenderScenario(demo, null);
+    setDialog(null); setSensorViewName(null); setSpecError(null); setSlewPlaybackRequest(null);
+    setSpecMode("local"); setSpec(demo); setMatlabRaw(null); setSource("avoidance-demo");
+    setSelection("Slew Demo"); setMobilePanel("view");
+    setViewOptions((prev) => ({ ...prev, sensorFov: true, sensorFor: false, labels: true, groundTracks: false, referenceFrame: "ECEF" }));
+    setFocusRequest((prev) => ({ kind: "area", name: "Vietnam keep-out", revision: (prev?.revision ?? 0)+1 }));
+    clock.setPlaying(false); clock.configure(demo.meta.durationSeconds); clock.setTime(0);
+    setAvoidanceDemo({ phase: "exporting", message: "Projecting the Earth keep-out region into Az/El…" });
+    try {
+      const request = makeSlewRequest(demoScene, { platform: "Slew Demo", from: "South Target", to: "North Station",
+        obstacle: "Vietnam keep-out", startSec: 0, durationSec: 30, clearanceDeg: 1 });
+      const result = await runAvoidanceRequest(request, { signal: controller.signal, onProgress: (phase, status) => {
+        setAvoidanceDemo({ phase, directory: status?.directory, message: phase === "exporting" ? "Exporting geographic Az/El boundaries…" :
+          phase === "planning" ? "MATLAB is solving with the copied AzElObsAvoid planner…" : "Importing the result and checking Earth clearance…" });
+      } });
+      const plan = validateSlewResult(request, result.result, scenarioRef.current);
+      setSlewPlaybackRequest({ id: result.id, plan });
+      setAvoidanceDemo({ phase: "ready", directory: result.directory, message: `${result.result.time_s.length} checked samples · ${result.result.method} · auto replay` });
+    } catch (err) {
+      if (err.name !== "AbortError") setAvoidanceDemo((previous) => ({ ...previous, phase: "failed", message: err.message }));
+    } finally { if (demoAbort.current === controller) demoAbort.current = null; }
+  }
+
+  function leaveAvoidanceDemo() {
+    demoAbort.current?.abort(); demoAbort.current = null;
+    const previous = demoBackup.current; demoBackup.current = null;
+    setAvoidanceDemo(null); setSlewPlaybackRequest(null); setSensorViewName(null); setDialog(null); setSpecError(null);
+    if (!previous) return;
+    setSpec(previous.spec); setSpecMode(previous.specMode); setMatlabRaw(previous.matlabRaw); setSource(previous.source);
+    setSelection(previous.selection); setViewOptions(previous.viewOptions); setFocusRequest(null);
+    clock.setPlaying(false); clock.configure(previous.time.durationSec); clock.setTime(previous.time.tSec); clock.setSpeed(previous.time.speed);
+  }
 
   // Keep the clock span in sync and apply the optional ?t= deep link once.
   useEffect(() => {
@@ -308,6 +360,7 @@ export default function App() {
   // ---------------------------------------------------------------------
 
   const runMatlab = useCallback(async (runSpec) => {
+    if (demoBackup.current) return { errors: ["Return to your scenario before running the full MATLAB scenario."] };
     try {
       const specForRun =
         runSpec !== undefined ? runSpec : specMode === "server" ? spec : undefined;
@@ -438,6 +491,9 @@ export default function App() {
   return (
     <div className="app">
       <TopBar
+        avoidanceDemo={avoidanceDemo}
+        onAvoidanceDemo={startAvoidanceDemo}
+        onLeaveAvoidanceDemo={leaveAvoidanceDemo}
         scenario={scenario}
         source={source}
         job={job}
@@ -457,6 +513,7 @@ export default function App() {
       </nav>
       <main className="main" data-mobile-panel={mobilePanel}>
         <ObjectBrowser
+          onOpenSensorView={openSensorView}
           scenario={scenario}
           selection={selection}
           onSelect={setSelection}
@@ -471,6 +528,11 @@ export default function App() {
         />
         <div className="viewport-wrap">
           <Viewport3D
+            slewPlaybackRequest={slewPlaybackRequest}
+            avoidanceDemo={avoidanceDemo}
+            sensorViewName={sensorViewName}
+            onOpenSensorView={openSensorView}
+            onCloseSensorView={() => setSensorViewName(null)}
             scenario={scenario}
             selection={selection}
             viewOptions={viewOptions}
@@ -486,6 +548,7 @@ export default function App() {
           <TimelineBar scenario={scenario} />
         </div>
         <Inspector
+          onOpenSensorView={openSensorView}
           scenario={scenario}
           selection={selection}
           job={job}
@@ -569,7 +632,7 @@ export default function App() {
           onClose={closeDialog}
           onSubmit={async (originalName, obj) => {
             const result = await replaceObject(originalName, obj);
-            if (result.ok) setSelection(obj.name);
+            if (result.ok) openSensorView(obj.name);
             return result;
           }}
         />

@@ -12,11 +12,16 @@ export default function TopBar({
   onExport,
   onImportSpec,
   onRunMatlab,
+  avoidanceDemo, onAvoidanceDemo, onLeaveAvoidanceDemo,
 }) {
   const hasMatlabData = source === "matlab";
   const running = job?.state === "running";
+  const demoBusy = avoidanceDemo && !["ready", "failed"].includes(avoidanceDemo.phase);
 
   const scenarioItems = [
+    { label: "Run Earth Avoidance Demo", hint: "Export Az/El, solve in MATLAB, import and replay automatically",
+      onClick: onAvoidanceDemo, disabled: !scenario || running || demoBusy },
+    "---",
     {
       label: "Scenario Settings...",
       onClick: () => onOpenDialog({ type: "settings" }),
@@ -109,7 +114,7 @@ export default function TopBar({
     {
       label: "Run Full Scenario",
       hint: "Run the current scenario spec through MATLAB/Orekit",
-      disabled: job?.state === "running",
+      disabled: job?.state === "running" || Boolean(avoidanceDemo),
       onClick: onRunMatlab,
       meta: job?.state === "running" ? "running" : undefined,
     },
@@ -157,16 +162,21 @@ export default function TopBar({
       <div className="scenario-identity" aria-label="Active scenario">
         <span className="scenario-name">{scenario?.meta.name ?? "No scenario loaded"}</span>
         <span className="scenario-source">
-          {scenario?.dirty ? "Changes pending" : hasMatlabData ? "MATLAB results" : "Sample scenario"}
+          {avoidanceDemo ? "Demo session · preview orbit" : scenario?.dirty ? "Changes pending" : hasMatlabData ? "MATLAB results" : "Sample scenario"}
         </span>
       </div>
-      <button className="btn btn--primary run-scenario-btn" onClick={onRunMatlab}
+      <button className="btn avoidance-demo-btn" onClick={onAvoidanceDemo} disabled={!scenario || running || demoBusy}
+        title="Load the Earth obstacle demo, export Az/El, run MATLAB and replay its result">
+        <ConsoleIcon name={demoBusy ? "refresh" : "sensor"} size={16} className={demoBusy ? "icon-spin" : ""} />
+        {demoBusy ? "Planning demo…" : "Avoidance demo"}</button>
+      {avoidanceDemo && <button className="btn" onClick={onLeaveAvoidanceDemo}>Return to scenario</button>}
+      {!avoidanceDemo && <button className="btn btn--primary run-scenario-btn" onClick={onRunMatlab}
         disabled={!scenario || running} aria-busy={running}
         title="Run the active scenario">
         <ConsoleIcon name={running ? "refresh" : "play"} size={16}
           className={running ? "icon-spin" : ""} />
         {running ? "Running…" : "Run scenario"}
-      </button>
+      </button>}
     </header>
   );
 }

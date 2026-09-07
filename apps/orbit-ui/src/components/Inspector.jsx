@@ -198,6 +198,7 @@ export default function Inspector({
   onOpenDialog,
   onDeleteObject,
   onFocusSatellite,
+  onOpenSensorView,
 }) {
   const { tSec } = useSyncExternalStore(clock.subscribe, clock.getSnapshot);
 
@@ -243,10 +244,12 @@ export default function Inspector({
             <h3>{selection}</h3>
             {selectedSpec && (
               <span className="inspector-actions">
-                {sat && <button className="btn btn--icon" disabled={!sat.ephemeris}
+                  {sat && <button className="btn btn--icon" disabled={!sat.ephemeris}
                   onClick={() => onFocusSatellite(sat.name)} title="Track this satellite in 3D">
                   <ConsoleIcon name="crosshair" size={12} /> Focus
-                </button>}
+                  </button>}
+                  {sat?.sensor && <button className="btn btn--icon" onClick={() => onOpenSensorView(sat.name)}>
+                    <ConsoleIcon name="sensor" size={12} /> Sensor view</button>}
                 <button
                   className="btn btn--icon"
                   onClick={() =>

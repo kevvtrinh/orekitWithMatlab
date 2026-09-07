@@ -3,6 +3,23 @@
 This folder is self-contained. It starts with `azElData` and does not use
 Orekit, a satellite scenario, or any repository startup function.
 
+Orbit Console can export geographic area boundaries here through its sensor
+window's **Obstacle avoidance → Export & plan** control. Generated round trips
+are under `exports/orbit-ui/<job-id>/`. `request.mat` contains canonical
+`azElData`, protected upstream obstacles, endpoint states, limits and options;
+`plan.mat` contains the full planner result, diagnosis and independent validation.
+The adapter uses the pinned main-branch copy at `vendor/AzElObsAvoid`; the legacy
+standalone examples below retain their existing planner. To rerun an exported request:
+
+```matlab
+addpath("C:\path\to\azElAvoidance")
+planOrbitUiSlew("C:\path\to\request.json", "C:\path\to\plan.json")
+```
+
+These angles are relative to a nadir/velocity reference frame. The geographic
+region is a boresight keep-out; the export does not model terrain heights or
+the full sensor beam. See the Orbit Console README for sampling conventions.
+
 Every numbered entry point in `examples` opens the synchronized combined animation:
 the current 2-D azimuth/elevation geometry is shown beside the accumulating
 3-D azimuth/elevation/time obstacle volume and steering path.

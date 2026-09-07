@@ -13,11 +13,23 @@ import {
 import { ensureWorker, warmWorkerEnabled, workerStatus } from "./matlabWorker.js";
 import { loadSpec, resetSpec, saveSpec, writeRunSpec } from "./scenarioStore.js";
 import { localCors } from "./cors.js";
+import { avoidanceBusy, avoidanceStatus, startAvoidance } from "./avoidanceJob.js";
 
 const PORT = Number(process.env.ORBIT_UI_PORT || 5175);
 const app = express();
 app.use(localCors);
 app.use(express.json({ limit: "4mb" }));
+
+app.post("/api/avoidance/plan", (req, res) => {
+  if (avoidanceBusy() || jobStatus().state === "running") return res.status(409).json({ error: "Wait for the current MATLAB job to finish." });
+  try { res.status(202).json(startAvoidance(req.body)); }
+  catch (err) { res.status(400).json({ error: err.message }); }
+});
+app.get("/api/avoidance/plan/:id", (req, res) => {
+  const job = avoidanceStatus(req.params.id);
+  if (!job) return res.status(404).json({ error: "Planner job not found; exported files remain in the avoidance folder." });
+  res.json(job);
+});
 
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true, repoRoot: REPO_ROOT });
@@ -78,6 +90,7 @@ app.post("/api/matlab/warmup", (_req, res) => {
 
 // Propagate the current spec through MATLAB/Orekit (single job at a time).
 app.post("/api/matlab/run", (req, res) => {
+  if (avoidanceBusy()) return res.status(409).json({ error: "Wait for the avoidance planner to finish." });
   let spec;
   if (req.body && req.body.spec) {
     // Convenience: save-and-run in one request.
@@ -105,6 +118,7 @@ app.post("/api/matlab/run", (req, res) => {
 
 // Kick off the demo bridge run (matlab -batch, single job at a time).
 app.post("/api/matlab/run-demo", (_req, res) => {
+  if (avoidanceBusy()) return res.status(409).json({ error: "Wait for the avoidance planner to finish." });
   const result = startDemoJob({
     onDone: (status) =>
       console.log(`[matlab] job finished: ${status.state}`, status.error ?? ""),

@@ -8,6 +8,7 @@ const wrap = (radians) => Math.atan2(Math.sin(radians), Math.cos(radians));
 
 export function createOrbitEditor({ scene, camera, controls, element, onChange, onCommit, isOccluded }) {
   const root = new THREE.Group();
+  root.userData.orbitEditor = true;
   scene.add(root);
   root.visible = false;
   const path = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: 0xb3e8d2 }));

@@ -2,13 +2,16 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createViewer } from "../three/viewer.js";
 import ConsoleIcon from "./ConsoleIcon.jsx";
 import OrbitEditPanel from "./OrbitEditPanel.jsx";
+import SensorViewWindow from "./SensorViewWindow.jsx";
 
-export default function Viewport3D({ scenario, selection, viewOptions, onSelect, onToggleOption, onSetReferenceFrame, onOrbitCommit, focusRequest }) {
+export default function Viewport3D({ scenario, selection, viewOptions, onSelect, onToggleOption, onSetReferenceFrame, onOrbitCommit, focusRequest, sensorViewName, onOpenSensorView, onCloseSensorView, slewPlaybackRequest, avoidanceDemo }) {
   const containerRef = useRef(null);
   const viewerRef = useRef(null);
   const [focusedName, setFocusedName] = useState(null);
   const [orbitEdit, setOrbitEdit] = useState(null);
   const [orbitError, setOrbitError] = useState(null);
+  const [slewContext, setSlewContext] = useState(null);
+  const playbackId = useRef(null);
   const onOrbitCommitRef = useRef(onOrbitCommit);
   onOrbitCommitRef.current = onOrbitCommit;
   const selectedSatellite = scenario?.satellites.find((sat) => sat.name === selection);
@@ -35,6 +38,7 @@ export default function Viewport3D({ scenario, selection, viewOptions, onSelect,
       onSelect: (name) => onSelectRef.current?.(name),
       onFocusChange: setFocusedName,
       onOrbitEditChange: setOrbitEdit,
+      onSlewPlanChange: setSlewContext,
       onOrbitCommit: async (name, orbit) => {
         setOrbitError(null);
         try {
@@ -75,6 +79,18 @@ export default function Viewport3D({ scenario, selection, viewOptions, onSelect,
       setFocusedName(focusRequest.name);
     }
   }, [focusRequest]);
+
+  useEffect(() => {
+    if (!slewPlaybackRequest) {
+      if (playbackId.current) { viewerRef.current?.clearSlewPlan(); viewerRef.current?.resetCamera(); }
+      playbackId.current = null; return;
+    }
+    if (playbackId.current === slewPlaybackRequest.id || !viewerRef.current) return;
+    playbackId.current = slewPlaybackRequest.id;
+    viewerRef.current.setSlewPlan(slewPlaybackRequest.plan);
+    viewerRef.current.focusSlewPlan();
+    viewerRef.current.replaySlewPlan();
+  }, [slewPlaybackRequest]);
 
   return (
     <div className="viewport" ref={containerRef} role="region" aria-label="Three-dimensional orbital view">
@@ -124,6 +140,20 @@ export default function Viewport3D({ scenario, selection, viewOptions, onSelect,
       </button>}
       {selectedArea && <button className="btn viewport-edit-orbit" onClick={() => viewerRef.current?.focusArea(selection)}>
         <ConsoleIcon name="crosshair" size={15} /> View area</button>}
+      {selectedSatellite?.sensor && !sensorViewName && <button className="btn viewport-sensor-view" onClick={() => onOpenSensorView(selection)}>
+        <ConsoleIcon name="sensor" size={15} /> Sensor view</button>}
+      {sensorViewName && <SensorViewWindow viewerRef={viewerRef} scenario={scenario} name={sensorViewName}
+        onChangeSensor={onOpenSensorView} onClose={onCloseSensorView} onSelect={onSelect} />}
+      {slewContext && !sensorViewName && <div className="viewport-slew-replay"><span>Avoidance slew · {slewContext.platform}</span>
+        <button className="btn" onClick={() => viewerRef.current?.replaySlewPlan()}>Replay slew</button>
+        <button className="btn" onClick={() => onOpenSensorView(slewContext.platform)}>Sensor view</button></div>}
+      {avoidanceDemo && !sensorViewName && <div className="avoidance-demo-status" role="status">
+        <strong>Earth avoidance demo</strong>
+        <div className="avoidance-demo-stages">{["Export Az/El", "MATLAB solve", "Import & replay"].map((label, i) =>
+          <span key={label} className={i <= ({ exporting: 0, planning: 1, importing: 2, ready: 2 }[avoidanceDemo.phase] ?? -1) ? "active" : ""}>{i+1}. {label}</span>)}</div>
+        <p>{avoidanceDemo.message}</p>
+        {avoidanceDemo.directory && <small title={avoidanceDemo.directory}>Files: {avoidanceDemo.directory}</small>}
+      </div>}
       {orbitEdit && <OrbitEditPanel edit={orbitEdit} error={orbitError}
         onClose={() => viewerRef.current?.finishOrbitEditing()}
         onCommit={(orbit) => viewerRef.current?.commitOrbit(orbit)} />}
