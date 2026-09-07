@@ -6,6 +6,10 @@ if nargin < 3
 end
 options = normalizeSchedulerOptions(options);
 taskType = string(taskField(task, "TaskType", "TrackPointTarget"));
+if taskField(task, "RequiredSensorCount", 1) > 1
+    opportunities = computeMultiSensorTaskOpportunities(scenario, task, options);
+    return;
+end
 
 switch upper(taskType)
     case {"SCANAREATARGET", "REVISITAREATARGET", "SEARCHAREA", "IMAGESTRIP"}

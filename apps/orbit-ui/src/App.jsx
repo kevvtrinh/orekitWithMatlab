@@ -14,6 +14,7 @@ import SensorDialog from "./components/dialogs/SensorDialog.jsx";
 import ManeuverDialog from "./components/dialogs/ManeuverDialog.jsx";
 import AreaTargetDialog from "./components/dialogs/AreaTargetDialog.jsx";
 import AccessDialog from "./components/dialogs/AccessDialog.jsx";
+import CountryTargetDialog from "./components/dialogs/CountryTargetDialog.jsx";
 import * as api from "./lib/api.js";
 import { buildRenderScenario } from "./lib/renderScenario.js";
 import { satLlaAt } from "./lib/scenarioUtils.js";
@@ -39,6 +40,13 @@ export default function App() {
   const [selection, setSelection] = useState(null);
   const [job, setJob] = useState({ state: "idle" });
   const [dialog, setDialog] = useState(null);
+  const [mobilePanel, setMobilePanel] = useState("view");
+  const [focusRequest, setFocusRequest] = useState(null);
+  const focusSatellite = useCallback((name) => {
+    setSelection(name);
+    setMobilePanel("view");
+    setFocusRequest((previous) => ({ name, revision: (previous?.revision ?? 0) + 1 }));
+  }, []);
   const [viewOptions, setViewOptions] = useState({
     labels: true,
     groundTracks: true,
@@ -46,6 +54,8 @@ export default function App() {
     sensorFov: true,
     sensorFor: false,
     sun: true,
+    referenceFrame: "ECI",
+    areaGrid: false,
   });
   const jobStateRef = useRef("idle");
   const urlTimeApplied = useRef(false);
@@ -73,7 +83,8 @@ export default function App() {
     setSelection((sel) =>
       sel &&
       (scenario.satellites.some((s) => s.name === sel) ||
-        scenario.groundPoints.some((g) => g.name === sel))
+          scenario.groundPoints.some((g) => g.name === sel) ||
+          scenario.areaOutlines.some((area) => area.name === sel))
         ? sel
         : (scenario.satellites[0]?.name ?? scenario.groundPoints[0]?.name ?? null),
     );
@@ -171,7 +182,7 @@ export default function App() {
           const body = await api.saveSpec(candidate);
           setSpec(body.spec);
         } catch (err) {
-          if (err.errors) return { errors: err.errors };
+            if (err.errors) { setSpec(spec); return { errors: err.errors }; }
           // Bridge went away mid-session: keep editing locally.
           setSpecMode("local");
           setSpecError(
@@ -181,7 +192,7 @@ export default function App() {
       }
       return { ok: true };
     },
-    [specMode],
+      [specMode, spec],
   );
 
   const insertObjects = useCallback(
@@ -438,7 +449,13 @@ export default function App() {
         onImportSpec={handleImportSpec}
         onRunMatlab={() => runAccessRequests(null)}
       />
-      <div className="main">
+      <nav className="workspace-tabs" aria-label="Workspace panels">
+        {[["objects", "Objects"], ["view", "Orbital view"], ["details", "Details"]].map(([panel, label]) => (
+          <button key={panel} aria-pressed={mobilePanel === panel}
+            onClick={() => setMobilePanel(panel)}>{label}</button>
+        ))}
+      </nav>
+      <main className="main" data-mobile-panel={mobilePanel}>
         <ObjectBrowser
           scenario={scenario}
           selection={selection}
@@ -449,6 +466,8 @@ export default function App() {
           }}
           onRemoveSensor={removeSensor}
           onDeleteArea={deleteArea}
+          onAddSatellite={() => openDialog({ type: "satellite" })}
+          onFocusSatellite={focusSatellite}
         />
         <div className="viewport-wrap">
           <Viewport3D
@@ -456,6 +475,13 @@ export default function App() {
             selection={selection}
             viewOptions={viewOptions}
             onSelect={setSelection}
+            onToggleOption={toggleOption}
+            focusRequest={focusRequest}
+            onSetReferenceFrame={(referenceFrame) => setViewOptions((prev) => ({ ...prev, referenceFrame }))}
+            onOrbitCommit={(name, orbit) => {
+              const object = spec.objects.find((item) => item.name === name);
+              return object ? replaceObject(name, { ...object, orbit }) : { errors: ["This satellite is no longer in the scenario."] };
+            }}
           />
           <TimelineBar scenario={scenario} />
         </div>
@@ -466,8 +492,9 @@ export default function App() {
           onRunMatlab={() => runAccessRequests(null)}
           onOpenDialog={openDialog}
           onDeleteObject={deleteObject}
+          onFocusSatellite={focusSatellite}
         />
-      </div>
+      </main>
       <StatusBar scenario={scenario} source={source} job={job} specError={specError} />
 
       <input
@@ -572,6 +599,16 @@ export default function App() {
           }}
         />
       )}
+      {dialog?.type === "countryTarget" && spec && <CountryTargetDialog spec={spec} onClose={closeDialog}
+        onSubmit={async ({ targets, area }) => {
+          const result = await applySpec({ ...spec, objects: [...spec.objects, ...targets], areas: [...(spec.areas ?? []), area] });
+            if (result.ok) {
+              setSelection(area.name);
+              setMobilePanel("view");
+              setFocusRequest((previous) => ({ name: area.name, kind: "area", revision: (previous?.revision ?? 0) + 1 }));
+            }
+          return result;
+        }} />}
     </div>
   );
 }

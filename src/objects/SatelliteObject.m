@@ -13,6 +13,9 @@ classdef SatelliteObject < MissionObject
         TLELine1 string = ""
         TLELine2 string = ""
         SourceEphemeris table = table()
+        % Numeric continuous arcs, with both one-sided states at each burn.
+        % Saved with the native scenario; exact burn queries use the last arc.
+        EphemerisSegments cell = {}
         PropagatorType string = "Keplerian"
         MassKg double = 1000
         DragAreaM2 double = 4
@@ -90,15 +93,23 @@ classdef SatelliteObject < MissionObject
         function obj = propagate(obj, timeVector, config)
             obj.validate();
             if strcmp(obj.OrbitDefinitionType, "Ephemeris")
+                if ~isempty(obj.Maneuvers)
+                    error("SatelliteObject:EphemerisManeuversUnsupported", ...
+                        "Imported ephemeris cannot apply new maneuvers. " + ...
+                        "Use a propagatable orbit definition instead.");
+                end
                 obj.Ephemeris = OrekitEphemeris.resample(obj.SourceEphemeris, timeVector);
+                obj.EphemerisSegments = {};
                 obj.OrekitPropagator = [];
                 obj.IsPropagated = true;
                 return;
             end
-            [ephemeris, propagator] = OrekitPropagatorFactory.propagateWithManeuvers( ...
+            [ephemeris, propagator, segments] = ...
+                OrekitPropagatorFactory.propagateWithManeuvers( ...
                 obj, config, timeVector);
             obj.OrekitPropagator = propagator;
             obj.Ephemeris = ephemeris;
+            obj.EphemerisSegments = segments;
             obj.IsPropagated = true;
         end
 
@@ -118,6 +129,8 @@ classdef SatelliteObject < MissionObject
             % stay on the orbit arc instead of cutting a chord through it
             % (a straight chord dips hundreds of km on coarse time grids).
             % Clamped to the ephemeris span; exact at the sample times.
+            % Maneuvered histories instead use segmented GCRF Hermite states
+            % transformed at the query time, preserving each burn boundary.
             if isempty(obj.Ephemeris) || ~all(ismember(["ECEF_X_m", "ECEF_Y_m", "ECEF_Z_m"], obj.Ephemeris.Properties.VariableNames))
                 error("SatelliteObject:NoECEF", ...
                     "Satellite '%s' does not have ECEF ephemeris.", obj.Name);
@@ -125,6 +138,18 @@ classdef SatelliteObject < MissionObject
             ephemeris = obj.Ephemeris;
             timeVector = timeVector(:);
             timeVector.TimeZone = ephemeris.Time.TimeZone;
+            if ~isempty(obj.EphemerisSegments) || ~isempty(obj.Maneuvers)
+                % The velocity discontinuity changes the arc on either side
+                % of a burn. Use the same segmented GCRF state as getState.
+                times = min(max(timeVector, ephemeris.Time(1)), ephemeris.Time(end));
+                positions = zeros(numel(times), 3);
+                for timeIndex = 1:numel(times)
+                    state = obj.getState(times(timeIndex));
+                    positions(timeIndex, :) = OrekitFrameTransform.gcrfToEcef( ...
+                        times(timeIndex), state(1:3));
+                end
+                return;
+            end
             samples = [ephemeris.ECEF_X_m, ephemeris.ECEF_Y_m, ephemeris.ECEF_Z_m];
             if height(ephemeris) == 1
                 positions = repmat(samples, numel(timeVector), 1);
@@ -229,6 +254,43 @@ classdef SatelliteObject < MissionObject
             end
             maneuvers = table(names, times, frames, deltaV, magnitudes, ...
                 'VariableNames', {'Name', 'Time', 'Frame', 'DeltaVmps', 'MagnitudeMps'});
+        end
+
+        function data = toStruct(obj)
+            % Persist numeric arcs; Java propagators have no portable lifetime.
+            data = toStruct@MissionObject(obj);
+            data.OrekitPropagator = [];
+        end
+    end
+
+    methods (Access = protected)
+        function ephemeris = stateEphemeris(obj, time)
+            % Right-continuous event selection also handles simultaneous burns.
+            ephemeris = obj.Ephemeris;
+            for segmentIndex = numel(obj.EphemerisSegments):-1:1
+                segment = obj.EphemerisSegments{segmentIndex};
+                if time >= segment.Time(1) || segmentIndex == 1
+                    ephemeris = segment;
+                    return;
+                end
+            end
+            % Older saved scenarios did not preserve one-sided burn states.
+            % Their exact samples remain usable, but crossing a burn cannot
+            % be reconstructed from those samples without fabricating motion.
+            if isempty(ephemeris) || any(time == ephemeris.Time) || ...
+                    time <= ephemeris.Time(1) || time >= ephemeris.Time(end)
+                return;
+            end
+            leftTime = ephemeris.Time(find(ephemeris.Time < time, 1, "last"));
+            rightTime = ephemeris.Time(find(ephemeris.Time > time, 1, "first"));
+            for maneuverIndex = 1:numel(obj.Maneuvers)
+                burnTime = OrekitTime.ensureUtc(obj.Maneuvers{maneuverIndex}.Time);
+                if burnTime > leftTime && burnTime <= rightTime
+                    error("SatelliteObject:MissingManeuverHistory", ...
+                        "Satellite '%s' has no one-sided states for this " + ...
+                        "maneuver interval. Propagate the scenario again.", obj.Name);
+                end
+            end
         end
     end
 

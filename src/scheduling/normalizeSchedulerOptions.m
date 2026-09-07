@@ -16,4 +16,5 @@ elseif ~isa(options, "SchedulerOptions")
     error("normalizeSchedulerOptions:InvalidOptions", ...
         "Options must be a SchedulerOptions object or struct.");
 end
+options.validate();
 end

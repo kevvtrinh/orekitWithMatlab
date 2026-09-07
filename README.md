@@ -241,14 +241,20 @@ docs                architecture and API notes
 
 ## Web UI (Orbit Console)
 
-A non-MATLAB web frontend lives in `apps/orbit-ui`: an STK-style console
-(object browser, smooth Three.js 3D Earth/orbit viewport, inspector) served
-by a small Node bridge that calls this suite through `matlab -batch`. It loads
-instantly with bundled sample data and has a one-click action that reruns the
-MATLAB/Orekit backend (`src/ui/orbitUiDemoScenario.m` and
-`src/ui/exportScenarioJson.m`) and refreshes the view with live results. The
-bridge keeps a warm MATLAB worker (`src/ui/orbitUiWorker.m`) alive between
-runs, so only the first run pays MATLAB + JVM + Orekit startup.
+The React/Three.js console lives in `apps/orbit-ui`. Launch it from MATLAB:
+
+```matlab
+startupOrekitSuite();
+launchOrbitHtmlUI();
+```
+
+It provides an object browser, Three.js Earth/orbit viewport, and inspector.
+A Node bridge serves the frontend and calls the MATLAB/Orekit backend for
+analysis. The bundled sample scenario loads immediately; running a scenario
+replaces it with MATLAB results. The bridge keeps a warm MATLAB worker
+(`src/ui/orbitUiWorker.m`) between runs to avoid repeated engine startup.
+
+For frontend development, run Vite and the bridge directly:
 
 ```powershell
 cd apps\orbit-ui
@@ -256,31 +262,10 @@ npm install
 npm run dev     # http://localhost:5174
 ```
 
-See `apps/orbit-ui/README.md` for details on the bridge and scripts.
+See [`apps/orbit-ui/README.md`](apps/orbit-ui/README.md) for launcher options,
+requirements, and bridge scripts.
 
-## Static Web UI (No Node)
-
-The full-parity no-Node console lives in `apps/orbit-static-ui`: plain
-HTML/CSS and vanilla JavaScript with a WebGL Earth (bundled NASA textures,
-Canvas fallback), ECI/ECEF display frames, per-object result freshness with
-instant two-body previews, and Orekit-authoritative Sun/terminator/pointing
-data - served by MATLAB itself over a localhost-only Java socket bridge. It
-can also be opened directly from disk in sample-data mode.
-
-```matlab
-startupOrekitSuite()
-launchOrbitStaticUi()   % http://127.0.0.1:8321
-```
-
-The bridge reuses the same JSON pipeline as the Node app:
-`orbitUiDemoScenario`, `orbitUiRunScenario`, and `exportScenarioJson`, plus
-the shared viz exports `exportSunViz`, `exportScheduleViz`, and
-`exportPointingViz`. Browser tests: open
-`apps/orbit-static-ui/selftest.html`; MATLAB tests:
-`runtests('src/tests/testOrbitUiVizExports.m')`. See
-`apps/orbit-static-ui/README.md` and `FEATURE_PARITY.md` for details.
-
-## Current UI
+## MATLAB desktop UI
 
 The STK-style MATLAB UI launcher is:
 

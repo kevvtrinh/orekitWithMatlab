@@ -152,13 +152,22 @@ classdef OrekitPropagatorFactory
                 'LatitudeDeg', 'LongitudeDeg', 'AltitudeM'});
         end
 
-        function [ephemeris, propagator] = propagateWithManeuvers(satellite, config, timeVector)
+        function [ephemeris, propagator, segments] = ...
+                propagateWithManeuvers(satellite, config, timeVector)
             %PROPAGATEWITHMANEUVERS Piecewise propagation across impulsive burns.
             %
             % At each maneuver time the current state is retrieved, the
             % delta-V applied, and a fresh propagator of the same type is
-            % started from the post-burn state.
+            % started from the post-burn state. Numeric segments retain both
+            % one-sided boundary states; ephemeris stays on the requested grid
+            % and contains the post-burn state at exact maneuver times.
             timeVector = OrekitTime.ensureUtc(timeVector(:));
+            if isempty(timeVector) || any(isnat(timeVector)) || ...
+                    any(diff(timeVector) <= seconds(0))
+                error("OrekitPropagatorFactory:InvalidTimes", ...
+                    "Propagation times must be nonempty, finite, and strictly increasing.");
+            end
+            segments = {};
             maneuvers = OrekitPropagatorFactory.sortedManeuvers(satellite);
             propagator = OrekitPropagatorFactory.createPropagator(satellite, config);
 
@@ -175,8 +184,7 @@ classdef OrekitPropagatorFactory
 
             inertialFrame = OrekitFrames.outputFrame("GCRF");
             mu = 3.986004418e14;
-            parts = {};
-            remaining = timeVector;
+            segmentStart = timeVector(1);
 
             for m = 1:numel(maneuvers)
                 maneuver = maneuvers{m};
@@ -185,12 +193,13 @@ classdef OrekitPropagatorFactory
                     continue;
                 end
 
-                preMask = remaining < burnTime;
-                if any(preMask)
-                    parts{end + 1} = OrekitPropagatorFactory.propagate( ...
-                        propagator, remaining(preMask)); %#ok<AGROW>
+                if burnTime >= timeVector(1)
+                    sampleTimes = timeVector(timeVector >= segmentStart & ...
+                        timeVector < burnTime);
+                    sampleTimes = unique([segmentStart; sampleTimes; burnTime]);
+                    segments{end + 1} = OrekitPropagatorFactory.propagate( ...
+                        propagator, sampleTimes); %#ok<AGROW>
                 end
-                remaining = remaining(~preMask);
 
                 date = OrekitTime.toAbsoluteDate(burnTime);
                 pv = propagator.propagate(date).getPVCoordinates(inertialFrame);
@@ -209,12 +218,18 @@ classdef OrekitPropagatorFactory
                     inertialFrame, date, mu);
                 propagator = OrekitPropagatorFactory.createPropagatorFromOrbit( ...
                     newOrbit, satellite);
+                segmentStart = max(burnTime, timeVector(1));
             end
 
-            if ~isempty(remaining)
-                parts{end + 1} = OrekitPropagatorFactory.propagate(propagator, remaining);
-            end
-            ephemeris = vertcat(parts{:});
+            sampleTimes = unique([segmentStart; timeVector(timeVector >= segmentStart)]);
+            segments{end + 1} = OrekitPropagatorFactory.propagate( ...
+                propagator, sampleTimes);
+            combined = vertcat(segments{:});
+            % Keep the last sample at a boundary, after every coincident burn.
+            [~, lastIndices] = unique(combined.Time, "last");
+            combined = combined(lastIndices, :);
+            [~, sampleIndices] = ismember(timeVector, combined.Time);
+            ephemeris = combined(sampleIndices, :);
         end
 
         function deltaV = inertialDeltaV(maneuver, positionM, velocityMps)

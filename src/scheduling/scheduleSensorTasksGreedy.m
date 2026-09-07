@@ -15,6 +15,10 @@ if isempty(candidates) || height(candidates) == 0
     return;
 end
 
+% Retain compatibility with tables exported before transition metadata.
+if ~ismember("SlewTransitionData", candidates.Properties.VariableNames)
+    candidates.SlewTransitionData = repmat("", height(candidates), 1);
+end
 pool = candidates(candidates.Feasible, :);
 if height(pool) == 0
     return;

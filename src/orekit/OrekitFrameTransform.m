@@ -2,6 +2,52 @@ classdef OrekitFrameTransform
     %OREKITFRAMETRANSFORM Coordinate transforms between suite frames.
 
     methods (Static)
+        function states = inertialStateToGcrf(timeVector, states, frameName)
+            %INERTIALSTATETOGCRF Convert N-by-6 [position,velocity] to GCRF.
+            % Input units are m and m/s, with one UTC datetime per row.
+            % Earth-centered ICRF denotes GCRF axes; J2000 denotes EME2000.
+            validateattributes(states, {'numeric'}, ...
+                {'2d', 'ncols', 6, 'real', 'finite'});
+            states = double(states);
+            timeVector = OrekitTime.ensureUtc(timeVector(:));
+            if numel(timeVector) ~= size(states, 1) || any(isnat(timeVector))
+                error("OrekitFrameTransform:TimeSizeMismatch", ...
+                    "Provide one finite datetime for each six-component state.");
+            end
+            frameName = upper(string(frameName));
+            if isscalar(frameName) && any(frameName == ["GCRF", "ICRF"])
+                return;
+            end
+            if ~isscalar(frameName) || ...
+                    ~any(frameName == ["EME2000", "J2000"])
+                error("OrekitFrameTransform:UnsupportedFrame", ...
+                    "Expected Earth-centered GCRF, ICRF, EME2000, or J2000.");
+            end
+            OrekitInitializer.initialize();
+            sourceFrame = OrekitFrames.outputFrame("EME2000");
+            destinationFrame = OrekitFrames.outputFrame("GCRF");
+            for sampleIndex = 1:size(states, 1)
+                date = OrekitTime.toAbsoluteDate(timeVector(sampleIndex));
+                transform = sourceFrame.getTransformTo(destinationFrame, date);
+                position = javaObject( ...
+                    "org.hipparchus.geometry.euclidean.threed.Vector3D", ...
+                    states(sampleIndex, 1), states(sampleIndex, 2), ...
+                    states(sampleIndex, 3));
+                velocity = javaObject( ...
+                    "org.hipparchus.geometry.euclidean.threed.Vector3D", ...
+                    states(sampleIndex, 4), states(sampleIndex, 5), ...
+                    states(sampleIndex, 6));
+                pv = javaObject("org.orekit.utils.PVCoordinates", ...
+                    position, velocity);
+                transformed = transform.transformPVCoordinates(pv);
+                position = transformed.getPosition();
+                velocity = transformed.getVelocity();
+                states(sampleIndex, :) = [position.getX(), position.getY(), ...
+                    position.getZ(), velocity.getX(), velocity.getY(), ...
+                    velocity.getZ()];
+            end
+        end
+
         function gcrfMeters = ecefToGcrf(time, ecefMeters)
             %ECEFTOGCRF Transform ECEF/ITRF position rows into GCRF meters.
             rotation = OrekitFrameTransform.ecefToGcrfRotation(time);
@@ -58,6 +104,35 @@ classdef OrekitFrameTransform
 
             cachedTime = time;
             cachedRotation = rotation;
+        end
+
+        function velocity = gcrfStateToEcefVelocity(time, state)
+            %GCRFSTATETOECEFVELOCITY Earth-relative velocity, ECEF m/s.
+            % state is [x y z vx vy vz] in GCRF meters and m/s at scalar
+            % datetime time. Transforming a full PV includes frame rotation;
+            % rotating the velocity vector alone is not this derivative.
+            validateattributes(state, {'numeric'}, ...
+                {'vector', 'numel', 6, 'real', 'finite'});
+            state = reshape(double(state), 1, 6);
+            time = OrekitTime.ensureUtc(time);
+            if ~isscalar(time) || isnat(time)
+                error("OrekitFrameTransform:NonScalarTime", ...
+                    "Expected a valid scalar datetime for the GCRF state.");
+            end
+            OrekitInitializer.initialize();
+            date = OrekitTime.toAbsoluteDate(time);
+            sourceFrame = OrekitFrames.outputFrame("GCRF");
+            transform = sourceFrame.getTransformTo(OrekitFrames.earthFrame(), date);
+            position = javaObject( ...
+                "org.hipparchus.geometry.euclidean.threed.Vector3D", ...
+                state(1), state(2), state(3));
+            inertialVelocity = javaObject( ...
+                "org.hipparchus.geometry.euclidean.threed.Vector3D", ...
+                state(4), state(5), state(6));
+            pv = javaObject("org.orekit.utils.PVCoordinates", position, inertialVelocity);
+            transformed = transform.transformPVCoordinates(pv);
+            earthVelocity = transformed.getVelocity();
+            velocity = [earthVelocity.getX(), earthVelocity.getY(), earthVelocity.getZ()];
         end
     end
 

@@ -13,8 +13,9 @@ import {
   sensorAccessesForObject,
 } from "../lib/schedule.js";
 import { daylightAt, lightingStateAt } from "../lib/sun.js";
-import { formatDuration } from "../lib/time.js";
+import { AccessWindows, ScheduleList, SensorAccessList } from "./AnalysisResults.jsx";
 import MatlabPanel from "./MatlabPanel.jsx";
+import ConsoleIcon from "./ConsoleIcon.jsx";
 
 const SOURCE_LABEL = {
   matlab: { text: "MATLAB/Orekit", className: "badge--matlab" },
@@ -29,6 +30,8 @@ const LIGHTING_LABEL = {
 };
 
 function SatelliteDetails({ sat, tSec, sun, schedule }) {
+  const mode = String(sat.sensor?.pointing ?? sat.sensor?.pointingMode ?? "Nadir");
+  const homePointing = ({ nadir: "Nadir", velocityvector: "Velocity vector", fixedvector: "Fixed vector", target: "Configured target" })[mode.toLowerCase()] ?? mode;
   const src = SOURCE_LABEL[sat.source];
   const lla = sat.ephemeris ? satLlaAt(sat, tSec) : null;
   const eci = sat.ephemeris ? satEciAt(sat, tSec) : null;
@@ -67,7 +70,7 @@ function SatelliteDetails({ sat, tSec, sun, schedule }) {
             </dd>
             <dt>Pointing</dt>
             <dd>
-              {pointing.phase === "idle" && "Nadir (home)"}
+              {pointing.phase === "idle" && `${homePointing} (home)`}
               {pointing.phase === "slew" &&
                 `Slewing to ${pointing.entry.targetName} (${Math.round(
                   pointing.progress * 100,
@@ -75,7 +78,7 @@ function SatelliteDetails({ sat, tSec, sun, schedule }) {
               {pointing.phase === "track" &&
                 `Tracking ${pointing.entry.targetName}`}
               {pointing.phase === "return" &&
-                `Returning to nadir (home) from ${
+                `Returning to ${homePointing.toLowerCase()} (home) from ${
                   pointing.entry.targetName
                 } (${Math.round(pointing.progress * 100)}%)`}
             </dd>
@@ -83,17 +86,17 @@ function SatelliteDetails({ sat, tSec, sun, schedule }) {
         )}
         {sat.elements && (
           <>
-            <dt>a</dt>
+            <dt>Semi-major axis</dt>
             <dd>{sat.elements.semiMajorAxisKm.toFixed(1)} km</dd>
-            <dt>e</dt>
+            <dt>Eccentricity</dt>
             <dd>{sat.elements.eccentricity.toFixed(5)}</dd>
-            <dt>i</dt>
+            <dt>Inclination</dt>
             <dd>{sat.elements.inclinationDeg.toFixed(2)} deg</dd>
             <dt>RAAN</dt>
             <dd>{sat.elements.raanDeg.toFixed(2)} deg</dd>
-            <dt>argp</dt>
+            <dt>Arg. of periapsis</dt>
             <dd>{sat.elements.argPerigeeDeg.toFixed(2)} deg</dd>
-            <dt>TA</dt>
+            <dt>True anomaly</dt>
             <dd>{sat.elements.trueAnomalyDeg.toFixed(2)} deg</dd>
           </>
         )}
@@ -111,13 +114,12 @@ function SatelliteDetails({ sat, tSec, sun, schedule }) {
       {lla && (
         <>
           <div className="panel-header">Current state</div>
+          <div className="state-metrics">
+            <div><span>Altitude</span><strong>{lla[2].toFixed(1)}<small> km</small></strong></div>
+            <div><span>Latitude</span><strong>{lla[0].toFixed(2)}<small>°</small></strong></div>
+            <div><span>Longitude</span><strong>{lla[1].toFixed(2)}<small>°</small></strong></div>
+          </div>
           <dl className="kv">
-            <dt>Latitude</dt>
-            <dd>{lla[0].toFixed(3)} deg</dd>
-            <dt>Longitude</dt>
-            <dd>{lla[1].toFixed(3)} deg</dd>
-            <dt>Altitude</dt>
-            <dd>{lla[2].toFixed(1)} km</dd>
             <dt>ECI position</dt>
             <dd>
               [{eci.map((v) => v.toFixed(0)).join(", ")}] km
@@ -150,7 +152,7 @@ function GroundDetails({ gp, tSec, sun }) {
         <>
           <dt>Area</dt>
           <dd>
-            {gp.area.name} ({gp.area.widthKm} x {gp.area.heightKm} km)
+            {gp.area.name}{gp.area.type !== "country" && ` (${gp.area.widthKm} × ${gp.area.heightKm} km)`}
           </dd>
         </>
       )}
@@ -188,156 +190,6 @@ function GroundDetails({ gp, tSec, sun }) {
   );
 }
 
-function AccessWindows({ accesses, tSec }) {
-  const rows = [];
-  for (const a of accesses) {
-    for (const w of a.windows) {
-      rows.push({ pair: a, w });
-    }
-  }
-  rows.sort((r1, r2) => r1.w.startSec - r2.w.startSec);
-
-  if (rows.length === 0) {
-    return <div className="empty-note">No access windows for this object.</div>;
-  }
-  return (
-    <ul className="window-list">
-      {rows.map(({ pair, w }, i) => {
-        const active = !pair.stale && tSec >= w.startSec && tSec <= w.stopSec;
-        return (
-          <li
-            key={i}
-            className={`window-item ${active ? "active" : ""} ${pair.stale ? "stale" : ""}`}
-            title={
-              pair.stale
-                ? `${pair.source} -> ${pair.target} (stale: scenario edited since MATLAB run)`
-                : `${pair.source} -> ${pair.target}`
-            }
-          >
-            <span className="pair">
-              {w.startUtc.slice(11, 19)}Z
-            </span>
-            <span>{formatDuration(w.durationSeconds)}</span>
-            {pair.stale && <span className="badge badge--pending">stale</span>}
-            <span className="grow" />
-            <span title="Max elevation">el {w.maxElevationDeg.toFixed(0)} deg</span>
-            <button
-              className="btn btn--icon"
-              style={{ padding: "1px 7px", fontSize: 10.5 }}
-              onClick={() => clock.setTime(w.startSec)}
-              title="Jump scenario time to window start"
-            >
-              go
-            </button>
-          </li>
-        );
-      })}
-    </ul>
-  );
-}
-
-// Scheduled sensor tasks touching the selected object.
-function ScheduleList({ entries, tSec }) {
-  if (entries.length === 0) {
-    return (
-      <div className="empty-note">
-        No scheduled tasks for this object. Add tasks under Insert &gt; Sensor
-        Tasks, then run MATLAB.
-      </div>
-    );
-  }
-  return (
-    <ul className="window-list">
-      {entries.map((e, i) => {
-        const active = !e.stale && tSec >= e.slewStartSec && tSec <= e.stopSec;
-        return (
-          <li
-            key={i}
-            className={`window-item ${active ? "active" : ""} ${e.stale ? "stale" : ""}`}
-            title={`${e.taskName}: ${e.sensorName} (${e.platformName}) -> ${e.targetName}`}
-          >
-            <span className="pair">{e.startUtc.slice(11, 19)}Z</span>
-            <span>{e.taskName}</span>
-            {e.stale && <span className="badge badge--pending">stale</span>}
-            <span className="grow" />
-            <span title="Dwell duration (plus slew lead-in)">
-              {formatDuration(e.durationSeconds)}
-              {e.slewTimeSeconds > 0 &&
-                ` (+${Math.round(e.slewTimeSeconds)}s slew)`}
-            </span>
-            <button
-              className="btn btn--icon"
-              style={{ padding: "1px 7px", fontSize: 10.5 }}
-              onClick={() => clock.setTime(Math.max(e.slewStartSec, 0))}
-              title="Jump scenario time to the start of the slew"
-            >
-              go
-            </button>
-          </li>
-        );
-      })}
-    </ul>
-  );
-}
-
-// FOR-reachable vs FOV-in-view windows for sensor/target pairs touching the
-// selected object.
-function SensorAccessList({ pairs, tSec }) {
-  const rows = [];
-  for (const pair of pairs) {
-    for (const w of pair.forWindows) rows.push({ pair, w, mode: "FOR" });
-    for (const w of pair.fovWindows) rows.push({ pair, w, mode: "FOV" });
-  }
-  rows.sort((a, b) => a.w.startSec - b.w.startSec);
-  if (rows.length === 0) {
-    return (
-      <div className="empty-note">
-        No sensor-target visibility. FOR windows appear when a target is
-        reachable by slewing; FOV windows when it is inside the beam.
-      </div>
-    );
-  }
-  return (
-    <ul className="window-list">
-      {rows.map(({ pair, w, mode }, i) => {
-        const active = !pair.stale && tSec >= w.startSec && tSec <= w.stopSec;
-        return (
-          <li
-            key={i}
-            className={`window-item ${active ? "active" : ""} ${pair.stale ? "stale" : ""}`}
-            title={
-              mode === "FOR"
-                ? `${pair.sensor} can slew to see ${pair.target}`
-                : `${pair.target} inside ${pair.sensor}'s instantaneous beam`
-            }
-          >
-            <span
-              className={`badge ${mode === "FOR" ? "badge--for" : "badge--fov"}`}
-            >
-              {mode}
-            </span>
-            <span className="pair">{w.startUtc.slice(11, 19)}Z</span>
-            <span>
-              {pair.sensor} &gt; {pair.target}
-            </span>
-            {pair.stale && <span className="badge badge--pending">stale</span>}
-            <span className="grow" />
-            <span>{formatDuration(w.durationSeconds)}</span>
-            <button
-              className="btn btn--icon"
-              style={{ padding: "1px 7px", fontSize: 10.5 }}
-              onClick={() => clock.setTime(w.startSec)}
-              title="Jump scenario time to window start"
-            >
-              go
-            </button>
-          </li>
-        );
-      })}
-    </ul>
-  );
-}
-
 export default function Inspector({
   scenario,
   selection,
@@ -345,11 +197,13 @@ export default function Inspector({
   onRunMatlab,
   onOpenDialog,
   onDeleteObject,
+  onFocusSatellite,
 }) {
   const { tSec } = useSyncExternalStore(clock.subscribe, clock.getSnapshot);
 
   const sat = scenario?.satellites.find((s) => s.name === selection);
   const gp = scenario?.groundPoints.find((g) => g.name === selection);
+  const area = scenario?.areaOutlines.find((item) => item.name === selection);
   const related = scenario ? accessesForObject(scenario.accesses, selection) : [];
   const relatedSchedule = scenario
     ? scheduleForObject(scenario.schedule, selection)
@@ -369,10 +223,10 @@ export default function Inspector({
   const selectedSpec = sat?.spec ?? gp?.spec;
 
   return (
-    <aside className="panel panel--right">
+    <aside className="panel panel--right" aria-label="Object details">
       <div className="panel-section">
-        <div className="panel-header">
-          <span>Inspector</span>
+        <div className="panel-heading">
+          <h2>Object details</h2>
           <span style={{ textTransform: "none", fontWeight: 400 }}>
             {activeCount > 0 ? `${activeCount} link${activeCount > 1 ? "s" : ""} active` : ""}
           </span>
@@ -384,12 +238,15 @@ export default function Inspector({
         )}
         {selection && (
           <div
-            className="panel-header"
-            style={{ paddingTop: 0, textTransform: "none", fontSize: 13, color: "var(--text)" }}
+            className="selection-heading"
           >
-            <span>{selection}</span>
+            <h3>{selection}</h3>
             {selectedSpec && (
               <span className="inspector-actions">
+                {sat && <button className="btn btn--icon" disabled={!sat.ephemeris}
+                  onClick={() => onFocusSatellite(sat.name)} title="Track this satellite in 3D">
+                  <ConsoleIcon name="crosshair" size={12} /> Focus
+                </button>}
                 <button
                   className="btn btn--icon"
                   onClick={() =>
@@ -408,7 +265,7 @@ export default function Inspector({
                   onClick={() => onDeleteObject(selection)}
                   title="Delete this object from the scenario"
                 >
-                  Del
+                  Delete
                 </button>
               </span>
             )}
@@ -423,19 +280,28 @@ export default function Inspector({
           />
         )}
         {gp && <GroundDetails gp={gp} tSec={tSec} sun={scenario?.sun} />}
+        {area && <dl className="kv">
+          <dt>Type</dt><dd>Area target</dd>
+          <dt>Center latitude</dt><dd>{area.centerLatDeg.toFixed(4)}°</dd>
+          <dt>Center longitude</dt><dd>{area.centerLonDeg.toFixed(4)}°</dd>
+            {area.type === "country" ? <><dt>Country</dt><dd>{area.countryName} ({area.countryCode})</dd>
+              <dt>Boundary source</dt><dd>{area.source}</dd></> : <><dt>Dimensions</dt><dd>{area.widthKm} × {area.heightKm} km</dd></>}
+          <dt>Grid spacing</dt><dd>{area.spacingKm} km</dd>
+          <dt>Sample points</dt><dd>{scenario.groundPoints.filter((point) => point.area?.name === area.name).length}</dd>
+        </dl>}
       </div>
 
       {selection && (
         <div className="panel-section">
           <div className="panel-header">Access windows</div>
-          <AccessWindows accesses={related} tSec={tSec} />
+          <AccessWindows accesses={related} tSec={tSec} objectName={selection} />
         </div>
       )}
 
       {selection && (sat?.sensor || relatedSchedule.length > 0) && (
         <div className="panel-section">
           <div className="panel-header">Scheduled tasks</div>
-          <ScheduleList entries={relatedSchedule} tSec={tSec} />
+          <ScheduleList key={selection} entries={relatedSchedule} tSec={tSec} />
         </div>
       )}
 
@@ -447,7 +313,7 @@ export default function Inspector({
       )}
 
       <div className="panel-section" style={{ borderBottom: "none" }}>
-        <div className="panel-header">MATLAB bridge</div>
+        <div className="panel-header">Analysis engine</div>
         <MatlabPanel job={job} onRunMatlab={onRunMatlab} dirty={scenario?.dirty} />
       </div>
     </aside>

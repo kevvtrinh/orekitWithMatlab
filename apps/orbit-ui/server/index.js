@@ -1,6 +1,7 @@
 import express from "express";
 import { existsSync } from "node:fs";
 import path from "node:path";
+import { createInterface } from "node:readline";
 import {
   APP_ROOT,
   REPO_ROOT,
@@ -129,7 +130,25 @@ if (existsSync(distDir)) {
   app.use(express.static(path.join(APP_ROOT, "public")));
 }
 
-app.listen(PORT, () => {
-  console.log(`orbit-ui bridge server listening on http://127.0.0.1:${PORT}`);
+const server = app.listen(PORT, "127.0.0.1", () => {
+  console.log(`orbit-ui bridge server listening on http://127.0.0.1:${server.address().port}`);
   console.log(`repo root: ${REPO_ROOT}`);
 });
+
+// The MATLAB launcher owns stdin. Its stop handle (or its process exiting)
+// shuts down this server and lets the existing exit hook stop the worker.
+if (process.env.ORBIT_UI_MANAGED === "1") {
+  const commands = createInterface({ input: process.stdin });
+  let stopping = false;
+  const stop = () => {
+    if (stopping) return;
+    stopping = true;
+    server.close(() => process.exit(0));
+    server.closeAllConnections();
+    setTimeout(() => process.exit(0), 2000).unref();
+  };
+  commands.on("line", (line) => {
+    if (line === "shutdown") stop();
+  });
+  commands.on("close", stop);
+}

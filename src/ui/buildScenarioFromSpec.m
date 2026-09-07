@@ -59,10 +59,10 @@ for k = 1:numel(objects)
     end
 end
 
-scenario = addAreaTargets(scenario, objects);
+scenario = addAreaTargets(scenario, objects, fieldOr(spec, "areas", {}));
 end
 
-function scenario = addAreaTargets(scenario, objects)
+function scenario = addAreaTargets(scenario, objects, definitions)
 % Web-UI area targets are sent as their grid points (kind "target", tagged
 % with a shared `group` name and `area` rectangle metadata; see
 % expandAreaGrid in apps/orbit-ui/src/lib/spec.js). Grid points were already
@@ -93,11 +93,16 @@ end
 
 for g = 1:numel(order)
     members = groups(char(order(g)));
-    scenario = scenario.addObject(buildAreaTargetObject(order(g), members));
+    definition = struct();
+    areaDefinitions = GeographicAreaGeometry.asCells(definitions);
+    for d = 1:numel(areaDefinitions)
+        if string(areaDefinitions{d}.name) == order(g), definition = areaDefinitions{d}; break; end
+    end
+    scenario = scenario.addObject(buildAreaTargetObject(order(g), members, definition));
 end
 end
 
-function areaTarget = buildAreaTargetObject(groupName, members)
+function areaTarget = buildAreaTargetObject(groupName, members, definition)
 areaMeta = members{1}.area;
 centerLatDeg = double(areaMeta.centerLatDeg);
 centerLonDeg = double(areaMeta.centerLonDeg);
@@ -114,7 +119,28 @@ boundaryLonDeg = [centerLonDeg - halfLonDeg; centerLonDeg + halfLonDeg; ...
     centerLonDeg + halfLonDeg; centerLonDeg - halfLonDeg];
 
 altitudeM = double(fieldOr(members{1}, "altitudeM", 0));
-areaTarget = AreaTargetObject(groupName, boundaryLatDeg, boundaryLonDeg, altitudeM);
+if isfield(definition, "boundaryPolygons") && ~isempty(definition.boundaryPolygons)
+    areaTarget = AreaTargetObject(groupName);
+    areaTarget.BoundaryPolygons = definition.boundaryPolygons;
+    areaTarget.LatitudeDeg = centerLatDeg;
+    areaTarget.LongitudeDeg = centerLonDeg;
+    areaTarget.AltitudeMeters = altitudeM;
+    areaTarget.Metadata = definition;
+    parts = GeographicAreaGeometry.asCells(definition.boundaryPolygons);
+    latitude = []; longitude = [];
+    for p = 1:numel(parts)
+        rings = GeographicAreaGeometry.rings(parts{p});
+        for r = 1:numel(rings)
+            latitude = [latitude; rings{r}(:, 2); NaN]; %#ok<AGROW>
+            longitude = [longitude; rings{r}(:, 1); NaN]; %#ok<AGROW>
+        end
+    end
+    areaTarget.BoundaryLatDeg = latitude;
+    areaTarget.BoundaryLonDeg = longitude;
+    areaTarget.BoundaryLatLon = [latitude longitude];
+else
+    areaTarget = AreaTargetObject(groupName, boundaryLatDeg, boundaryLonDeg, altitudeM);
+end
 
 gridPointID = strings(numel(members), 1);
 latDeg = zeros(numel(members), 1);

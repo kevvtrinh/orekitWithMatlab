@@ -2,11 +2,20 @@ function quaternion = rotationMatrixToStkQuaternion(rotation)
 %ROTATIONMATRIXTOSTKQUATERNION DCM to STK [vector, scalar] quaternion.
 %
 % rotation maps reference-frame components into body-frame components.
-% STK's AttitudeTimeQuaternions convention places the scalar fourth.
+% STK uses Shuster quaternions with the scalar fourth. Its matrix maps
+% reference components to body components, rather than the inverse rotation.
 
-if ~isequal(size(rotation), [3 3]) || any(~isfinite(rotation), "all")
+if ~isnumeric(rotation) || ~isreal(rotation) || ...
+        ~isequal(size(rotation), [3 3]) || any(~isfinite(rotation), "all")
     error("rotationMatrixToStkQuaternion:InvalidRotation", ...
         "Rotation must be a finite 3-by-3 matrix.");
+end
+% Exporters supply orthonormal frames; normalization must not conceal an
+% invalid direction cosine matrix or a reflection.
+if norm(rotation * rotation.' - eye(3), "fro") > 1e-10 || ...
+        abs(det(rotation) - 1) > 1e-10
+    error("rotationMatrixToStkQuaternion:InvalidRotation", ...
+        "Rotation must be orthonormal and have determinant +1.");
 end
 
 traceValue = trace(rotation);
@@ -36,7 +45,9 @@ else
     qz = 0.25 * scale;
 end
 
-quaternion = [qx, qy, qz, qw];
+% The branch formulas above compute the Hamilton representation. Conjugating
+% it gives STK's Shuster representation of the same reference-to-body DCM.
+quaternion = [-qx, -qy, -qz, qw];
 magnitude = norm(quaternion);
 if ~isfinite(magnitude) || magnitude < eps
     error("rotationMatrixToStkQuaternion:DegenerateRotation", ...

@@ -76,10 +76,8 @@ classdef SensorTask
             if obj.Priority < 0
                 error("SensorTask:InvalidPriority", "Priority must be nonnegative.");
             end
-            if obj.RequiredSensorCount < 1
-                error("SensorTask:InvalidSensorCount", ...
-                    "RequiredSensorCount must be at least 1.");
-            end
+            validateattributes(obj.RequiredSensorCount, {'numeric'}, ...
+                {'real', 'scalar', 'finite', 'integer', 'positive'});
         end
 
         function data = toStruct(obj)

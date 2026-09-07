@@ -7,7 +7,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export const APP_ROOT = path.resolve(__dirname, "..");
 export const REPO_ROOT = path.resolve(APP_ROOT, "..", "..");
-export const DATA_DIR = path.join(__dirname, "data");
+export const DATA_DIR = process.env.ORBIT_UI_DATA_DIR
+  ? path.resolve(process.env.ORBIT_UI_DATA_DIR) : path.join(__dirname, "data");
 export const LIVE_SCENARIO_FILE = path.join(DATA_DIR, "scenario.json");
 export const SAMPLE_SCENARIO_FILE = path.join(
   APP_ROOT,

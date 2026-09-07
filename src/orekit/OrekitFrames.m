@@ -43,6 +43,26 @@ classdef OrekitFrames
             y = (n + altitudeMeters) * cos(lat) * sin(lon);
             z = (n * (1.0 - e2) + altitudeMeters) * sin(lat);
         end
+
+        function lla = ecefToGeodetic(ecefMeters, time)
+            %ECEFTOGEODETIC WGS84 [latitudeDeg longitudeDeg altitudeMeters].
+            % ECEF position is one finite three-vector in meters. Longitude
+            % uses [-180,180) degrees. time is a valid scalar datetime.
+            validateattributes(ecefMeters, {'numeric'}, ...
+                {'vector', 'numel', 3, 'real', 'finite'});
+            time = OrekitTime.ensureUtc(time);
+            if ~isscalar(time) || isnat(time)
+                error("OrekitFrames:InvalidTime", "Expected a valid scalar datetime.");
+            end
+            OrekitInitializer.initialize();
+            vector = javaObject("org.hipparchus.geometry.euclidean.threed.Vector3D", ...
+                ecefMeters(1), ecefMeters(2), ecefMeters(3));
+            earth = OrekitFrames.earthShape();
+            point = earth.transform(vector, OrekitFrames.earthFrame(), ...
+                OrekitTime.toAbsoluteDate(time));
+            lla = [rad2deg(point.getLatitude()), ...
+                mod(rad2deg(point.getLongitude()) + 180, 360) - 180, point.getAltitude()];
+        end
     end
 end
 

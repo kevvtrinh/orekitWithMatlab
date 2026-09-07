@@ -15,7 +15,7 @@
 
 import { buildPreviewEphemeris } from "./preview.js";
 import { prepareSchedule, prepareSensorAccesses } from "./schedule.js";
-import { collectAreaOutlines, deepEqual, parseEpochMs } from "./spec.js";
+import { collectAreaOutlines, deepEqual, parseEpochMs, normalizeAreaDefinitions } from "./spec.js";
 import { prepareSun } from "./sun.js";
 import {
   prepareAccesses,
@@ -131,9 +131,11 @@ export function buildRenderScenario(spec, matlabRaw) {
   // changed; the whole schedule is recomputed on the next run anyway.
   const tasksFresh =
     metaFresh && deepEqual(asArray(spec.tasks), asArray(runSpec?.tasks));
+  const areaNames = new Set(spec.objects.filter((object) => object.kind === "target" && object.group).map((object) => object.group));
+  const rawSchedule = asArray(matlabRaw?.schedule);
   const schedule = prepareSchedule(
-    asArray(matlabRaw?.schedule).filter(
-      (e) => specNames.has(e.platformName) && specNames.has(e.targetName),
+    rawSchedule.filter(
+      (e) => specNames.has(e.platformName) && (specNames.has(e.targetName) || areaNames.has(e.targetName)),
     ),
     Number.isNaN(epochMs) ? 0 : epochMs,
   ).map((e) => ({
@@ -141,7 +143,7 @@ export function buildRenderScenario(spec, matlabRaw) {
     stale:
       !tasksFresh ||
       !freshNames.has(e.platformName) ||
-      !freshNames.has(e.targetName),
+      !targetIsFresh(e.targetName),
   }));
   const sensorAccesses = prepareSensorAccesses(
     asArray(matlabRaw?.sensorAccesses).filter(
@@ -153,6 +155,37 @@ export function buildRenderScenario(spec, matlabRaw) {
     stale:
       !metaFresh || !freshNames.has(a.platform) || !freshNames.has(a.target),
   }));
+
+  // Backend pointing is one continuous history per sensor. Never remove
+  // individual stale samples: interpolation would then bridge across old
+  // task directions. Even an idle history is stale after tasks change.
+  const freshPlatforms = new Map(satellites
+    .filter((satellite) => satellite.source === "matlab" && satellite.sensor)
+    .map((satellite) => [satellite.name, satellite]));
+  function targetIsFresh(name) {
+    if (freshNames.has(name)) return true;
+    // Area scans name a group, not one grid point. Every original member
+    // must still exist unchanged, with no new or removed members.
+    const current = spec.objects.filter((object) => object.kind === "target" && object.group === name);
+    const previous = runObjects.filter((object) => object.kind === "target" && object.group === name);
+    return current.length > 0 && current.length === previous.length &&
+      deepEqual(normalizeAreaDefinitions(spec.areas).find((area) => area.name === name), normalizeAreaDefinitions(runSpec?.areas).find((area) => area.name === name)) &&
+      current.every((object) => freshNames.has(object.name));
+  }
+  const pointing = metaFresh && tasksFresh ? asArray(matlabRaw?.pointing).filter((series) => {
+    const platform = freshPlatforms.get(series?.platform);
+    if (!platform || series.sensor !== (platform.sensor.name ?? `${platform.name} Sensor`)) return false;
+    // Inspect unfiltered schedule rows so a deleted target cannot disappear
+    // from the freshness check along with its displayed schedule entry.
+    const scheduledTargets = rawSchedule
+      .filter((entry) => entry.platformName === series.platform && entry.sensorName === series.sensor)
+      .map((entry) => entry.targetName);
+    const eligibleTargets = asArray(spec.tasks)
+      .filter((task) => !task.satelliteName || task.satelliteName === series.platform)
+      .map((task) => task.targetName);
+    const targets = [...asArray(series.targetName), ...scheduledTargets, ...eligibleTargets];
+    return targets.filter((name) => typeof name === "string" && name.length > 0).every(targetIsFresh);
+  }) : [];
 
   // Sun data depends only on scenario timing; per-satellite eclipses and
   // per-site daylight additionally require that object to be fresh.
@@ -176,6 +209,7 @@ export function buildRenderScenario(spec, matlabRaw) {
     !runSpec ||
     !metaFresh ||
     !tasksFresh ||
+    !deepEqual(normalizeAreaDefinitions(spec.areas), normalizeAreaDefinitions(runSpec?.areas)) ||
     spec.objects.some((o) => !freshNames.has(o.name)) ||
     spec.objects.length !== runObjects.length;
 
@@ -187,10 +221,11 @@ export function buildRenderScenario(spec, matlabRaw) {
     epochMs,
     satellites,
     groundPoints,
-    areaOutlines: collectAreaOutlines(spec.objects),
+    areaOutlines: collectAreaOutlines(spec.objects, spec.areas),
     accesses,
     schedule,
     sensorAccesses,
+    pointing,
     sun,
     dirty, // true when a MATLAB run is needed for authoritative results
   };

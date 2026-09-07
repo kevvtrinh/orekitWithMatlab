@@ -3,7 +3,7 @@ import Modal, { FormRow, NumberInput, TextInput } from "../Modal.jsx";
 import { SENSOR_POINTING_MODES, sensorTemplate } from "../../lib/spec.js";
 
 const POINTING_LABELS = {
-  Nadir: "Nadir (straight down)",
+  Nadir: "Nadir (toward Earth's center)",
   VelocityVector: "Velocity vector (along-track)",
   SunPointing: "Sun pointing",
   FixedVector: "Fixed vector (ECEF)",

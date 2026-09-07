@@ -1,9 +1,5 @@
-import { useSyncExternalStore } from "react";
-import { clock } from "../lib/clock.js";
-import { formatUtc } from "../lib/time.js";
 import Menu from "./Menu.jsx";
-
-const SPEEDS = [1, 10, 60, 300, 1000];
+import ConsoleIcon from "./ConsoleIcon.jsx";
 
 export default function TopBar({
   scenario,
@@ -17,12 +13,8 @@ export default function TopBar({
   onImportSpec,
   onRunMatlab,
 }) {
-  const { tSec, playing, speed } = useSyncExternalStore(
-    clock.subscribe,
-    clock.getSnapshot,
-  );
-  const simDate = scenario ? new Date(scenario.epochMs + tSec * 1000) : null;
   const hasMatlabData = source === "matlab";
+  const running = job?.state === "running";
 
   const scenarioItems = [
     {
@@ -95,6 +87,11 @@ export default function TopBar({
       hint: "Rectangular area sampled as a grid of point targets",
       onClick: () => onOpenDialog({ type: "areaTarget" }),
     },
+    {
+      label: "Country Area Target...",
+      hint: "Search country boundaries and add an area target",
+      onClick: () => onOpenDialog({ type: "countryTarget" }),
+    },
     "---",
     {
       label: "Sensor Tasks...",
@@ -131,6 +128,7 @@ export default function TopBar({
     ["Sensor FOV", "sensorFov"],
     ["Sensor FOR", "sensorFor"],
     ["Sun", "sun"],
+    ["Area grid points", "areaGrid"],
   ].map(([label, key]) => ({
     label,
     meta: viewOptions[key] ? "on" : "off",
@@ -140,63 +138,35 @@ export default function TopBar({
   return (
     <header className="topbar">
       <div className="brand">
-        <span className="brand-name">Orbit Console</span>
-        <span className="brand-sub">Orekit / MATLAB mission suite</span>
+        <ConsoleIcon name="orbit" size={34} className="brand-mark" />
+        <div className="brand-copy">
+          <span className="brand-name">ORBIT</span>
+          <span className="brand-sub">Mission console</span>
+        </div>
       </div>
 
-      <div className="topbar-group">
+      <nav className="topbar-nav" aria-label="Mission menus">
         <Menu label="Scenario" items={scenarioItems} />
         <Menu label="Insert" items={insertItems} />
         <Menu label="Analysis" items={analysisItems} />
         <Menu label="View" items={viewItems} />
-      </div>
-
-      <div className="scenario-chip" title="Active scenario">
-        <span
-          className={`status-dot status-dot--${hasMatlabData ? "matlab" : "sample"}`}
-        />
-        <span>{scenario ? scenario.meta.name : "No scenario"}</span>
-        <span style={{ color: "var(--text-faint)" }}>
-          {scenario?.dirty ? "edited" : hasMatlabData ? "MATLAB data" : "sample data"}
-        </span>
-      </div>
+      </nav>
 
       <div className="topbar-spacer" />
 
-      <div className="topbar-group">
-        <button
-          className="btn btn--icon"
-          onClick={() => clock.setTime(0)}
-          title="Jump to scenario epoch"
-        >
-          T0
-        </button>
-        <button
-          className="btn btn--icon"
-          style={{ minWidth: 64 }}
-          onClick={() => clock.setPlaying(!playing)}
-          disabled={!scenario}
-          title="Play / pause scenario animation"
-        >
-          {playing ? "Pause" : "Play"}
-        </button>
-        <select
-          className="control"
-          value={speed}
-          onChange={(e) => clock.setSpeed(Number(e.target.value))}
-          title="Animation speed (simulated seconds per wall second)"
-        >
-          {SPEEDS.map((s) => (
-            <option key={s} value={s}>
-              {s}x
-            </option>
-          ))}
-        </select>
-        <div className="utc-readout">
-          {simDate ? formatUtc(simDate) : "--"}
-        </div>
+      <div className="scenario-identity" aria-label="Active scenario">
+        <span className="scenario-name">{scenario?.meta.name ?? "No scenario loaded"}</span>
+        <span className="scenario-source">
+          {scenario?.dirty ? "Changes pending" : hasMatlabData ? "MATLAB results" : "Sample scenario"}
+        </span>
       </div>
-
+      <button className="btn btn--primary run-scenario-btn" onClick={onRunMatlab}
+        disabled={!scenario || running} aria-busy={running}
+        title="Run the active scenario">
+        <ConsoleIcon name={running ? "refresh" : "play"} size={16}
+          className={running ? "icon-spin" : ""} />
+        {running ? "Running…" : "Run scenario"}
+      </button>
     </header>
   );
 }

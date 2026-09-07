@@ -1,5 +1,10 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { Line2 } from "three/examples/jsm/lines/Line2.js";
+import { LineGeometry } from "three/examples/jsm/lines/LineGeometry.js";
+import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
+import { makeAreaGeometry } from "./areaGeometry.js";
+import { createOrbitEditor } from "./orbitEditor.js";
 import {
   CSS2DObject,
   CSS2DRenderer,
@@ -9,6 +14,8 @@ import { satEciAt, windowStateAt } from "../lib/scenarioUtils.js";
 import { pointingStateAt, scheduleForPlatform } from "../lib/schedule.js";
 import { lightingStateAt, sunDirectionAt } from "../lib/sun.js";
 import { clock } from "../lib/clock.js";
+import { createSatelliteModel } from "./satelliteModel.js";
+import { orientSatelliteBody } from "./satelliteAttitude.js";
 import {
   fovLengthToEarth,
   makeForFootprintGeometry,
@@ -23,6 +30,10 @@ const DEG = Math.PI / 180;
 const FOR_SURFACE_RADIUS = 1.006;
 const FOR_RADIUS_UPDATE_EPS = 0.001;
 const FOV_EARTH_OVERSHOOT = 0.03;
+// Deliberately pictorial: the close-view glyph is not a physical bus-size
+// model. Its maximum extent stays well below the satellite's Earth clearance.
+const SATELLITE_DISPLAY_SCALE = 0.0025;
+const SATELLITE_FOCUS_DISTANCE = 15;
 
 // ECI (right-handed, Z up) -> three.js (right-handed, Y up).
 // A rotation by GMST about ECI +Z becomes rotation.y = gmst in three.js.
@@ -101,6 +112,48 @@ function sunSpriteTexture() {
   return texture;
 }
 
+function groundDishTexture() {
+  // A compact antenna silhouette, not a volume-scaled white site block.
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = 128;
+  const ctx = canvas.getContext("2d");
+  ctx.scale(2, 2);
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  const stroke = () => {
+    ctx.strokeStyle = "#10202d";
+    ctx.lineWidth = 5;
+    ctx.stroke();
+    ctx.strokeStyle = "#dce7ec";
+    ctx.lineWidth = 2.2;
+    ctx.stroke();
+  };
+  ctx.beginPath();
+  ctx.moveTo(30, 32);
+  ctx.lineTo(30, 51);
+  ctx.moveTo(21, 55);
+  ctx.lineTo(30, 44);
+  ctx.lineTo(39, 55);
+  ctx.moveTo(16, 56);
+  ctx.lineTo(45, 56);
+  stroke();
+  ctx.beginPath();
+  ctx.moveTo(9, 20);
+  ctx.quadraticCurveTo(21, 51, 49, 16);
+  ctx.quadraticCurveTo(27, 31, 9, 20);
+  ctx.fillStyle = "#8c9da8";
+  ctx.fill();
+  stroke();
+  ctx.beginPath();
+  ctx.moveTo(29, 30);
+  ctx.lineTo(39, 9);
+  ctx.lineTo(45, 10);
+  stroke();
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
+
 function makeStarfield() {
   const count = 900;
   const positions = new Float32Array(count * 3);
@@ -159,8 +212,8 @@ const EARTH_FRAGMENT_SHADER = /* glsl */ `
     float ndl = dot(normal, sunDir);
     float dayFactor = smoothstep(-0.14, 0.22, ndl);
     vec3 dayColor = texel * (0.3 + 1.0 * max(ndl, 0.0));
-    // Night hemisphere: cooled and dimmed so surface detail stays readable.
-    vec3 nightColor = texel * vec3(0.10, 0.13, 0.20);
+    // Keep a faint night silhouette without making unlit terrain luminous.
+    vec3 nightColor = texel * vec3(0.025, 0.0325, 0.05);
     vec3 color = mix(nightColor, dayColor, dayFactor);
 
     // Specular restricted to blue-dominant texels so land stays matte.
@@ -169,9 +222,9 @@ const EARTH_FRAGMENT_SHADER = /* glsl */ `
     float spec = pow(max(dot(normal, halfDir), 0.0), 40.0);
     color += vec3(0.5, 0.58, 0.62) * spec * ocean * dayFactor * 0.5;
 
-    // Thin blue rim where the surface curves away toward the limb.
+    // Retain the daylight rim, with only a trace along the unlit silhouette.
     float fresnel = pow(1.0 - max(dot(normal, viewDir), 0.0), 3.5);
-    color += vec3(0.24, 0.45, 0.8) * fresnel * (0.2 + 0.8 * dayFactor);
+    color += vec3(0.24, 0.45, 0.8) * fresnel * (0.03 + 0.97 * dayFactor);
 
     gl_FragColor = vec4(color, 1.0);
     #include <tonemapping_fragment>
@@ -197,7 +250,7 @@ const ATMOSPHERE_FRAGMENT_SHADER = /* glsl */ `
   void main() {
     // Back-side shell: glow peaks at the occluded limb and fades outward.
     float rim = pow(0.55 - dot(normalize(vViewNormal), vec3(0.0, 0.0, 1.0)), 3.0);
-    float lit = clamp(dot(normalize(vWorldNormal), sunDir) * 2.0 + 0.6, 0.12, 1.0);
+    float lit = clamp(dot(normalize(vWorldNormal), sunDir) * 2.0 + 0.6, 0.018, 1.0);
     vec3 color = vec3(0.3, 0.55, 1.0) * rim * lit;
     gl_FragColor = vec4(color, 1.0);
     #include <tonemapping_fragment>
@@ -205,7 +258,7 @@ const ATMOSPHERE_FRAGMENT_SHADER = /* glsl */ `
   }
 `;
 
-export function createViewer(container, { onSelect } = {}) {
+export function createViewer(container, { onSelect, onFocusChange, onOrbitEditChange, onOrbitCommit } = {}) {
   const renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   container.appendChild(renderer.domElement);
@@ -217,6 +270,12 @@ export function createViewer(container, { onSelect } = {}) {
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x000000);
   scene.add(makeStarfield());
+  // Standard materials are used only by the pictorial spacecraft; Earth
+  // retains its own Sun-driven shader and existing day/night coefficients.
+  scene.add(new THREE.HemisphereLight(0xdce9ff, 0x2b3541, 1.15));
+  const spacecraftSun = new THREE.DirectionalLight(0xfff2da, 3.2);
+  scene.add(spacecraftSun);
+  const stationIconTexture = groundDishTexture();
 
   const camera = new THREE.PerspectiveCamera(45, 1, 0.01, 500);
   camera.position.set(2.6, 1.5, 2.4);
@@ -257,11 +316,13 @@ export function createViewer(container, { onSelect } = {}) {
     vertexShader: EARTH_VERTEX_SHADER,
     fragmentShader: EARTH_FRAGMENT_SHADER,
   });
-  new THREE.TextureLoader().load("/textures/earth_atmos_2048.jpg", (tex) => {
+  const applyEarthTexture = (tex) => {
     tex.colorSpace = THREE.SRGBColorSpace;
     tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
     earthMaterial.uniforms.dayMap.value = tex;
-  });
+  };
+  new THREE.TextureLoader().load("/textures/earth_daymap_8k.png", applyEarthTexture,
+    undefined, () => new THREE.TextureLoader().load("/textures/earth_atmos_2048.jpg", applyEarthTexture));
   const earth = new THREE.Mesh(new THREE.SphereGeometry(1, 96, 64), earthMaterial);
   earthGroup.add(earth);
 
@@ -290,7 +351,14 @@ export function createViewer(container, { onSelect } = {}) {
     sun: true,
   };
   let selectedName = null;
+  let focusedSatelliteName = null;
+  const lastFocusPosition = new THREE.Vector3();
+  const focusDelta = new THREE.Vector3();
+  const focusRadial = new THREE.Vector3();
+  const focusSide = new THREE.Vector3();
   const pickables = [];
+  const orbitEditor = createOrbitEditor({ scene, camera, controls, element: labelRenderer.domElement,
+    onChange: onOrbitEditChange, onCommit: onOrbitCommit, isOccluded: isOccludedByEarth });
 
   function disposeObject(root) {
     root.traverse((obj) => {
@@ -312,7 +380,10 @@ export function createViewer(container, { onSelect } = {}) {
       scenarioContent = null;
     }
     pickables.length = 0;
-    if (!data) return;
+    if (!data) {
+      resetCamera();
+      return;
+    }
 
     const group = new THREE.Group(); // inertial content
     scene.add(group);
@@ -343,6 +414,9 @@ export function createViewer(container, { onSelect } = {}) {
         new THREE.LineBasicMaterial({ color, transparent: true, opacity: baseOpacity }),
       );
       group.add(path);
+      path.userData.objectName = sat.name;
+      path.userData.orbitPath = true;
+      pickables.push(path);
 
       // Ground track (earth-fixed, slightly above the surface).
       const gtPositions = new Float32Array(sat.ephemeris.n * 3);
@@ -365,14 +439,16 @@ export function createViewer(container, { onSelect } = {}) {
 
       const marker = new THREE.Mesh(
         new THREE.SphereGeometry(0.014, 20, 14),
-        new THREE.MeshBasicMaterial({ color }),
+        new THREE.MeshBasicMaterial({ color, transparent: true }),
       );
       marker.userData.objectName = sat.name;
       group.add(marker);
       pickables.push(marker);
 
       const label = makeLabel(sat.name, "obj-label obj-label--sat");
-      marker.add(label);
+      const labelAnchor = new THREE.Group();
+      group.add(labelAnchor);
+      labelAnchor.add(label);
 
       // Sensor visuals: instantaneous FOV cone, field-of-regard footprint
       // down to Earth, and a boresight line to the tracked target while a
@@ -432,6 +508,8 @@ export function createViewer(container, { onSelect } = {}) {
           forHalfAngleDeg,
           forRadius: null,
           entries: scheduleForPlatform(data.schedule, sat.name),
+          pointingSeries: (data.pointing ?? []).find((entry) =>
+            entry.platform === sat.name && (!sat.sensor.name || entry.sensor === sat.sensor.name)),
         };
       }
 
@@ -441,6 +519,10 @@ export function createViewer(container, { onSelect } = {}) {
         groundTrack,
         marker,
         label,
+        labelAnchor,
+        detail: null,
+        detailWeight: 0,
+        displayScale: SATELLITE_DISPLAY_SCALE,
         color,
         baseOpacity,
         sensor,
@@ -453,18 +535,24 @@ export function createViewer(container, { onSelect } = {}) {
       // outline and label (below) identify them. Standalone ground points
       // keep the full-size marker + ring + label treatment.
       const isAreaPoint = Boolean(gp.area);
-      const marker = new THREE.Mesh(
-        new THREE.OctahedronGeometry(isAreaPoint ? 0.004 : 0.012),
-        new THREE.MeshBasicMaterial({ color: isAreaPoint ? color : 0xd9dee6 }),
-      );
+      const isDish = !isAreaPoint && (gp.kind === "groundStation" || gp.type === "GroundStation");
+      const marker = isDish
+        ? new THREE.Sprite(new THREE.SpriteMaterial({
+          map: stationIconTexture, transparent: true, depthWrite: false, sizeAttenuation: false,
+        }))
+        : new THREE.Mesh(
+          new THREE.OctahedronGeometry(isAreaPoint ? 0.004 : 0.012),
+          new THREE.MeshBasicMaterial({ color: isAreaPoint ? color : 0xd9dee6 }),
+        );
       latLonToVec3(gp.latitudeDeg, gp.longitudeDeg, 1.006, marker.position);
       marker.userData.objectName = gp.name;
+      if (isAreaPoint) marker.visible = Boolean(options.areaGrid);
       groundGroup.add(marker);
       pickables.push(marker);
 
       let ring = null;
       let label = null;
-      if (!isAreaPoint) {
+      if (!isAreaPoint && !isDish) {
         ring = new THREE.Mesh(
           new THREE.RingGeometry(0.02, 0.028, 32),
           new THREE.MeshBasicMaterial({
@@ -478,36 +566,30 @@ export function createViewer(container, { onSelect } = {}) {
         ring.lookAt(marker.position.clone().multiplyScalar(2));
         groundGroup.add(ring);
 
+      }
+      if (!isAreaPoint) {
         label = makeLabel(gp.name, "obj-label obj-label--gs");
         marker.add(label);
       }
 
-      return { data: gp, marker, ring, label };
+      return { data: gp, marker, ring, label, isDish };
     });
 
     // Area target outlines: one subtle ring per area, draped just above the
     // surface to avoid z-fighting, with a single label at the area center.
-    const outlineVec = new THREE.Vector3();
     const areaOutlines = (data.areaOutlines ?? []).map((area) => {
-      const positions = new Float32Array(area.points.length * 3);
-      for (let i = 0; i < area.points.length; i++) {
-        latLonToVec3(area.points[i].latDeg, area.points[i].lonDeg, 1.005, outlineVec);
-        positions.set([outlineVec.x, outlineVec.y, outlineVec.z], i * 3);
-      }
-      const outlineGeometry = new THREE.BufferGeometry();
-      outlineGeometry.setAttribute(
-        "position",
-        new THREE.BufferAttribute(positions, 3),
-      );
-      const line = new THREE.LineLoop(
-        outlineGeometry,
-        new THREE.LineBasicMaterial({
-          color: 0xe0705c,
-          transparent: true,
-          opacity: 0.55,
-        }),
-      );
-      groundGroup.add(line);
+      const { surface, boundaries } = makeAreaGeometry(area);
+      const fill = new THREE.Mesh(surface, new THREE.MeshBasicMaterial({
+        color: 0xe4bd72, transparent: true, opacity: 0.14, side: THREE.DoubleSide, depthWrite: false,
+      }));
+      fill.userData.objectName = area.name;
+      groundGroup.add(fill);
+      pickables.push(fill);
+      const lines = boundaries.map((boundary) => new Line2(new LineGeometry().setPositions(boundary), new LineMaterial({
+        color: 0xe4bd72, linewidth: 1.6, transparent: true, opacity: 0.9, depthWrite: false,
+        resolution: new THREE.Vector2(Math.max(container.clientWidth, 1), Math.max(container.clientHeight, 1)),
+      })));
+      groundGroup.add(...lines);
 
       const anchor = new THREE.Object3D();
       latLonToVec3(area.centerLatDeg, area.centerLonDeg, 1.006, anchor.position);
@@ -515,7 +597,7 @@ export function createViewer(container, { onSelect } = {}) {
       const label = makeLabel(area.name, "obj-label obj-label--area");
       anchor.add(label);
 
-      return { area, line, anchor, label };
+      return { area, lines, fill, anchor, label };
     });
 
     // Access lines: one segment per access pair, shown only inside a window.
@@ -555,6 +637,14 @@ export function createViewer(container, { onSelect } = {}) {
     };
     applyOptions();
     applySelection();
+    if (orbitEditor.name) {
+      const editing = sats.find((sat) => sat.data.name === orbitEditor.name);
+      if (editing?.data.spec?.orbit?.type === "keplerian") orbitEditor.setOrbit(editing.data.name, editing.data.spec.orbit);
+      else finishOrbitEditing();
+    }
+    if (focusedSatelliteName && !sats.some((sat) => sat.data.name === focusedSatelliteName)) {
+      resetCamera();
+    }
   }
 
   function applyOptions() {
@@ -563,6 +653,9 @@ export function createViewer(container, { onSelect } = {}) {
       s.groundTrack.visible = options.groundTracks;
     }
     scenarioContent.accessLines.visible = options.accessLines;
+    for (const station of scenarioContent.stations) {
+      if (station.data.area) station.marker.visible = Boolean(options.areaGrid) || station.data.name === selectedName;
+    }
     // Label visibility is finalized per-frame (occlusion by the Earth).
   }
 
@@ -585,15 +678,27 @@ export function createViewer(container, { onSelect } = {}) {
     if (!scenarioContent) return;
     for (const s of scenarioContent.sats) {
       const selected = s.data.name === selectedName;
-      s.marker.scale.setScalar(selected ? 1.7 : 1);
       s.path.material.opacity = selected ? 1.0 : s.baseOpacity;
+      s.path.visible = s.data.name !== orbitEditor.name;
       s.label.element.classList.toggle("obj-label--selected", selected);
     }
     for (const st of scenarioContent.stations) {
       const selected = st.data.name === selectedName;
+      if (st.data.area) st.marker.visible = Boolean(options.areaGrid) || selected;
       // Area grid points have no label; grow them more so selection reads.
-      st.marker.scale.setScalar(selected ? (st.label ? 1.6 : 2.6) : 1);
+      if (!st.isDish) st.marker.scale.setScalar(selected ? (st.label ? 1.6 : 2.6) : 1);
       st.label?.element.classList.toggle("obj-label--selected", selected);
+    }
+    for (const area of scenarioContent.areaOutlines) {
+      const selected = area.area.name === selectedName || scenarioContent.stations.some((st) =>
+        st.data.name === selectedName && st.data.area?.name === area.area.name);
+      for (const line of area.lines) {
+        line.material.color.setHex(selected ? 0xb3e8d2 : 0xe4bd72);
+        line.material.linewidth = selected ? 2.4 : 1.6;
+      }
+      area.fill.material.color.setHex(selected ? 0xb3e8d2 : 0xe4bd72);
+      area.fill.material.opacity = selected ? 0.24 : 0.14;
+      area.label.element.classList.toggle("obj-label--selected", selected);
     }
   }
 
@@ -616,10 +721,26 @@ export function createViewer(container, { onSelect } = {}) {
     );
     raycaster.setFromCamera(pointer, camera);
     raycaster.params.Points = { threshold: 0.05 };
-    const hits = raycaster.intersectObjects(pickables, false);
+    raycaster.params.Line.threshold = camera.position.length() * 0.004;
+    const hits = raycaster.intersectObjects(pickables, true).filter((hit) => {
+      for (let object = hit.object; object; object = object.parent) {
+        if (!object.visible) return false;
+      }
+      return !isOccludedByEarth(hit.point);
+    });
     if (hits.length > 0) {
       onSelect?.(hits[0].object.userData.objectName);
+      if (hits[0].object.userData.orbitPath) startOrbitEditing(hits[0].object.userData.objectName);
     }
+  });
+  labelRenderer.domElement.addEventListener("dblclick", (event) => {
+    const rect = labelRenderer.domElement.getBoundingClientRect();
+    pointer.set(((event.clientX - rect.left) / rect.width) * 2 - 1,
+      -((event.clientY - rect.top) / rect.height) * 2 + 1);
+    raycaster.setFromCamera(pointer, camera);
+    const hit = raycaster.intersectObjects(pickables, true)
+      .find((entry) => scenarioContent?.sats.some((sat) => sat.data.name === entry.object.userData.objectName));
+    if (hit) focusSatellite(hit.object.userData.objectName);
   });
 
   // --- Sensor pointing / FOV / FOR ---
@@ -628,9 +749,112 @@ export function createViewer(container, { onSelect } = {}) {
   const tmpFrom = new THREE.Vector3();
   const tmpTo = new THREE.Vector3();
   const tmpTarget = new THREE.Vector3();
+  const tmpNominal = new THREE.Vector3();
+  const tmpSensorOrigin = new THREE.Vector3();
+  const tmpLocalDirection = new THREE.Vector3();
+  const tmpInverseBody = new THREE.Quaternion();
+  const tmpLocalSun = new THREE.Vector3();
+  const sampledDirection = new THREE.Vector3();
+  const trackBefore = [0, 0, 0];
+  const trackAfter = [0, 0, 0];
+  const bodyVelocity = new THREE.Vector3();
   const SENSOR_IDLE = 0x7fb4d8;
   const SENSOR_FOR_ONLY = 0xe8a33d; // reachable (FOR-valid), not in the beam
   const SENSOR_FOV_IN_VIEW = 0x5fc98f; // target inside the instantaneous FOV
+
+  function trackVelocity(s, tSec, result) {
+    // Display orientation only: differentiate the existing sampled track;
+    // no propagation or mission-analysis results are computed in this view.
+    const times = s.data.ephemeris.t;
+    const before = Math.max(times[0], tSec - 0.5);
+    const after = Math.min(times[times.length - 1], tSec + 0.5);
+    if (after <= before) return result.set(0, 0, 0);
+    satEciAt(s.data, before, trackBefore);
+    satEciAt(s.data, after, trackAfter);
+    return result.set(trackAfter[0] - trackBefore[0], trackAfter[2] - trackBefore[2],
+      -(trackAfter[1] - trackBefore[1])).multiplyScalar(KM / (after - before));
+  }
+
+  function updateSatelliteDetail(s, tSec) {
+    const p = s.marker.position;
+    const distance = camera.position.distanceTo(p);
+    s.displayScale = Math.max(0, Math.min(SATELLITE_DISPLAY_SCALE, (p.length() - 1) * 0.035));
+    s.detailWeight = s.displayScale > 0 ? 1 - THREE.MathUtils.smoothstep(distance, 0.06, 0.35) : 0;
+    s.marker.material.opacity = 1 - s.detailWeight;
+    s.marker.visible = s.detailWeight < 0.998;
+    s.marker.scale.setScalar((s.data.name === selectedName ? 1.7 : 1) * (1 - 0.85 * s.detailWeight));
+    s.labelAnchor.position.copy(p);
+    s.label.position.set(0, s.detailWeight * s.displayScale * 1.6, 0);
+    // Large constellations allocate detailed geometry only for spacecraft
+    // approached by the camera, rather than hundreds of unseen bus models.
+    if (!s.detail && s.detailWeight > 0.002) {
+      s.detail = createSatelliteModel({ hasSensor: Boolean(s.data.sensor) });
+      s.detail.root.traverse((object) => { object.userData.objectName = s.data.name; });
+      scenarioContent.group.add(s.detail.root);
+      pickables.push(s.detail.root);
+    }
+    if (!s.detail) return;
+    s.detail.root.position.copy(p);
+    s.detail.root.scale.setScalar(s.displayScale);
+    trackVelocity(s, tSec, bodyVelocity);
+    orientSatelliteBody(s.detail.root.quaternion, p, bodyVelocity);
+    // The body stays nadir-pointing; only the arrays rotate about their
+    // cross-track hinges to follow the same Sun that lights the scene.
+    tmpInverseBody.copy(s.detail.root.quaternion).invert();
+    tmpLocalSun.copy(sunDirWorld).applyQuaternion(tmpInverseBody);
+    s.detail.trackSun(tmpLocalSun);
+    s.detail.setOpacity(s.detailWeight);
+  }
+
+  function nominalSensorDirection(s, tSec, result) {
+    const config = s.data.sensor;
+    const mode = String(config.pointing ?? config.pointingMode ?? "Nadir").toLowerCase();
+    if (mode === "fixedvector" && Array.isArray(config.boresight)) {
+      result.set(config.boresight[0], config.boresight[2], -config.boresight[1]);
+      return result.applyQuaternion(earthGroup.quaternion).normalize();
+    }
+    if (mode === "sunpointing") return result.copy(sunDirWorld);
+    if (mode === "velocityvector") {
+      trackVelocity(s, tSec, result);
+      // Earth-relative derivative for preview-only display. Authoritative
+      // exported boresight samples below always take precedence when present.
+      const omega = 7.292115e-5;
+      result.x -= omega * s.marker.position.z;
+      result.z += omega * s.marker.position.x;
+      if (result.lengthSq() > 1e-18) return result.normalize();
+    }
+    return result.copy(s.marker.position).normalize().negate();
+  }
+
+  function exportedPointingAt(series, tSec, direction) {
+    const times = series?.tOffsetSec;
+    const vectors = series?.boresightEcef;
+    if (!times?.length || vectors?.length !== times.length) return null;
+    let low = 0;
+    let high = times.length - 1;
+    while (high - low > 1) {
+      const middle = (low + high) >> 1;
+      if (times[middle] <= tSec) low = middle;
+      else high = middle;
+    }
+    if (tSec <= times[0]) high = low = 0;
+    if (tSec >= times[times.length - 1]) high = low = times.length - 1;
+    const fraction = high === low ? 0 : (tSec - times[low]) / (times[high] - times[low]);
+    const a = vectors[low];
+    const b = vectors[high];
+    direction.set(a[0], a[2], -a[1]);
+    sampledDirection.set(b[0], b[2], -b[1]);
+    direction.lerp(sampledDirection, fraction);
+    if (direction.lengthSq() < 1e-12) direction.set(a[0], a[2], -a[1]);
+    direction.normalize().applyQuaternion(earthGroup.quaternion);
+    const index = fraction < 0.5 ? low : high;
+    return {
+      phase: series.phase?.[index] ?? "idle",
+      targetName: series.targetName?.[index] ?? "",
+      aimLatitude: series.aimLatDeg?.[index],
+      aimLongitude: series.aimLonDeg?.[index],
+    };
+  }
 
   function isFovActive(platformName, targetName, tSec) {
     const pair = scenarioContent.sensorAccessByKey.get(
@@ -655,7 +879,8 @@ export function createViewer(container, { onSelect } = {}) {
     // interpolated direction while slewing into a task, and an interpolation
     // from the finished target back to nadir during the return-home phase.
     const pointing = pointingStateAt(viz.entries, tSec);
-    const dir = tmpDir.copy(tmpNadir);
+    const nominal = nominalSensorDirection(s, tSec, tmpNominal);
+    const dir = tmpDir.copy(nominal);
     let targetPos = null;
     if (pointing.phase !== "idle") {
       const st = scenarioContent.stationByName.get(pointing.entry.targetName);
@@ -666,10 +891,10 @@ export function createViewer(container, { onSelect } = {}) {
           dir.copy(tmpTo);
         } else if (pointing.phase === "return") {
           dir
-            .lerpVectors(tmpTo, tmpNadir, Math.min(pointing.progress, 1))
+            .lerpVectors(tmpTo, nominal, Math.min(pointing.progress, 1))
             .normalize();
         } else {
-          tmpFrom.copy(tmpNadir);
+          tmpFrom.copy(nominal);
           const prev = pointing.fromTarget
             ? scenarioContent.stationByName.get(pointing.fromTarget)
             : null;
@@ -683,25 +908,45 @@ export function createViewer(container, { onSelect } = {}) {
         }
       }
     }
+    const exported = exportedPointingAt(viz.pointingSeries, tSec, dir);
+    const phase = exported?.phase ?? pointing.phase;
+    const targetName = exported?.targetName ?? pointing.entry?.targetName;
+    if (exported && targetName) {
+      const target = scenarioContent.stationByName.get(targetName);
+      if (target) targetPos = target.marker.getWorldPosition(tmpTarget);
+      if (Number.isFinite(exported.aimLatitude) && Number.isFinite(exported.aimLongitude)) {
+        latLonToVec3(exported.aimLatitude, exported.aimLongitude, 1.001, tmpTarget)
+          .applyQuaternion(earthGroup.quaternion);
+        targetPos = tmpTarget;
+      }
+    }
+    if (s.detail?.payload) {
+      tmpInverseBody.copy(s.detail.root.quaternion).invert();
+      tmpLocalDirection.copy(dir).applyQuaternion(tmpInverseBody);
+      orientBoresight(s.detail.payload.quaternion, tmpLocalDirection);
+      s.detail.root.updateMatrixWorld(true);
+      s.detail.aperture.getWorldPosition(tmpSensorOrigin);
+      tmpSensorOrigin.lerpVectors(p, tmpSensorOrigin, s.detailWeight);
+    } else tmpSensorOrigin.copy(p);
 
     // The tracking line only makes sense while pointing at (or toward) the
     // upcoming/active target; the return-home slew has no target to show.
     const tracking =
-      pointing.phase !== "idle" && pointing.phase !== "return" && targetPos;
+      phase !== "idle" && phase !== "return" && targetPos;
     const fovActive = tracking
-      ? isFovActive(s.data.name, pointing.entry.targetName, tSec)
+      ? isFovActive(s.data.name, targetName, tSec)
       : false;
 
     viz.fovCone.visible = options.sensorFov;
     if (options.sensorFov) {
-      let length = fovLengthToEarth(p, dir, 1, FOV_EARTH_OVERSHOOT);
+      let length = fovLengthToEarth(tmpSensorOrigin, dir, 1, FOV_EARTH_OVERSHOOT);
       if (!Number.isFinite(length) || length <= 0) length = r;
       const radius = length * Math.tan(viz.halfAngleRad);
-      viz.fovCone.position.copy(p);
+      viz.fovCone.position.copy(tmpSensorOrigin);
       orientBoresight(viz.fovCone.quaternion, dir);
       viz.fovCone.scale.set(radius, length, radius);
       viz.fovCone.material.color.setHex(
-        pointing.phase === "idle"
+        phase === "idle"
           ? SENSOR_IDLE
           : fovActive
             ? SENSOR_FOV_IN_VIEW
@@ -734,13 +979,13 @@ export function createViewer(container, { onSelect } = {}) {
     viz.trackLine.visible = Boolean(tracking);
     if (tracking) {
       const attr = viz.trackLine.geometry.getAttribute("position");
-      attr.setXYZ(0, p.x, p.y, p.z);
+      attr.setXYZ(0, tmpSensorOrigin.x, tmpSensorOrigin.y, tmpSensorOrigin.z);
       attr.setXYZ(1, targetPos.x, targetPos.y, targetPos.z);
       attr.needsUpdate = true;
       viz.trackLine.material.color.setHex(
         fovActive ? SENSOR_FOV_IN_VIEW : SENSOR_FOR_ONLY,
       );
-      viz.trackLine.material.opacity = pointing.phase === "slew" ? 0.45 : 0.9;
+      viz.trackLine.material.opacity = phase === "slew" ? 0.45 : 0.9;
     }
   }
 
@@ -752,6 +997,89 @@ export function createViewer(container, { onSelect } = {}) {
   let lastWall = performance.now();
   let epochMs = 0;
   let raf = 0;
+  let lastEarthAngle = null;
+  const earthAxis = new THREE.Vector3(0, 1, 0);
+
+  function resetCamera() {
+    const wasFocused = focusedSatelliteName !== null;
+    focusedSatelliteName = null;
+    controls.enablePan = true;
+    controls.minDistance = 1.2;
+    controls.maxDistance = 40;
+    controls.target.set(0, 0, 0);
+    camera.position.set(2.6, 1.5, 2.4);
+    camera.near = 0.01;
+    camera.updateProjectionMatrix();
+    controls.update();
+    if (wasFocused) onFocusChange?.(null);
+  }
+
+  function focusArea(name) {
+    const entry = scenarioContent?.areaOutlines.find((item) => item.area.name === name);
+    if (!entry) return false;
+    finishOrbitEditing();
+    resetCamera();
+    const area = entry.area;
+    const direction = latLonToVec3(area.centerLatDeg, area.centerLonDeg, 1, new THREE.Vector3());
+    direction.applyAxisAngle(new THREE.Vector3(0, 1, 0), gmstRad(new Date(epochMs + clock.getSnapshot().tSec * 1000)));
+    const span = Math.max(area.widthKm, area.heightKm) / 6371;
+    const distance = Math.min(5, Math.max(1.45, 1 + span / (2 * Math.tan(camera.fov * Math.PI / 360) * Math.min(1, camera.aspect))));
+    camera.position.copy(direction).multiplyScalar(distance);
+    controls.update();
+    return true;
+  }
+
+  function focusSatellite(name) {
+    finishOrbitEditing();
+    const satellite = scenarioContent?.sats.find((entry) => entry.data.name === name);
+    if (!satellite?.data.ephemeris?.n) return false;
+    const { tSec } = clock.getSnapshot();
+    satEciAt(satellite.data, tSec, eciOut);
+    eciToThree(eciOut[0], eciOut[1], eciOut[2], satellite.marker.position);
+    const p = satellite.marker.position;
+    if (!Number.isFinite(p.lengthSq()) || p.length() <= 1) return false;
+    satellite.displayScale = Math.min(SATELLITE_DISPLAY_SCALE, (p.length() - 1) * 0.035);
+    focusedSatelliteName = name;
+    lastFocusPosition.copy(p);
+    focusRadial.copy(p).normalize();
+    focusSide.set(Math.abs(focusRadial.y) > 0.9 ? 1 : 0, Math.abs(focusRadial.y) > 0.9 ? 0 : 1, 0);
+    focusSide.cross(focusRadial).normalize();
+    const distance = satellite.displayScale * SATELLITE_FOCUS_DISTANCE;
+    camera.position.copy(p).addScaledVector(focusRadial, distance * 0.52)
+      .addScaledVector(focusSide, distance * 0.85);
+    controls.target.copy(p);
+    controls.minDistance = satellite.displayScale * 3.2;
+    controls.maxDistance = 40;
+    controls.enablePan = false;
+    controls.update();
+    onFocusChange?.(name);
+    return true;
+  }
+
+  function startOrbitEditing(name) {
+    const satellite = scenarioContent?.sats.find((entry) => entry.data.name === name);
+    const orbit = satellite?.data.spec?.orbit;
+    if (orbit?.type !== "keplerian" || orbitEditor.busy) return false;
+    clock.setPlaying(false);
+    if (focusedSatelliteName) resetCamera();
+    controls.enableDamping = false;
+    controls.target.set(0, 0, 0);
+    const radius = orbit.semiMajorAxisKm * (1 + orbit.eccentricity) / 6371;
+    const distance = radius * 1.55 / Math.sin(camera.fov * DEG / 2 * Math.min(camera.aspect, 1));
+    if (camera.position.length() < distance) camera.position.setLength(distance);
+    controls.maxDistance = Math.max(40, distance * 3);
+    controls.update();
+    orbitEditor.setOrbit(name, orbit);
+    applySelection();
+    return true;
+  }
+
+  function finishOrbitEditing() {
+    if (orbitEditor.busy) return;
+    orbitEditor.setOrbit(null, null);
+    controls.enableDamping = true;
+    applySelection();
+  }
 
   function frame(now) {
     raf = requestAnimationFrame(frame);
@@ -762,13 +1090,22 @@ export function createViewer(container, { onSelect } = {}) {
     const { tSec } = clock.getSnapshot();
     const date = new Date(epochMs + tSec * 1000);
 
-    earthGroup.rotation.y = gmstRad(date);
+    const earthAngle = gmstRad(date);
+    if (options.referenceFrame === "ECEF" && lastEarthAngle !== null) {
+      const rotation = earthAngle - lastEarthAngle;
+      camera.position.applyAxisAngle(earthAxis, rotation);
+      controls.target.applyAxisAngle(earthAxis, rotation);
+      lastFocusPosition.applyAxisAngle(earthAxis, rotation);
+    }
+    lastEarthAngle = earthAngle;
+    earthGroup.rotation.y = earthAngle;
     earthGroup.updateMatrixWorld();
     // Sun direction: MATLAB/Orekit ephemeris when the payload provides it,
     // otherwise the low-precision analytic formula.
     const sunData = scenarioContent?.data?.sun ?? null;
     const sun = sunDirectionAt(sunData, tSec, sunOut) ?? sunDirectionEci(date);
     sunDirWorld.set(sun[0], sun[2], -sun[1]).normalize();
+    spacecraftSun.position.copy(sunDirWorld).multiplyScalar(20);
     sunSprite.position.set(sun[0] * 100, sun[2] * 100, -sun[1] * 100);
     sunSprite.visible = options.sun;
 
@@ -776,6 +1113,18 @@ export function createViewer(container, { onSelect } = {}) {
       for (const s of scenarioContent.sats) {
         satEciAt(s.data, tSec, eciOut);
         eciToThree(eciOut[0], eciOut[1], eciOut[2], s.marker.position);
+      }
+      if (focusedSatelliteName) {
+        const focused = scenarioContent.sats.find((sat) => sat.data.name === focusedSatelliteName);
+        if (focused) {
+          focusDelta.subVectors(focused.marker.position, lastFocusPosition);
+          camera.position.add(focusDelta);
+          controls.target.copy(focused.marker.position);
+          lastFocusPosition.copy(focused.marker.position);
+        } else resetCamera();
+      }
+      for (const s of scenarioContent.sats) {
+        updateSatelliteDetail(s, tSec);
         s.label.visible = options.labels && !isOccludedByEarth(s.marker.position);
         // Eclipse shading: dim the marker while the satellite is shadowed.
         if (sunData) {
@@ -787,6 +1136,11 @@ export function createViewer(container, { onSelect } = {}) {
         if (s.sensor) updateSensorViz(s, tSec);
       }
       for (const st of scenarioContent.stations) {
+        if (st.isDish) {
+          const pixels = st.data.name === selectedName ? 31 : 24;
+          const scale = pixels * 2 * Math.tan(camera.fov * DEG / 2) / Math.max(container.clientHeight, 1);
+          st.marker.scale.setScalar(scale);
+        }
         if (!st.label) continue;
         st.marker.getWorldPosition(tmpVec);
         st.label.visible = options.labels && !isOccludedByEarth(tmpVec);
@@ -818,6 +1172,16 @@ export function createViewer(container, { onSelect } = {}) {
     }
 
     controls.update();
+    orbitEditor.updateFrame(container.clientHeight);
+    // Ordinary perspective depth remains compatible with the custom Earth
+    // shader. A local near plane permits close viewing without log-depth.
+    const near = focusedSatelliteName
+      ? Math.max(0.000002, Math.min(0.01, camera.position.distanceTo(controls.target) * 0.004))
+      : 0.01;
+    if (Math.abs(camera.near - near) > near * 0.05) {
+      camera.near = near;
+      camera.updateProjectionMatrix();
+    }
     renderer.render(scene, camera);
     labelRenderer.render(scene, camera);
   }
@@ -830,6 +1194,7 @@ export function createViewer(container, { onSelect } = {}) {
     camera.updateProjectionMatrix();
     renderer.setSize(w, h);
     labelRenderer.setSize(w, h);
+    for (const area of scenarioContent?.areaOutlines ?? []) for (const line of area.lines) line.material.resolution.set(w, h);
   }
   const resizeObserver = new ResizeObserver(resize);
   resizeObserver.observe(container);
@@ -838,6 +1203,7 @@ export function createViewer(container, { onSelect } = {}) {
 
   return {
     setScenario(data) {
+      if (epochMs !== (data?.epochMs ?? 0)) lastEarthAngle = null;
       epochMs = data?.epochMs ?? 0;
       setScenario(data);
     },
@@ -847,17 +1213,23 @@ export function createViewer(container, { onSelect } = {}) {
     },
     setSelection(name) {
       selectedName = name;
+      if (orbitEditor.name && orbitEditor.name !== name) finishOrbitEditing();
       applySelection();
     },
-    resetCamera() {
-      controls.target.set(0, 0, 0);
-      camera.position.set(2.6, 1.5, 2.4);
-    },
+    focusSatellite,
+    focusArea,
+    startOrbitEditing,
+    finishOrbitEditing,
+    commitOrbit(orbit) { return orbitEditor.commit(orbit); },
+    getFocusedSatellite() { return focusedSatelliteName; },
+    resetCamera,
     dispose() {
       cancelAnimationFrame(raf);
       resizeObserver.disconnect();
+      orbitEditor.dispose();
       setScenario(null);
       controls.dispose();
+      stationIconTexture.dispose();
       renderer.dispose();
       renderer.domElement.remove();
       labelRenderer.domElement.remove();

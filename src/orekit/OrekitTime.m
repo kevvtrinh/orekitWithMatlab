@@ -23,5 +23,23 @@ classdef OrekitTime
             end
             times.TimeZone = "UTC";
         end
+
+        function time = fromAbsoluteDate(date)
+            %FROMABSOLUTEDATE Convert an Orekit instant to MATLAB UTC datetime.
+            % MATLAB UTC datetime cannot encode 23:59:60; reject that instant
+            % instead of silently identifying it with the following second.
+            components = date.getComponents(OrekitTime.utc());
+            calendarDate = components.getDate();
+            clockTime = components.getTime();
+            secondValue = clockTime.getSecond();
+            if secondValue >= 60
+                error("OrekitTime:UnrepresentableLeapSecond", ...
+                    "MATLAB UTC datetime cannot represent a leap-second instant.");
+            end
+            time = datetime(double(calendarDate.getYear()), ...
+                double(calendarDate.getMonth()), double(calendarDate.getDay()), ...
+                double(clockTime.getHour()), double(clockTime.getMinute()), ...
+                double(secondValue), "TimeZone", "UTC");
+        end
     end
 end

@@ -25,7 +25,44 @@ the thinnest practical bridge from a browser UI to `matlab -batch` on Windows.
   Orekit runtime fetched at the repo root
   (`.\scripts\fetch-orekit-runtime.ps1 -WithData`)
 
-## Run it
+## Launch from MATLAB
+
+From the repository root:
+
+```matlab
+startupOrekitSuite();
+session = launchOrbitHtmlUI();
+```
+
+The launcher starts the React/Three.js app and its Node bridge at
+<http://127.0.0.1:8321>, then opens the browser. On first launch it installs
+missing npm dependencies and builds the frontend; later launches rebuild
+when the frontend output is missing or outdated. Initial setup can take
+longer than starting an existing build. The call returns after the bridge
+becomes ready, so the MATLAB command window remains available.
+
+```matlab
+session = launchOrbitHtmlUI("Port", 8321, "OpenBrowser", false, ...
+    "NodeExecutable", "C:\Program Files\nodejs\node.exe");
+disp(session.URL);
+disp(session.LogFile);
+isRunning = session.IsRunning();
+session.Stop();
+```
+
+| Option | Default | Behavior |
+| --- | --- | --- |
+| `Port` | `8321` | Local HTTP port for both the frontend and API |
+| `OpenBrowser` | `true` | Open the app after the bridge becomes ready |
+| `NodeExecutable` | `""` | Discover Node automatically, or use an explicit executable path |
+| `BuildIfNeeded` | `true` | Prepare missing dependencies and build missing or outdated frontend output |
+
+The launcher serves the same `apps/orbit-ui` frontend and MATLAB bridge used
+by the npm commands below. Its health endpoint is
+<http://127.0.0.1:8321/api/health>. Use `session.LogFile` to inspect startup
+errors.
+
+## Develop with npm
 
 ```powershell
 cd apps\orbit-ui
@@ -43,7 +80,7 @@ sample scenario; press **Run scenario in MATLAB** in the right panel (or
 **Calculate Access** in the top bar) to replace it with freshly computed
 Orekit data.
 
-### Troubleshooting: HTTP 404 / "web bridge offline"
+### npm development troubleshooting: HTTP 404 / "web bridge offline"
 
 These are **web-plumbing problems, not MATLAB failures** - MATLAB was never
 started. The usual cause is a dev server or bridge process left running from
@@ -142,22 +179,63 @@ npm run bridge:demo
   constellations, sensors (top-level, attaches to any satellite), ground
   stations, point targets, area targets (rectangle sampled as a grid of
   point targets, like the MATLAB UI's Generate Grid), and sensor tasks.
-  **Calculate Access** in the top bar runs the authoritative MATLAB/Orekit
+  **Run scenario** in the top bar runs the authoritative MATLAB/Orekit
   pipeline (propagate + access + scheduling) and refreshes the view;
   **Run scenario in MATLAB** in the inspector is the same pipeline.
+- **Workspace:** searchable mission objects, grouped access results, compact
+  access-window tables, and editable object properties. On narrower windows,
+  switch between Objects, Orbital view, and Details using the workspace tabs.
 - **3D viewport:** drag to rotate (inertial damping), wheel to zoom,
   right-drag to pan. ECI/J2000 frame; the Earth rotates with GMST and the sun
   direction matches the scenario clock. Orbit paths, satellite markers,
   ground-station markers, ground tracks, and green access lines during active
   windows. Click a marker to select it.
 - **Timeline:** scrub bar with access windows drawn as green bands; play/pause
-  and speed (1x-1000x) in the top bar; "go" buttons in the inspector jump to a
-  window start.
+  and speed (1x-1000x) beside the mission clock, with separate access and
+  collection/slew lanes. Window buttons in the inspector jump to a start time.
+- **Spacecraft inspection:** double-click a satellite in the object browser
+  or 3D view, or select **Focus** in its details. The camera follows it during
+  playback; zoom and orbit to inspect the bus, solar arrays, antenna, and any
+  configured sensor. The solar-panel span is perpendicular to the flight path;
+  both wings rotate about that span to track the Sun during playback and
+  time scrubbing. This is ideal single-axis tracking using the scene's Sun
+  direction; it does not model motor rates or electrical power.
+  The antenna faces Earth, and new sensors default to
+  **Nadir (toward Earth's center)**. **Reset camera** returns to Earth. Models are illustrative
+  display geometry, not spacecraft dimensions or collision geometry. Fresh
+  MATLAB pointing histories drive sensor direction when available; otherwise
+  the viewer uses its configured/scheduled display approximation.
+- **Ground sites:** antenna-dish symbols identify stations; targets retain
+  distinct markers. Locations and access calculations remain backend data.
 - **Data:** ephemerides are sampled at the scenario time step and interpolated
   in the browser; positions/times shown in the inspector come from the same
   arrays MATLAB exported.
 
 ## Layout
+
+**Country area targets:** choose **Insert → Country Area Target**, search by
+country, territory, code, or continent, select a boundary, and set grid spacing.
+Adding the area positions the camera over it. All 242 boundaries are available
+offline and preserve islands and interior exclusions. Sampling points are
+hidden by default; enable **View → Area grid points** to inspect them. MATLAB
+uses the same multipart boundary for area containment and scanning.
+The catalog is generated from a Natural Earth shapefile using MATLAB Mapping
+Toolbox; [source and regeneration instructions](public/geography/README.md).
+
+**Reference frame:** the always-visible **ECI / ECEF** buttons choose an inertial
+or Earth-fixed camera reference during playback and time scrubbing. They do
+not change the propagation model or exported coordinates.
+
+**Direct orbit editing:** select an orbit path, or select a Keplerian satellite
+and choose **Edit orbit**. Drag the perigee, apogee, inclination, RAAN, or
+periapsis-angle handles, then release to save. Esc cancels the current drag.
+Numerical elements provide precise entry. Editing one apsis preserves the
+other; perigee is constrained above 90 km altitude. The preview updates
+immediately; **Run scenario** recomputes propagation and analysis. TLE orbits
+must be edited through their TLE input.
+
+Set `ORBIT_UI_DATA_DIR` to use a separate scenario/output directory, for example
+when testing the console in an isolated session. The default is `server/data`.
 
 ```text
 apps/orbit-ui/
@@ -168,5 +246,8 @@ apps/orbit-ui/
   src/              React app (components/, lib/, three/)
 ```
 
-The Earth texture (`public/textures/earth_atmos_2048.jpg`) is the NASA Blue
-Marble image bundled with three.js examples (public-domain imagery).
+The Earth uses NASA's native 8192 × 4096 Blue Marble map, with maximum
+supported anisotropic filtering for oblique views. The original 2048-pixel
+map remains a fallback. [Texture credits and source](public/textures/README.md).
+Night-side surface light and atmospheric glow are subdued while the
+sun-driven daylight and ocean highlights are preserved.

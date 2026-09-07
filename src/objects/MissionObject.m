@@ -31,7 +31,7 @@ classdef (Abstract) MissionObject
                 error("MissionObject:NoEphemeris", ...
                     "Object '%s' does not have ephemeris.", obj.Name);
             end
-            ephemeris = obj.Ephemeris;
+            ephemeris = obj.stateEphemeris(time);
             n = height(ephemeris);
             if time <= ephemeris.Time(1)
                 idx = 1;
@@ -72,6 +72,13 @@ classdef (Abstract) MissionObject
             for k = 1:numel(props)
                 data.(props{k}) = obj.(props{k});
             end
+        end
+    end
+
+    methods (Access = protected)
+        function ephemeris = stateEphemeris(obj, ~)
+            % Allow trajectory subclasses to bound interpolation at events.
+            ephemeris = obj.Ephemeris;
         end
     end
 end

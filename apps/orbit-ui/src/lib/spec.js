@@ -502,14 +502,13 @@ export function areaOutlinePoints(area, segmentsPerEdge = 8) {
 }
 
 // One outline per distinct area referenced by the grid targets in `objects`.
-export function collectAreaOutlines(objects) {
+export function collectAreaOutlines(objects, areaDefinitions = []) {
   const areas = new Map();
   for (const obj of objects ?? []) {
     if (obj?.kind === "target" && obj.area && !areas.has(obj.area.name)) {
-      areas.set(obj.area.name, {
-        ...obj.area,
-        points: areaOutlinePoints(obj.area),
-      });
+      const definition = areaDefinitions.find((area) => area.name === obj.area.name);
+      const area = { ...obj.area, ...definition };
+      areas.set(area.name, { ...area, points: area.boundaryPolygons ? [] : areaOutlinePoints(area) });
     }
   }
   return [...areas.values()];
@@ -544,8 +543,9 @@ export function removeTargetGroup(spec, group) {
   );
   return {
     ...spec,
+    ...(spec.areas ? { areas: spec.areas.filter((area) => area.name !== group) } : {}),
     objects: spec.objects.filter((o) => !names.has(o.name)),
-    tasks: (spec.tasks ?? []).filter((t) => !names.has(t.targetName)),
+    tasks: (spec.tasks ?? []).filter((t) => t.targetName !== group && !names.has(t.targetName)),
   };
 }
 
@@ -966,8 +966,48 @@ export function validateSpec(spec) {
 
   validateTasks(spec, errors);
   validateAccessRequests(spec, errors);
+  validateAreaDefinitions(spec, errors);
 
   return errors;
+}
+
+// MATLAB emits singleton struct arrays as objects. Normalize only the
+// registry's collection fields; coordinate matrices remain [longitude, latitude].
+export function normalizeAreaDefinitions(value) {
+  const array = (item) => item == null ? [] : Array.isArray(item) ? item : [item];
+  return array(value).map((area) => ({ ...area, boundaryPolygons: array(area.boundaryPolygons)
+    .map((polygon) => ({ ...polygon, holes: array(polygon.holes) })) }));
+}
+
+function validateAreaDefinitions(spec, errors) {
+  if (spec.areas !== undefined && !Array.isArray(spec.areas)) { errors.push("Area definitions must be an array."); return; }
+  const names = new Set();
+  let vertices = 0;
+  for (const area of spec.areas ?? []) {
+    if (!area || typeof area.name !== "string" || !area.name.trim() || names.has(area.name) ||
+        spec.objects.some((object) => object.name === area.name)) { errors.push("Area definitions need unique names distinct from objects."); continue; }
+    names.add(area.name);
+    if (!Array.isArray(area.boundaryPolygons) || !area.boundaryPolygons.length) { errors.push(`${area.name}: missing polygon boundary.`); continue; }
+    for (const polygon of area.boundaryPolygons) {
+      if (!polygon || !Array.isArray(polygon.holes ?? [])) { errors.push(`${area.name}: invalid polygon.`); continue; }
+      for (const ring of [polygon.outer, ...(polygon.holes ?? []).map((hole) => hole?.ring)]) {
+        if (!Array.isArray(ring) || ring.length < 4 || ring.some((point) => !Array.isArray(point) || point.length !== 2 ||
+            !inRange(point[0], -540, 540) || !inRange(point[1], -90, 90))) {
+          errors.push(`${area.name}: boundary rings need finite longitude/latitude pairs.`); continue;
+        }
+        vertices += ring.length;
+          let west = Infinity, east = -Infinity;
+          for (const point of ring) { west = Math.min(west, point[0]); east = Math.max(east, point[0]); }
+          if (east - west > 360 + 1e-8)
+          errors.push(`${area.name}: a boundary ring exceeds one longitude revolution.`);
+      }
+    }
+    if (!spec.objects.some((object) => object.kind === "target" && object.group === area.name))
+      errors.push(`${area.name}: an area needs analysis sample points.`);
+  }
+  if (vertices > 150000) errors.push("Area boundaries exceed the 150,000-vertex limit.");
+  for (const object of spec.objects) if (object.area?.type === "country" && !names.has(object.group))
+    errors.push(`${object.name}: country area boundary is missing.`);
 }
 
 // ---------------------------------------------------------------------------
@@ -978,6 +1018,14 @@ export function validateSpec(spec) {
 // sample or a MATLAB result). Keplerian satellites keep their elements; other
 // definition types cannot be reconstructed and are skipped.
 export function deriveSpecFromScenario(raw) {
+  if (raw.spec?.version === SPEC_VERSION) {
+    const array = (value) => value == null ? [] : Array.isArray(value) ? value : [value];
+    const candidate = { ...raw.spec, objects: array(raw.spec.objects),
+      ...(raw.spec.tasks !== undefined ? { tasks: array(raw.spec.tasks) } : {}),
+      ...(raw.spec.accessRequests !== undefined ? { accessRequests: array(raw.spec.accessRequests) } : {}),
+      ...(raw.spec.areas !== undefined ? { areas: normalizeAreaDefinitions(raw.spec.areas) } : {}) };
+    if (!validateSpec(candidate).length) return structuredClone(candidate);
+  }
   const objects = [];
   for (const sat of raw.satellites ?? []) {
     if (!sat.elements) continue;

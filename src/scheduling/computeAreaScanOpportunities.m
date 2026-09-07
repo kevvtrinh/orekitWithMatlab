@@ -20,6 +20,8 @@ requiredCoverage = max([taskField(task, "RequiredCoveragePercent", areaTarget.Re
 requiredDwell = max([taskField(task, "RequiredDwellTimeSeconds", 0), ...
     areaTarget.RequiredDwellPerGridPointSeconds, ...
     options.MinimumCandidateDurationSeconds]);
+minimumDuration = max(requiredDwell, taskField(task, "MinDurationSeconds", 0));
+maximumDuration = taskField(task, "MaxDurationSeconds", Inf);
 taskID = string(taskField(task, "TaskID", SensorTask.newID()));
 taskName = string(taskField(task, "TaskName", taskID));
 taskType = string(taskField(task, "TaskType", "ScanAreaTarget"));
@@ -54,9 +56,11 @@ for s = 1:height(sensors)
         startTime = max(windows.StartTime(w), earliest);
         stopTime = min(windows.StopTime(w), latest);
         durationSeconds = seconds(stopTime - startTime);
-        if durationSeconds <= 0 || durationSeconds < max(requiredDwell, options.MinimumCandidateDurationSeconds)
+        durationSeconds = min([durationSeconds, maximumDuration, sensor.MaxDwellTimeSeconds]);
+        if durationSeconds <= 0 || durationSeconds < max(minimumDuration, sensor.MinDwellTimeSeconds)
             continue;
         end
+        stopTime = startTime + seconds(durationSeconds);
         [coveredCount, coveragePercent, estimatedSwathKm] = estimateAreaCoverage( ...
             sensor, areaTarget, durationSeconds, totalGridPointCount, requiredDwell);
         feasible = coveragePercent >= requiredCoverage || options.AllowPartialAreaCoverage;
@@ -110,7 +114,9 @@ for s = 1:height(sensors)
             "RejectReason", rejectReason, ...
             "ConflictGroup", sensorName, ...
             "RequiresSimultaneousSensors", taskField(task, "RequiresSimultaneousSensors", false), ...
-            "RequiredSensorCount", taskField(task, "RequiredSensorCount", 1));
+            "RequiredSensorCount", taskField(task, "RequiredSensorCount", 1), ...
+            "SlewTransitionData", createSlewTransitionData(scenario, parentName, ...
+                sensorName, areaTargetName, startTime, stopTime));
         row = makeTaskCandidateRow(values, scenario.Config.Epoch.TimeZone);
         row.QualityScore(1) = scoreTaskCandidate(row, task, options);
         opportunities = [opportunities; row]; %#ok<AGROW>

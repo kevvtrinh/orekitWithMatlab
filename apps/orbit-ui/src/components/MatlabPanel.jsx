@@ -1,10 +1,10 @@
 const STATE_LABEL = {
-  idle: "Idle",
+  idle: "Ready to compute",
   running: "Running...",
   succeeded: "Succeeded",
   failed: "MATLAB run failed",
   // "unreachable" means the web bridge/dev server, never MATLAB itself.
-  unreachable: "Web bridge unavailable (not a MATLAB failure)",
+  unreachable: "Connection unavailable",
 };
 
 export default function MatlabPanel({ job, onRunMatlab, dirty }) {
@@ -24,7 +24,7 @@ export default function MatlabPanel({ job, onRunMatlab, dirty }) {
       </div>
 
       <button
-        className="btn btn--primary"
+        className="btn"
         onClick={() => onRunMatlab?.()}
         disabled={running}
       >
@@ -33,27 +33,27 @@ export default function MatlabPanel({ job, onRunMatlab, dirty }) {
           : state === "unreachable"
             ? "Retry MATLAB run"
             : dirty
-              ? "Run scenario in MATLAB (edits pending)"
-              : "Run scenario in MATLAB"}
+              ? "Compute pending changes"
+              : "Recompute scenario"}
       </button>
 
       <div className="hint-text">
-        Sends the scenario spec to <code>matlab -batch</code>, which rebuilds
-        it with the mission classes, propagates with Orekit, computes access,
-        and reloads this view with authoritative results. First run takes a
-        minute or two while MATLAB starts.
+        {dirty ? "Preview data is shown. Run the scenario to update orbits and access with Orekit." :
+          "Orbits and access are computed with MATLAB / Orekit."}
+        {" "}The first run includes engine startup.
       </div>
 
       {state === "unreachable" && !job?.error && (
         <div className="error-text">
-          Web bridge offline. Restart `npm run dev` in apps/orbit-ui and
-          reload this page - MATLAB was never started, so it did not fail.
+          Reopen the console with launchOrbitHtmlUI in MATLAB, then reload this page.
         </div>
       )}
       {job?.error && <div className="error-text">{job.error}</div>}
 
       {job?.log?.length > 0 && (
-        <pre className="matlab-log">{job.log.join("\n")}</pre>
+        <details className="engine-log"><summary>Execution log</summary>
+          <pre className="matlab-log">{job.log.join("\n")}</pre>
+        </details>
       )}
     </div>
   );

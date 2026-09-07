@@ -24,9 +24,11 @@ function sensorAccessResult = computeSensorAccess(scenario, parentObjectName, se
 % Result adds FieldOfViewMode ("FOV"|"FOR") and FovLimitDeg (the half-angle
 % gate that was applied).
 %
-% Geometry notes: all positions are ECEF meters; satellite positions are
-% linearly interpolated between ephemeris samples. Elevation is measured at
-% the fixed (ground) end of the link.
+% Geometry notes: all positions are ECEF meters; satellite positions use
+% getECEFMatrix interpolation and moving targets use their documented
+% trajectory sampling. Elevation is measured at the fixed ground end of
+% the link. Pairs without a fixed ground endpoint use WGS84 segment
+% obstruction; their azimuth/elevation remain NaN (no local frame supplied).
 
 if nargin < 5
     options = struct();
@@ -209,15 +211,11 @@ switch upper(string(sensor.PointingMode))
         end
 
     case "VELOCITYVECTOR"
-        if isSatelliteParent
-            % Earth-fixed velocity from the ECEF track (the inertial GCRF
-            % velocity is the wrong frame for ECEF look geometry).
-            timeSeconds = seconds(timeVector - timeVector(1));
-            boresights = [gradient(parentPositions(:, 1), timeSeconds), ...
-                gradient(parentPositions(:, 2), timeSeconds), ...
-                gradient(parentPositions(:, 3), timeSeconds)];
-        else
-            boresights = repmat(SensorObject.localEnuVectorToECEF(parent, [0 0 1]), n, 1);
+        % Shared instantaneous PV transform: independent of the requested
+        % sample spacing and valid at a maneuver velocity discontinuity.
+        boresights = zeros(n, 3);
+        for k = 1:n
+            boresights(k, :) = sensor.getBoresightVector(timeVector(k), scenario, targetName);
         end
 
     case {"SUNPOINTING", "SUN"}
@@ -275,31 +273,36 @@ end
 
 function [azDeg, elDeg, losOK] = lineOfSightStatus(parent, target, parentPositions, targetPositions)
 if isFixedObject(parent)
-    [azDeg, elDeg] = enuAzElRange(parent.LatitudeDeg, parent.LongitudeDeg, ...
-        fixedAltitudeMeters(parent), targetPositions);
+    location = fixedLocation(parent);
+    [azDeg, elDeg] = enuAzElRange(location(1), location(2), location(3), targetPositions);
     losOK = elDeg >= 0;
 elseif isFixedObject(target)
-    [azDeg, elDeg] = enuAzElRange(target.LatitudeDeg, target.LongitudeDeg, ...
-        fixedAltitudeMeters(target), parentPositions);
+    location = fixedLocation(target);
+    [azDeg, elDeg] = enuAzElRange(location(1), location(2), location(3), parentPositions);
     losOK = elDeg >= 0;
 else
-    earthRadiusMeters = 6378137.0;
     n = size(parentPositions, 1);
     losOK = false(n, 1);
     for k = 1:n
-        losOK(k) = distanceFromOriginToSegment(parentPositions(k, :), ...
-            targetPositions(k, :)) > earthRadiusMeters;
+        losOK(k) = segmentClearsEarth(parentPositions(k, :), targetPositions(k, :));
     end
     azDeg = nan(n, 1);
     elDeg = nan(n, 1);
 end
 end
 
-function altitudeMeters = fixedAltitudeMeters(obj)
+function location = fixedLocation(obj)
+% Area boundaries are authoritative even if persisted centroid fields predate
+% an edit or the dateline fix. Use the same location as objectPositionECEF.
+latitudeLongitude = [obj.LatitudeDeg, obj.LongitudeDeg];
+if isa(obj, "AreaTargetObject")
+    latitudeLongitude = obj.getCentroid();
+end
 altitudeMeters = 0;
 if isprop(obj, "AltitudeMeters")
     altitudeMeters = obj.AltitudeMeters;
 end
+location = [latitudeLongitude, altitudeMeters];
 end
 
 function tf = isFixedObject(obj)
@@ -307,16 +310,23 @@ tf = isprop(obj, "LatitudeDeg") && isprop(obj, "LongitudeDeg") && ...
     ~(isa(obj, "TargetObject") && obj.isMoving());
 end
 
-function distance = distanceFromOriginToSegment(p1, p2)
-segment = p2 - p1;
-if norm(segment) == 0
-    distance = norm(p1);
-    return;
+function isClear = segmentClearsEarth(p1, p2)
+% Scaling WGS84 axes maps its ellipsoid to a unit sphere. Surface endpoint
+% contact is allowed; crossing the ellipsoid interior is not. This matters
+% for moving ground targets, whose polar radius is below the equatorial one.
+equatorialRadiusMeters = 6378137.0;
+polarRadiusMeters = equatorialRadiusMeters * (1 - 1 / 298.257223563);
+axesMeters = [equatorialRadiusMeters, equatorialRadiusMeters, polarRadiusMeters];
+start = p1 ./ axesMeters;
+segment = (p2 - p1) ./ axesMeters;
+segmentSquared = dot(segment, segment);
+fraction = 0;
+if segmentSquared > 0
+    fraction = min(max(-dot(start, segment) / segmentSquared, 0), 1);
 end
-t = -dot(p1, segment) / dot(segment, segment);
-t = min(max(t, 0), 1);
-closest = p1 + t * segment;
-distance = norm(closest);
+closest = start + fraction * segment;
+% Dimensionless roundoff at a WGS84 surface endpoint, not a physical margin.
+isClear = all(isfinite(closest)) && dot(closest, closest) >= 1 - 64 * eps;
 end
 
 function warnNoAccess(scenario, fovLimitDeg, timeVector, offBoresightAngleDeg, rangeKm, ...

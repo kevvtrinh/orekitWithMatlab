@@ -774,6 +774,88 @@ test("buildRenderScenario merges schedule, sensor accesses, and sun data", () =>
   assert.equal(afterDelete.sensorAccesses.length, 0);
 });
 
+test("buildRenderScenario retains complete fresh pointing histories and rejects stale dependencies", () => {
+  const spec = deriveSpecFromScenario(sample);
+  const platform = spec.objects.find((object) => object.kind === "satellite");
+  platform.sensor = { ...sensorTemplate(), name: "Science camera" };
+  spec.objects.push(stripEmptyFields(targetTemplate("Aim")), stripEmptyFields(targetTemplate("Other aim")));
+  spec.tasks = [{ id: "pointing-task", satelliteName: platform.name, targetName: "Aim", dwellSeconds: 60 }];
+  const series = {
+    platform: platform.name,
+    sensor: "Science camera",
+    tOffsetSec: [0, 60, 120],
+    boresightEcef: [[1, 0, 0], [0, 1, 0], [1, 0, 0]],
+    phase: ["idle", "track", "return"],
+    targetName: ["", "Aim", "Aim"],
+    aimLatDeg: [null, 20, null],
+    aimLonDeg: [null, 30, null],
+  };
+  const raw = {
+    ...sample,
+    spec: structuredClone(spec),
+    pointing: [series],
+    schedule: [{
+      platformName: platform.name, sensorName: series.sensor, targetName: "Other aim",
+      startUtc: spec.meta.epochUtc, stopUtc: spec.meta.epochUtc,
+    }],
+  };
+  const rendered = buildRenderScenario(spec, raw);
+  assert.equal(rendered.pointing.length, 1);
+  assert.strictEqual(rendered.pointing[0], series, "pass through every backend field and sample unchanged");
+  assert.strictEqual(rendered.pointing[0].boresightEcef, series.boresightEcef);
+  assert.deepEqual(buildRenderScenario(spec, { ...raw, pointing: series }).pointing, [series],
+    "normalize MATLAB singleton struct encoding");
+  assert.deepEqual(buildRenderScenario(spec, null).pointing, []);
+  assert.deepEqual(buildRenderScenario(spec, { ...raw, spec: undefined }).pointing, []);
+  assert.deepEqual(buildRenderScenario(spec, { ...raw, pointing: [{ ...series, sensor: "Wrong camera" }] }).pointing, []);
+
+  const edits = [
+    ["edited platform", (copy) => { copy.objects.find((object) => object.name === platform.name).orbit.raanDeg += 1; }],
+    ["removed platform", (copy) => { copy.objects = copy.objects.filter((object) => object.name !== platform.name); }],
+    ["edited sensor", (copy) => { copy.objects.find((object) => object.name === platform.name).sensor.coneHalfAngleDeg += 1; }],
+    ["removed sensor", (copy) => { delete copy.objects.find((object) => object.name === platform.name).sensor; }],
+    ["changed epoch", (copy) => { copy.meta.epochUtc = "2026-07-06T00:00:00Z"; }],
+    ["changed task", (copy) => { copy.tasks[0].dwellSeconds += 1; }],
+    ["edited sampled target", (copy) => { copy.objects.find((object) => object.name === "Aim").latitudeDeg += 1; }],
+    ["deleted sampled target", (copy) => { copy.objects = copy.objects.filter((object) => object.name !== "Aim"); }],
+    ["deleted unsampled schedule target", (copy) => { copy.objects = copy.objects.filter((object) => object.name !== "Other aim"); }],
+  ];
+  for (const [reason, edit] of edits) {
+    const changed = structuredClone(spec);
+    edit(changed);
+    assert.deepEqual(buildRenderScenario(changed, raw).pointing, [], reason);
+  }
+  const idleRaw = { ...raw, pointing: [{ ...series, phase: ["idle", "idle", "idle"], targetName: ["", "", ""] }] };
+  const newTask = structuredClone(spec);
+  newTask.tasks.push({ id: "new-task", targetName: "Aim", dwellSeconds: 30 });
+  assert.deepEqual(buildRenderScenario(newTask, idleRaw).pointing, [],
+    "an old idle series cannot override newly requested tasking");
+});
+
+test("pointing freshness checks every member of a scanned area", () => {
+  const spec = deriveSpecFromScenario(sample);
+  const platform = spec.objects.find((object) => object.kind === "satellite");
+  platform.sensor = sensorTemplate();
+  const members = expandAreaGrid({ name: "Region", centerLatDeg: 10, centerLonDeg: 20,
+    widthKm: 100, heightKm: 100, spacingKm: 50 });
+  spec.objects.push(...members);
+  spec.tasks = [{ id: "area-task", taskType: "ScanAreaTarget", targetName: "Region", dwellSeconds: 60 }];
+  const series = { platform: platform.name, sensor: `${platform.name} Sensor`,
+    tOffsetSec: [0, 60], boresightEcef: [[1, 0, 0], [0, 1, 0]],
+    phase: ["idle", "scan"], targetName: ["", "Region"] };
+  const raw = { ...sample, spec: structuredClone(spec), pointing: [series] };
+  assert.deepEqual(buildRenderScenario(spec, raw).pointing, [series]);
+  const edited = structuredClone(spec);
+  edited.objects.find((object) => object.name === members[0].name).latitudeDeg += 1;
+  assert.deepEqual(buildRenderScenario(edited, raw).pointing, []);
+  const removed = structuredClone(spec);
+  removed.objects = removed.objects.filter((object) => object.name !== members[0].name);
+  assert.deepEqual(buildRenderScenario(removed, raw).pointing, []);
+  const added = structuredClone(spec);
+  added.objects.push({ ...members[0], name: "Extra member" });
+  assert.deepEqual(buildRenderScenario(added, raw).pointing, []);
+});
+
 test("deepEqual ignores key order but not values", () => {
   assert.ok(deepEqual({ a: 1, b: [1, 2] }, { b: [1, 2], a: 1 }));
   assert.ok(!deepEqual({ a: 1 }, { a: 2 }));

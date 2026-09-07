@@ -19,7 +19,9 @@ for a = 1:height(candidates)
             continue;
         end
         conflictCount = conflictCount + 1;
-        shared = intersect(candidateSensorNames(candidates(a, :)), candidateSensorNames(candidates(b, :)));
+        resourcesA = candidateSensorResources(candidates(a, :));
+        resourcesB = candidateSensorResources(candidates(b, :));
+        shared = intersect(string({resourcesA.Key}), string({resourcesB.Key}));
         if isempty(shared)
             sensorName = "";
         else

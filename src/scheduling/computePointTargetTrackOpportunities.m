@@ -28,6 +28,7 @@ for s = 1:height(sensors)
     sensorName = sensors.SensorName(s);
     parent = scenario.getObject(parentName);
     sensor = parent.getSensor(sensorName);
+    sensorRequiredDwell = max(requiredDwell, sensor.MinDwellTimeSeconds);
     try
         access = computeSensorAccess(scenario, parentName, sensorName, ...
             targetName, taskAccessOptions(scenario, options));
@@ -46,10 +47,10 @@ for s = 1:height(sensors)
         startTime = max(windows.StartTime(w), earliest);
         stopTime = min(windows.StopTime(w), latest);
         durationSeconds = seconds(stopTime - startTime);
-        if durationSeconds < requiredDwell || durationSeconds <= 0
+        durationSeconds = min([durationSeconds, maxDuration, sensor.MaxDwellTimeSeconds]);
+        if durationSeconds < sensorRequiredDwell || durationSeconds <= 0
             continue;
         end
-        durationSeconds = min(durationSeconds, maxDuration);
         stopTime = startTime + seconds(durationSeconds);
         inWindow = access.TimeVector >= startTime & access.TimeVector <= stopTime;
         if ~any(inWindow)
@@ -61,7 +62,7 @@ for s = 1:height(sensors)
         meanOffNadirDeg = mean(access.OffBoresightAngleDeg(inWindow), "omitnan");
         maxOffNadirDeg = max(access.OffBoresightAngleDeg(inWindow), [], "omitnan");
         slewTimeSeconds = estimateCandidateSlewSeconds(sensor, maxOffNadirDeg);
-        dwellTimeSeconds = min(durationSeconds, sensor.MaxDwellTimeSeconds);
+        dwellTimeSeconds = durationSeconds;
         dataVolumeMb = sensor.estimateDataVolume(task, dwellTimeSeconds);
         powerUsedWh = sensor.PowerWatts * dwellTimeSeconds / 3600.0;
         quality = estimatePointQuality(sensor, meanOffNadirDeg, meanRangeKm, requiredDwell, dwellTimeSeconds);
@@ -95,7 +96,9 @@ for s = 1:height(sensors)
             "RejectReason", "", ...
             "ConflictGroup", sensorName, ...
             "RequiresSimultaneousSensors", taskField(task, "RequiresSimultaneousSensors", false), ...
-            "RequiredSensorCount", taskField(task, "RequiredSensorCount", 1));
+            "RequiredSensorCount", taskField(task, "RequiredSensorCount", 1), ...
+            "SlewTransitionData", createSlewTransitionData(scenario, parentName, ...
+                sensorName, targetName, startTime, stopTime));
         row = makeTaskCandidateRow(values, scenario.Config.Epoch.TimeZone);
         row.QualityScore(1) = scoreTaskCandidate(row, task, options);
         opportunities = [opportunities; row]; %#ok<AGROW>

@@ -21,6 +21,9 @@ function coverageResult = computeCoverage(scenario, grid, options)
 %   TotalAccessMinutes Accumulated coverage duration.
 %   MaxGapMinutes      Longest revisit gap (uncovered run, span edges included).
 %   MeanGapMinutes     Mean revisit gap.
+% Transitions are estimated at the midpoint between adjacent samples. The
+% first and last sample cells stop at the scenario endpoints, so duration
+% and percentage account for a shortened final timestep without adding time.
 
 arguments
     scenario MissionScenario
@@ -48,7 +51,11 @@ end
 
 timeVector = scenario.Config.getTimeVector();
 n = numel(timeVector);
-stepSeconds = seconds(scenario.Config.TimeStep);
+timeSeconds = seconds(timeVector - timeVector(1));
+cellEdgesSeconds = [timeSeconds(1); ...
+    (timeSeconds(1:end-1) + timeSeconds(2:end)) / 2; timeSeconds(end)];
+sampleDurationsSeconds = diff(cellEdgesSeconds);
+scenarioDurationSeconds = timeSeconds(end) - timeSeconds(1);
 
 % Gather asset ECEF ephemerides once.
 assetEcef = cell(numel(assetNames), 1);
@@ -99,10 +106,11 @@ meanGapMinutes = zeros(m, 1);
 
 for p = 1:m
     flag = covered(p, :).';
-    coveragePercent(p) = 100.0 * sum(flag) / n;
+    totalAccessSeconds = sum(sampleDurationsSeconds(flag));
+    coveragePercent(p) = 100.0 * totalAccessSeconds / scenarioDurationSeconds;
     passChanges = diff([false; flag; false]);
     numPasses(p) = sum(passChanges == 1);
-    totalAccessMinutes(p) = sum(flag) * stepSeconds / 60.0;
+    totalAccessMinutes(p) = totalAccessSeconds / 60.0;
 
     gapChanges = diff([false; ~flag; false]);
     gapStarts = find(gapChanges == 1);
@@ -111,7 +119,8 @@ for p = 1:m
         maxGapMinutes(p) = 0;
         meanGapMinutes(p) = 0;
     else
-        gapMinutes = (gapStops - gapStarts + 1) * stepSeconds / 60.0;
+        gapMinutes = (cellEdgesSeconds(gapStops + 1) - ...
+            cellEdgesSeconds(gapStarts)) / 60.0;
         maxGapMinutes(p) = max(gapMinutes);
         meanGapMinutes(p) = mean(gapMinutes);
     end

@@ -11,32 +11,27 @@ export default function StatusBar({ scenario, source, job, specError }) {
 
   return (
     <footer className="statusbar">
-      <span>
+      <span title={scenario?.meta.generatedAtUtc ? `Last computed: ${scenario.meta.generatedAtUtc}` : undefined}>
         <span
           className={`status-dot status-dot--${source === "matlab" ? "matlab" : "sample"}`}
         />
         {source === "matlab"
-          ? "Live MATLAB/Orekit data"
+          ? "Computed results"
           : source === "sample-static"
-            ? "Bundled sample data (bridge server offline)"
-            : "Bundled sample data"}
+            ? "Sample · offline"
+            : "Sample scenario"}
       </span>
-      {scenario?.meta.generatedAtUtc && (
-        <span>
-          generated {scenario.meta.generatedAtUtc.replace("T", " ").slice(0, 16)}Z
-        </span>
-      )}
       {scenario && (
         <span>
-          {scenario.satellites.length} satellites - {scenario.groundPoints.length}{" "}
-          sites - {freshWindows} access windows
+          {scenario.satellites.length} satellites · {scenario.groundPoints.filter((point) => !point.area).length}{" "}
+          sites{scenario.areaOutlines.length > 0 ? ` · ${scenario.areaOutlines.length} ${scenario.areaOutlines.length === 1 ? "area" : "areas"}` : ""} · {freshWindows} access windows
         </span>
       )}
       {scenario?.dirty && (
         <span style={{ color: "var(--warn)" }}>
           {previewCount > 0
-            ? `${previewCount} object${previewCount > 1 ? "s" : ""} previewed - run MATLAB for authoritative results`
-            : "edited since last MATLAB run"}
+            ? `${previewCount} object${previewCount > 1 ? "s" : ""} in preview · computation pending`
+            : "Changes awaiting computation"}
         </span>
       )}
       {specError && <span className="error-text">{specError}</span>}

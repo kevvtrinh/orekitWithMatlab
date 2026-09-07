@@ -93,9 +93,10 @@ classdef SensorObject < MissionObject
                 error("SensorObject:InvalidConeHalfAngle", ...
                     "Cone half-angle must be between 0 and 180 degrees.");
             end
-            if obj.RectangularHalfAngleXDeg < 0 || obj.RectangularHalfAngleYDeg < 0
+            rectangularAngles = [obj.RectangularHalfAngleXDeg, obj.RectangularHalfAngleYDeg];
+            if any(~isfinite(rectangularAngles) | rectangularAngles < 0 | rectangularAngles >= 90)
                 error("SensorObject:InvalidRectangularFov", ...
-                    "Rectangular half-angles must be nonnegative.");
+                    "Rectangular half-angles must be finite and in [0, 90) degrees.");
             end
             if obj.MinRangeKm < 0 || obj.MaxRangeKm < obj.MinRangeKm
                 error("SensorObject:InvalidRange", ...
@@ -203,7 +204,14 @@ classdef SensorObject < MissionObject
                         boresight = SensorObject.localEnuVectorToECEF(parent, [0 0 1]);
                     else
                         state = parent.getState(time);
-                        boresight = state(4:6);
+                        boresight = OrekitFrameTransform.gcrfStateToEcefVelocity(time, state);
+                        % A numerically stationary Earth-fixed platform has
+                        % no velocity direction; do not invent a pointing axis.
+                        speedTolerance = 128 * eps(max(norm(state(4:6)), 1));
+                        if norm(boresight) <= speedTolerance
+                            error("SensorObject:UndefinedVelocityPointing", ...
+                                "VelocityVector pointing requires nonzero Earth-relative velocity.");
+                        end
                     end
 
                 case {"SUNPOINTING", "SUN"}
@@ -315,7 +323,9 @@ classdef SensorObject < MissionObject
             end
             xAxis = SensorObject.unitVector(cross(up, boresightVector));
             yAxis = SensorObject.unitVector(cross(boresightVector, xAxis));
-            forward = max(dot(lookVector, boresightVector), eps);
+            % Preserve the sign: rearward rays must never alias the forward
+            % axis when both transverse projections happen to be zero.
+            forward = dot(lookVector, boresightVector);
             xAngleDeg = atan2d(dot(lookVector, xAxis), forward);
             yAngleDeg = atan2d(dot(lookVector, yAxis), forward);
         end
@@ -439,7 +449,12 @@ classdef SensorObject < MissionObject
         end
 
         function angleDeg = effectiveConeHalfAngleDeg(obj)
-            if isfinite(obj.FieldOfViewDeg) && obj.FieldOfViewDeg > 0
+            if strcmpi(obj.FieldOfViewType, "Rectangular")
+                % The furthest corner has tangent-plane coordinates
+                % [tan(halfX), tan(halfY), 1], not max(halfX, halfY).
+                angleDeg = atand(hypot(tand(obj.RectangularHalfAngleXDeg), ...
+                    tand(obj.RectangularHalfAngleYDeg)));
+            elseif isfinite(obj.FieldOfViewDeg) && obj.FieldOfViewDeg > 0
                 angleDeg = obj.FieldOfViewDeg;
             else
                 angleDeg = obj.ConeHalfAngleDeg;
@@ -491,7 +506,7 @@ classdef SensorObject < MissionObject
             obj.FieldOfViewShape = "Rectangular";
             obj.RectangularHalfAngleXDeg = halfAngleXDeg;
             obj.RectangularHalfAngleYDeg = halfAngleYDeg;
-            obj.FieldOfViewDeg = max([halfAngleXDeg, halfAngleYDeg]);
+            obj.FieldOfViewDeg = obj.effectiveConeHalfAngleDeg();
             obj.PointingMode = "Nadir";
         end
 

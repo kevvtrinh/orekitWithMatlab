@@ -58,14 +58,16 @@ candidateC = makeTaskCandidateRow(struct("CandidateID", "C-C", ...
     "QualityScore", 0.6, "Priority", 8, "Feasible", true), tz);
 
 candidates = [candidateA; candidateB; candidateC];
-conflicts = detectTaskConflicts(candidates, SchedulerOptions());
+% These hand-authored rows intentionally contain no endpoint geometry.
+options = SchedulerOptions("EnforceSlew", false);
+conflicts = detectTaskConflicts(candidates, options);
 verifyGreaterThanOrEqual(testCase, height(conflicts), 1);
 verifyTrue(testCase, any(conflicts.ConflictType == "SameSensorOverlap"));
 
 scenario = MissionScenario(ScenarioConfig("Name", "Schedule Unit Test"));
-schedule = scheduleSensorTasksGreedy(scenario, candidates, SchedulerOptions());
+schedule = scheduleSensorTasksGreedy(scenario, candidates, options);
 verifyGreaterThanOrEqual(testCase, height(schedule), 2);
 verifyFalse(testCase, any(schedule.CandidateID == "C-B"));
-report = validateSchedule(schedule, SchedulerOptions());
+report = validateSchedule(schedule, options);
 verifyTrue(testCase, report.IsValid);
 end

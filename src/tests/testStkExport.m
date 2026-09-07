@@ -191,12 +191,13 @@ end
 end
 
 function rotation = stkQuaternionToRotation(quaternion)
+% Independent STK Shuster formula, per STK Orientation Methods documentation.
 quaternion = quaternion / norm(quaternion);
 x = quaternion(1); y = quaternion(2); z = quaternion(3); w = quaternion(4);
 rotation = [
-    1 - 2 * (y^2 + z^2), 2 * (x*y - z*w), 2 * (x*z + y*w);
-    2 * (x*y + z*w), 1 - 2 * (x^2 + z^2), 2 * (y*z - x*w);
-    2 * (x*z - y*w), 2 * (y*z + x*w), 1 - 2 * (x^2 + y^2)];
+    1 - 2 * (y^2 + z^2), 2 * (x*y + z*w), 2 * (x*z - y*w);
+    2 * (x*y - z*w), 1 - 2 * (x^2 + z^2), 2 * (y*z + x*w);
+    2 * (x*z + y*w), 2 * (y*z - x*w), 1 - 2 * (x^2 + y^2)];
 end
 
 function folder = makeTempFolder()

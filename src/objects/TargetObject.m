@@ -1,5 +1,8 @@
 classdef TargetObject < PlaceObject
-    %TARGETOBJECT Fixed Earth target for sensor access workflows.
+    %TARGETOBJECT Fixed or sampled moving target in Earth-fixed coordinates.
+    % Moving positions use the nearest trajectory sample, including at the
+    % span edges. Cartesian trajectories are ECEF meters; geodetic histories
+    % use WGS84 latitude/longitude degrees and altitude meters.
 
     properties
         TargetType string = "FixedPoint"
@@ -26,10 +29,27 @@ classdef TargetObject < PlaceObject
         end
 
         function position = getPosition(obj, time, frameName)
+            %GETPOSITION ECEF meters at the nearest trajectory sample.
             if nargin < 3
                 frameName = "ECEF";
             end
+            if ~strcmpi(frameName, "ECEF")
+                error("TargetObject:UnsupportedFrame", ...
+                    "TargetObject positions are available only in ECEF.");
+            end
+            position = obj.getECEF(time);
+        end
+
+        function position = getECEF(obj, time)
+            %GETECEF ECEF meters; moving targets require a scalar datetime.
+            if nargin < 2
+                time = [];
+            end
             if obj.isMoving()
+                if ~isdatetime(time) || ~isscalar(time) || isnat(time)
+                    error("TargetObject:InvalidTime", ...
+                        "A moving target requires a valid scalar datetime.");
+                end
                 [~, idx] = min(abs(obj.Trajectory.Time - time));
                 if all(ismember(["X_m", "Y_m", "Z_m"], obj.Trajectory.Properties.VariableNames))
                     position = [obj.Trajectory.X_m(idx), obj.Trajectory.Y_m(idx), obj.Trajectory.Z_m(idx)];
@@ -43,16 +63,21 @@ classdef TargetObject < PlaceObject
                     position = [x, y, z];
                     return;
                 end
+                error("TargetObject:InvalidTrajectory", ...
+                    "Trajectory requires ECEF X_m/Y_m/Z_m or geodetic columns.");
             end
-            position = getPosition@PlaceObject(obj, time, frameName);
+            position = getECEF@PlaceObject(obj, time);
         end
 
         function lla = getLLA(obj, time)
+            %GETLLA WGS84 [latitudeDeg longitudeDeg altitudeMeters].
             if obj.isMoving() && all(ismember(["LatitudeDeg", "LongitudeDeg", "AltitudeMeters"], obj.Trajectory.Properties.VariableNames))
                 [~, idx] = min(abs(obj.Trajectory.Time - time));
                 lla = [obj.Trajectory.LatitudeDeg(idx), ...
                     obj.Trajectory.LongitudeDeg(idx), ...
                     obj.Trajectory.AltitudeMeters(idx)];
+            elseif obj.isMoving()
+                lla = OrekitFrames.ecefToGeodetic(obj.getECEF(time), time);
             else
                 lla = getLLA@PlaceObject(obj, time);
             end
