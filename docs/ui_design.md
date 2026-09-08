@@ -1,20 +1,34 @@
 # UI Design
 
-The MATLAB UI lives at `matlab/launchOrekitSatelliteUI.m`.
+The suite has two interfaces to the MATLAB/Orekit backend:
 
-It is a front end only. Scenario state, objects, propagation, access, save/load, and exports are owned by the backend classes and functions under `src/`.
+- `matlab/launchOrbitHtmlUI.m` starts the React/Three.js Orbit Console in
+  `apps/orbit-ui` and its Node bridge. The browser presents an object browser,
+  orbital view, inspector, and timeline. Command search, focus mode, and
+  panel switching on narrow screens are described in the
+  [console guide](../apps/orbit-ui/README.md).
+- `matlab/launchOrekitSatelliteUI.m` opens the MATLAB desktop interface
+  described below. Its callbacks use the scenario, propagation, access,
+  scheduling, save/load, and export functions under `src/`.
 
-Current layout:
+MATLAB ribbon tabs:
 
 - Scenario
 - Insert
 - View
+- Targets
+- Area Targets
 - Sensors / Payloads
+- Sensor Tasks
+- Scheduling
+- Coverage
+- Analysis
+- Satellite / Sensor Viewer
 
 Main window:
 
 - Left: Object Browser with the active scenario, satellites, and places.
-- Center: Default 2D and 3D graphics tabs.
+- Center: 2D and 3D graphics tabs plus a satellite/sensor viewer.
 - Right: Object properties, access controls, export buttons, and status.
 
 Scenario controls:

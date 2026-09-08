@@ -12,6 +12,7 @@ export default function TopBar({
   onExport,
   onImportSpec,
   onRunMatlab,
+  onOpenCommands,
   avoidanceDemo, onAvoidanceDemo, onLeaveAvoidanceDemo,
 }) {
   const hasMatlabData = source === "matlab";
@@ -24,6 +25,7 @@ export default function TopBar({
     "---",
     {
       label: "Scenario Settings...",
+      disabled: !scenario,
       onClick: () => onOpenDialog({ type: "settings" }),
     },
     "---",
@@ -34,22 +36,26 @@ export default function TopBar({
     },
     {
       label: "Export Spec JSON",
+      disabled: !scenario,
       hint: "The editable scenario definition",
       onClick: () => onExport("spec"),
     },
     {
       label: "Export Scenario JSON",
+      disabled: !scenario,
       hint: "Last propagated payload (ephemerides + access)",
       onClick: () => onExport("scenario"),
     },
     {
       label: "Export Ephemeris CSV",
+      disabled: !scenario,
       hint: "Ephemeris of the selected satellite",
       onClick: () => onExport("csv"),
     },
     "---",
     {
       label: "Reset to Demo Scenario",
+      disabled: !scenario,
       hint: "Restore the bundled two-satellite demo spec",
       onClick: onResetSpec,
     },
@@ -152,23 +158,19 @@ export default function TopBar({
 
       <nav className="topbar-nav" aria-label="Mission menus">
         <Menu label="Scenario" items={scenarioItems} />
-        <Menu label="Insert" items={insertItems} />
-        <Menu label="Analysis" items={analysisItems} />
+        <Menu label="Insert" items={insertItems} disabled={!scenario} />
+        <Menu label="Analysis" items={analysisItems} disabled={!scenario} />
         <Menu label="View" items={viewItems} />
       </nav>
 
       <div className="topbar-spacer" />
 
-      <div className="scenario-identity" aria-label="Active scenario">
-        <span className="scenario-name">{scenario?.meta.name ?? "No scenario loaded"}</span>
-        <span className="scenario-source">
-          {avoidanceDemo ? "Demo session · preview orbit" : scenario?.dirty ? "Changes pending" : hasMatlabData ? "MATLAB results" : "Sample scenario"}
-        </span>
-      </div>
-      <button className="btn avoidance-demo-btn" onClick={onAvoidanceDemo} disabled={!scenario || running || demoBusy}
-        title="Load the Earth obstacle demo, export Az/El, run MATLAB and replay its result">
-        <ConsoleIcon name={demoBusy ? "refresh" : "sensor"} size={16} className={demoBusy ? "icon-spin" : ""} />
-        {demoBusy ? "Planning demo…" : "Avoidance demo"}</button>
+      <button className="command-trigger" onClick={onOpenCommands} aria-label="Search commands and objects" aria-keyshortcuts="Control+k Meta+k">
+        <ConsoleIcon name="search" size={15} /><span>Find anything…</span><kbd>Ctrl K</kbd>
+      </button>
+      <span className={`data-source-pill ${hasMatlabData && !scenario?.dirty ? "data-source-pill--live" : ""}`}>
+        <i />{avoidanceDemo ? "Demo session" : scenario?.dirty ? "Preview" : hasMatlabData ? "MATLAB results" : "Sample data"}
+      </span>
       {avoidanceDemo && <button className="btn" onClick={onLeaveAvoidanceDemo}>Return to scenario</button>}
       {!avoidanceDemo && <button className="btn btn--primary run-scenario-btn" onClick={onRunMatlab}
         disabled={!scenario || running} aria-busy={running}

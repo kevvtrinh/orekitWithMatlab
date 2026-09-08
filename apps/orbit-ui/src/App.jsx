@@ -17,7 +17,6 @@ import AccessDialog from "./components/dialogs/AccessDialog.jsx";
 import CountryTargetDialog from "./components/dialogs/CountryTargetDialog.jsx";
 import * as api from "./lib/api.js";
 import { buildRenderScenario } from "./lib/renderScenario.js";
-import { satLlaAt } from "./lib/scenarioUtils.js";
 import {
   deriveSpecFromScenario,
   removeTargetGroup,
@@ -28,6 +27,9 @@ import { clock } from "./lib/clock.js";
 import { avoidanceSpec } from "./lib/avoidanceDemo.js";
 import { makeSlewRequest, validateSlewResult } from "./lib/slewPlanning.js";
 import { runAvoidanceRequest } from "./lib/avoidanceClient.js";
+import CommandPalette from "./components/CommandPalette.jsx";
+import ShortcutGuide from "./components/ShortcutGuide.jsx";
+import ConsoleIcon from "./components/ConsoleIcon.jsx";
 
 const JOB_POLL_MS = 2500;
 
@@ -44,6 +46,10 @@ export default function App() {
   const [job, setJob] = useState({ state: "idle" });
   const [dialog, setDialog] = useState(null);
   const [mobilePanel, setMobilePanel] = useState("view");
+  const [commandOpen, setCommandOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [focusMode, setFocusMode] = useState(false);
+  const [loadState, setLoadState] = useState("loading");
   const [focusRequest, setFocusRequest] = useState(null);
   const [sensorViewName, setSensorViewName] = useState(null);
   const [avoidanceDemo, setAvoidanceDemo] = useState(null);
@@ -206,6 +212,7 @@ export default function App() {
     (async () => {
       const raw = await loadScenario();
       await loadSpec(raw);
+      setLoadState(raw ? "ready" : "failed");
       pollJob();
     })();
   }, [loadScenario, loadSpec, pollJob]);
@@ -466,10 +473,9 @@ export default function App() {
     setViewOptions((prev) => ({ ...prev, [key]: !prev[key] }));
   }, []);
 
-  // Fly the camera-side selection to a satellite's current subpoint is out of
-  // scope; selection from either panel or the 3D picker is by name.
   const openDialog = useCallback(
     (request) => {
+      if (!spec) return;
       if (
         (request?.type === "sensor" || request?.type === "maneuvers") &&
         !request.satellite
@@ -488,8 +494,54 @@ export default function App() {
   );
   const closeDialog = useCallback(() => setDialog(null), []);
 
+  const toggleFocusMode = useCallback(() => {
+    setMobilePanel("view");
+    setFocusMode((value) => !value);
+  }, []);
+
+  useEffect(() => {
+    function handleKey(event) {
+      if (event.defaultPrevented || event.repeat || event.isComposing || event.keyCode === 229) return;
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        if (!dialog && !shortcutsOpen) setCommandOpen((open) => !open);
+        return;
+      }
+      if (event.key === "Escape" && focusMode && !dialog && !commandOpen && !shortcutsOpen) {
+        event.preventDefault(); setFocusMode(false); return;
+      }
+      if (event.target.closest?.('input, textarea, select, [contenteditable="true"], [role="dialog"], [role="menu"]')) return;
+      if (dialog || commandOpen || shortcutsOpen || event.ctrlKey || event.metaKey || event.altKey) return;
+      if (event.code === "Space" && !event.target.closest?.('button, a, summary, [role="button"], [role="option"]')) {
+        if (scenario?.meta.durationSeconds > 0) { event.preventDefault(); clock.setPlaying(!clock.getSnapshot().playing); }
+      }
+      if (event.key.toLowerCase() === "f") { event.preventDefault(); toggleFocusMode(); }
+      if (event.key === "?") { event.preventDefault(); setShortcutsOpen(true); }
+    }
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [dialog, commandOpen, shortcutsOpen, focusMode, toggleFocusMode, scenario]);
+
+  const commands = [
+    { id: "satellite", group: "Create & analyze", label: "Add satellite", detail: "Keplerian elements or a two-line element set", icon: "satellite", disabled: !spec, action: () => openDialog({ type: "satellite" }) },
+    { id: "constellation", group: "Create & analyze", label: "Build a constellation", detail: "Design a Walker Delta or Star constellation", icon: "orbit", disabled: !spec, action: () => openDialog({ type: "constellation" }) },
+    { id: "ground", group: "Create & analyze", label: "Add ground station", icon: "ground", disabled: !spec, action: () => openDialog({ type: "ground", kind: "groundStation" }) },
+    { id: "country", group: "Create & analyze", label: "Add country area target", icon: "globe", disabled: !spec, action: () => openDialog({ type: "countryTarget" }) },
+    { id: "access", group: "Create & analyze", label: "Calculate access", detail: "Find visibility windows between mission objects", icon: "activity", disabled: !spec, action: () => openDialog({ type: "access" }) },
+    { id: "tasks", group: "Create & analyze", label: "Schedule sensor tasks", icon: "sensor", disabled: !spec, action: () => openDialog({ type: "tasks" }) },
+    ...(scenario?.satellites ?? []).map((satellite) => ({ id: `sat-${satellite.name}`, group: "Mission objects", label: satellite.name, detail: "Satellite · select and follow in 3D", icon: "satellite", action: () => focusSatellite(satellite.name) })),
+    ...(scenario?.groundPoints ?? []).filter((point) => !point.area).map((point) => ({ id: `point-${point.name}`, group: "Mission objects", label: point.name, detail: "Ground object · inspect details", icon: "ground", action: () => { setSelection(point.name); setFocusMode(false); setMobilePanel("details"); } })),
+    ...(scenario?.areaOutlines ?? []).map((area) => ({ id: `area-${area.name}`, group: "Mission objects", label: area.name, detail: "Area target · locate on Earth", icon: "globe", action: () => { setSelection(area.name); setMobilePanel("view"); setFocusRequest((previous) => ({ name: area.name, kind: "area", revision: (previous?.revision ?? 0) + 1 })); } })),
+    { id: "focus", group: "Workspace", label: focusMode ? "Exit focus mode" : "Enter focus mode", detail: "Give the orbital view the whole workspace", icon: "expand", shortcut: "F", action: toggleFocusMode },
+    ...[["labels", "Object labels"], ["groundTracks", "Ground tracks"], ["accessLines", "Access lines"], ["sensorFov", "Sensor field of view"]].map(([key, label]) => ({ id: key, group: "Workspace", label: `${viewOptions[key] ? "Hide" : "Show"} ${label.toLowerCase()}`, icon: "layers", action: () => toggleOption(key) })),
+    { id: "settings", group: "Scenario", label: "Scenario settings", detail: "Epoch, duration, and propagation time step", icon: "settings", disabled: !spec, action: () => openDialog({ type: "settings" }) },
+    { id: "export", group: "Scenario", label: "Export scenario definition", detail: "Download an editable JSON file", icon: "download", disabled: !spec, action: () => handleExport("spec") },
+    { id: "import", group: "Scenario", label: "Import scenario definition", icon: "upload", action: handleImportSpec },
+    { id: "shortcuts", group: "Help", label: "Keyboard shortcuts", icon: "keyboard", shortcut: "?", action: () => setShortcutsOpen(true) },
+  ];
+
   return (
-    <div className="app">
+    <div className={`app${focusMode ? " app--focus" : ""}`}>
       <TopBar
         avoidanceDemo={avoidanceDemo}
         onAvoidanceDemo={startAvoidanceDemo}
@@ -504,7 +556,15 @@ export default function App() {
         onExport={handleExport}
         onImportSpec={handleImportSpec}
         onRunMatlab={() => runAccessRequests(null)}
+        onOpenCommands={() => setCommandOpen(true)}
       />
+      <div className="workspace-heading">
+        <div className="workspace-breadcrumb"><ConsoleIcon name="layers" size={15} /><span>Workspace</span><span className="breadcrumb-divider">/</span><strong>{scenario?.meta.name ?? "Preparing your mission"}</strong><span className="workspace-tag">ORBITAL ANALYSIS</span></div>
+        <div className="workspace-actions">
+          <button onClick={() => setShortcutsOpen(true)} title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts"><ConsoleIcon name="keyboard" size={16} /></button>
+          <button onClick={toggleFocusMode} aria-pressed={focusMode} title="Toggle focus mode (F)"><ConsoleIcon name={focusMode ? "collapse" : "expand"} size={15} /><span>{focusMode ? "Exit focus" : "Focus mode"}</span></button>
+        </div>
+      </div>
       <nav className="workspace-tabs" aria-label="Workspace panels">
         {[["objects", "Objects"], ["view", "Orbital view"], ["details", "Details"]].map(([panel, label]) => (
           <button key={panel} aria-pressed={mobilePanel === panel}
@@ -530,6 +590,7 @@ export default function App() {
           <Viewport3D
             slewPlaybackRequest={slewPlaybackRequest}
             avoidanceDemo={avoidanceDemo}
+            loadState={loadState}
             sensorViewName={sensorViewName}
             onOpenSensorView={openSensorView}
             onCloseSensorView={() => setSensorViewName(null)}
@@ -545,7 +606,7 @@ export default function App() {
               return object ? replaceObject(name, { ...object, orbit }) : { errors: ["This satellite is no longer in the scenario."] };
             }}
           />
-          <TimelineBar scenario={scenario} />
+          <TimelineBar scenario={scenario} selection={selection} />
         </div>
         <Inspector
           onOpenSensorView={openSensorView}
@@ -559,6 +620,8 @@ export default function App() {
         />
       </main>
       <StatusBar scenario={scenario} source={source} job={job} specError={specError} />
+      {commandOpen && <CommandPalette commands={commands} onClose={() => setCommandOpen(false)} />}
+      {shortcutsOpen && <ShortcutGuide onClose={() => setShortcutsOpen(false)} />}
 
       <input
         ref={importInputRef}
@@ -675,6 +738,3 @@ export default function App() {
     </div>
   );
 }
-
-// (satLlaAt imported for potential camera-follow feature; keep tree-shaken)
-void satLlaAt;

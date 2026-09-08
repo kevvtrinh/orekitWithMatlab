@@ -18,6 +18,44 @@ mouse/touch orbit controls and a professional 3D look without any native
 prerequisites (no Rust/Tauri toolchain, no Blender, nothing paid). Express is
 the thinnest practical bridge from a browser UI to `matlab -batch` on Windows.
 
+## Workspace controls
+
+The mission workspace includes a searchable object browser, a globe view,
+an inspector with simulation-time telemetry, and an access/task timeline.
+On narrow screens, use **Objects**, **Orbital view**, and **Details** to switch
+panels. **Focus mode** gives the globe the full workspace.
+
+- **Ctrl+K / Cmd+K** opens command search. Find an object, create mission
+  objects, change display layers, or open scenario settings. Use the arrow
+  keys and Enter to choose a result.
+- **Space** plays or pauses the simulation when a form or control is not
+  focused. Playback starts at **30×** and remains adjustable in the timeline.
+- **F** toggles focus mode; **Esc** exits it or dismisses the active dialog.
+- **?** opens the keyboard guide.
+- Drag the globe to orbit, scroll to zoom, and right-drag to pan. Rotation
+  progressively slows as the camera approaches Earth's surface for more
+  precise navigation. Double-click a satellite to follow it.
+- Use the timeline's 30-second step controls or the **Next access** action
+  to navigate computed windows for the selected object. Stale results remain
+  marked as needing an update.
+- **Collapse** keeps the clock, playback controls, and a compact time slider
+  visible while giving more room to the globe. **Expand** restores the access
+  and task lanes.
+
+### ECI and ECEF views
+
+**ECI** draws the trajectory in inertial coordinates. **ECEF** transforms each
+trajectory sample at its own timestamp and draws the resulting history relative
+to Earth. The trajectory changes immediately when the frame is switched, even
+while paused; during ECEF playback the camera follows Earth's rotation.
+Current satellite positions, sensor geometry, and access links remain aligned.
+
+Earth-fixed rendering uses the console's sidereal-time approximation for
+consistency with the displayed globe. Precision mission transformations remain
+in the MATLAB/Orekit backend; see [Orekit's frame documentation](https://www.orekit.org/static/apidocs/org/orekit/frames/package-summary.html).
+Direct Keplerian orbit editing switches to ECI, with frame controls held there
+until the editor is closed.
+
 ## Prerequisites
 
 - Node.js >= 18 (tested with Node 24)
@@ -35,14 +73,14 @@ session = launchOrbitHtmlUI();
 ```
 
 The launcher starts the React/Three.js app and its Node bridge at
-<http://127.0.0.1:8321>, then opens the browser. On first launch it installs
+<http://127.0.0.1:8322>, then opens the browser. On first launch it installs
 missing npm dependencies and builds the frontend; later launches rebuild
 when the frontend output is missing or outdated. Initial setup can take
 longer than starting an existing build. The call returns after the bridge
 becomes ready, so the MATLAB command window remains available.
 
 ```matlab
-session = launchOrbitHtmlUI("Port", 8321, "OpenBrowser", false, ...
+session = launchOrbitHtmlUI("Port", 8322, "OpenBrowser", false, ...
     "NodeExecutable", "C:\Program Files\nodejs\node.exe");
 disp(session.URL);
 disp(session.LogFile);
@@ -52,14 +90,14 @@ session.Stop();
 
 | Option | Default | Behavior |
 | --- | --- | --- |
-| `Port` | `8321` | Local HTTP port for both the frontend and API |
+| `Port` | `8322` | Local HTTP port for both the frontend and API |
 | `OpenBrowser` | `true` | Open the app after the bridge becomes ready |
 | `NodeExecutable` | `""` | Discover Node automatically, or use an explicit executable path |
 | `BuildIfNeeded` | `true` | Prepare missing dependencies and build missing or outdated frontend output |
 
 The launcher serves the same `apps/orbit-ui` frontend and MATLAB bridge used
 by the npm commands below. Its health endpoint is
-<http://127.0.0.1:8321/api/health>. Use `session.LogFile` to inspect startup
+<http://127.0.0.1:8322/api/health>. Use `session.LogFile` to inspect startup
 errors.
 
 ## Develop with npm
@@ -110,6 +148,7 @@ npm start        # http://127.0.0.1:5175
 | --- | --- |
 | `npm run dev` | Bridge server + Vite dev server together |
 | `npm run dev:client` / `npm run dev:server` | Each process alone |
+| `npm test` | Frontend math, scenario, and bridge lifecycle checks; no MATLAB required |
 | `npm run build` | Production build to `dist/` |
 | `npm start` | Serve `dist/` + API on port 5175 |
 | `npm run bridge:demo` | CLI smoke test: run the MATLAB bridge end-to-end without the UI |
@@ -257,8 +296,7 @@ must be edited through their TLE input.
 Set `ORBIT_UI_DATA_DIR` to use a separate scenario/output directory, for example
 when testing the console in an isolated session. The default is `server/data`.
 
-**One-click demo:** click **Avoidance demo** in the top bar (also available in
-**Scenario → Run Earth Avoidance Demo**). It loads a simulated LEO pass over an
+**One-click demo:** choose **Scenario → Run Earth Avoidance Demo**. It loads a simulated LEO pass over an
 80 km geographic keep-out in Vietnam, exports the moving Az/El boundaries,
 runs the copied main-branch planner in MATLAB, imports and checks its result,
 focuses the globe, and automatically plays the 30-second slew. Every click

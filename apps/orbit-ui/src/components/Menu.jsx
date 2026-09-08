@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import ConsoleIcon from "./ConsoleIcon.jsx";
 
 // Menu-bar style dropdown (Insert / Scenario), closes on outside click or Esc.
-export default function Menu({ label, items }) {
+export default function Menu({ label, items, disabled = false }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
   const menuId = useId();
@@ -15,6 +15,8 @@ export default function Menu({ label, items }) {
     };
     const onKey = (e) => {
       if (e.defaultPrevented) return;
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { setOpen(false); return; }
+      if (!ref.current?.contains(e.target)) return;
       if (e.key === "Escape") {
         e.preventDefault();
         setOpen(false);
@@ -30,11 +32,14 @@ export default function Menu({ label, items }) {
         entries[next].focus();
       }
     };
+    const onFocus = (e) => { if (!ref.current?.contains(e.target)) setOpen(false); };
     window.addEventListener("pointerdown", onDown);
     window.addEventListener("keydown", onKey);
+    window.addEventListener("focusin", onFocus);
     return () => {
       window.removeEventListener("pointerdown", onDown);
       window.removeEventListener("keydown", onKey);
+      window.removeEventListener("focusin", onFocus);
     };
   }, [open]);
 
@@ -42,6 +47,7 @@ export default function Menu({ label, items }) {
     <div className="menu" ref={ref}>
       <button
         className={`btn menu-trigger ${open ? "menu-trigger--open" : ""}`}
+        disabled={disabled}
         onClick={() => setOpen((v) => !v)}
         onKeyDown={(event) => {
           if (!open && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
@@ -69,6 +75,8 @@ export default function Menu({ label, items }) {
                 disabled={item.disabled}
                 title={item.hint}
                 onClick={() => {
+                  // Restore focus before an action removes the menu or opens a dialog.
+                  ref.current?.querySelector(".menu-trigger")?.focus({ preventScroll: true });
                   setOpen(false);
                   item.onClick();
                 }}

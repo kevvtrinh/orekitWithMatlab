@@ -4,16 +4,19 @@ import ConsoleIcon from "./ConsoleIcon.jsx";
 import OrbitEditPanel from "./OrbitEditPanel.jsx";
 import SensorViewWindow from "./SensorViewWindow.jsx";
 
-export default function Viewport3D({ scenario, selection, viewOptions, onSelect, onToggleOption, onSetReferenceFrame, onOrbitCommit, focusRequest, sensorViewName, onOpenSensorView, onCloseSensorView, slewPlaybackRequest, avoidanceDemo }) {
+export default function Viewport3D({ scenario, selection, viewOptions, onSelect, onToggleOption, onSetReferenceFrame, onOrbitCommit, focusRequest, sensorViewName, onOpenSensorView, onCloseSensorView, slewPlaybackRequest, avoidanceDemo, loadState }) {
   const containerRef = useRef(null);
   const viewerRef = useRef(null);
   const [focusedName, setFocusedName] = useState(null);
   const [orbitEdit, setOrbitEdit] = useState(null);
   const [orbitError, setOrbitError] = useState(null);
+  const [renderError, setRenderError] = useState(null);
   const [slewContext, setSlewContext] = useState(null);
   const playbackId = useRef(null);
   const onOrbitCommitRef = useRef(onOrbitCommit);
   onOrbitCommitRef.current = onOrbitCommit;
+  const onSetReferenceFrameRef = useRef(onSetReferenceFrame);
+  onSetReferenceFrameRef.current = onSetReferenceFrame;
   const selectedSatellite = scenario?.satellites.find((sat) => sat.name === selection);
   const selectedArea = scenario?.areaOutlines.find((area) => area.name === selection);
   const onSelectRef = useRef(onSelect);
@@ -34,11 +37,13 @@ export default function Viewport3D({ scenario, selection, viewOptions, onSelect,
   }, [scenario]);
 
   useEffect(() => {
-    const viewer = createViewer(containerRef.current, {
+    let viewer;
+    try { viewer = createViewer(containerRef.current, {
       onSelect: (name) => onSelectRef.current?.(name),
       onFocusChange: setFocusedName,
       onOrbitEditChange: setOrbitEdit,
       onSlewPlanChange: setSlewContext,
+      onReferenceFrameChange: (frame) => onSetReferenceFrameRef.current?.(frame),
       onOrbitCommit: async (name, orbit) => {
         setOrbitError(null);
         try {
@@ -50,7 +55,11 @@ export default function Viewport3D({ scenario, selection, viewOptions, onSelect,
           return { errors: [error.message] };
         }
       },
-    });
+    }); } catch (error) {
+      console.error("Could not initialize orbital view", error);
+      setRenderError("The 3D view needs WebGL. Enable hardware acceleration in your browser, then reload.");
+      return undefined;
+    }
     viewerRef.current = viewer;
     return () => {
       viewer.dispose();
@@ -95,8 +104,9 @@ export default function Viewport3D({ scenario, selection, viewOptions, onSelect,
   return (
     <div className="viewport" ref={containerRef} role="region" aria-label="Three-dimensional orbital view">
       <div className="viewport-hud">
+        <div className="viewport-eyebrow"><span className="viewport-live-dot" /> {focusedName ? "SATELLITE TRACKING" : "EARTH / 3D"}</div>
         <h1 className="viewport-title">{focusedName ?? "Orbital view"}</h1>
-        <span className="viewport-frame">{focusedName ? "TRACKING · " : ""}{viewOptions.referenceFrame === "ECEF" ? "EARTH FIXED" : "INERTIAL · J2000"}</span>
+        <span className="viewport-frame">{viewOptions.referenceFrame === "ECEF" ? "Earth-centered · Earth-fixed" : "Earth-centered inertial · J2000"}</span>
         <div className="viewport-legend" aria-label="Rendered objects">
           <span><ConsoleIcon name="satellite" size={14} />
             {drawable?.satellites.length ?? 0} satellites</span>
@@ -111,7 +121,8 @@ export default function Viewport3D({ scenario, selection, viewOptions, onSelect,
         <div className="frame-switch" role="group" aria-label="View reference frame">
           {["ECI", "ECEF"].map((frame) => <button key={frame}
             aria-pressed={viewOptions.referenceFrame === frame}
-            title={frame === "ECI" ? "Earth-centered inertial view" : "Earth-centered Earth-fixed view"}
+            disabled={Boolean(orbitEdit)}
+            title={orbitEdit ? "Finish orbit editing to change the reference frame" : frame === "ECI" ? "Inertial orbit path · Earth rotates beneath the orbit" : "Earth-fixed trajectory · includes Earth's rotation over the scenario"}
             onClick={() => onSetReferenceFrame(frame)}>{frame}</button>)}
         </div>
         <button
@@ -123,6 +134,17 @@ export default function Viewport3D({ scenario, selection, viewOptions, onSelect,
           <ConsoleIcon name="crosshair" size={19} />
         </button>
       </div>
+      <div className="viewport-frame-note" role="status" aria-live="polite">
+        <ConsoleIcon name={viewOptions.referenceFrame === "ECEF" ? "globe" : "orbit"} size={13} />
+        <span>{orbitEdit ? "Editing orbital elements in ECI" : viewOptions.referenceFrame === "ECEF"
+          ? "Earth-fixed trajectory" : "Inertial orbit path"}</span>
+      </div>
+      {(renderError || !scenario) && <div className="viewport-loading" role="status">
+        <div className={`loading-orbit${renderError || loadState === "failed" ? " loading-orbit--error" : ""}`}><ConsoleIcon name="orbit" size={44} /></div>
+        <strong>{renderError ? "Your mission is still here" : loadState === "failed" ? "The scenario couldn’t be loaded" : "Preparing your orbital workspace"}</strong>
+        <p>{renderError ?? (loadState === "failed" ? "Check your local connection and reload to try again." : "Loading Earth and your mission objects…")}</p>
+        {(renderError || loadState === "failed") && <button className="btn" onClick={() => window.location.reload()}>Reload workspace</button>}
+      </div>}
       <div className="viewport-layers" role="group" aria-label="Display layers">
         {[["groundTracks", "Ground tracks", "orbit"], ["accessLines", "Access lines", "activity"],
           ["sensorFov", "Sensor field of view", "sensor"], ["labels", "Object labels", "file"]].map(([key, label, icon]) => (

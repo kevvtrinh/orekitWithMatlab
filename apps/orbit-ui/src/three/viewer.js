@@ -16,6 +16,8 @@ import { satEciAt, windowStateAt } from "../lib/scenarioUtils.js";
 import { pointingStateAt, scheduleForPlatform } from "../lib/schedule.js";
 import { lightingStateAt, sunDirectionAt } from "../lib/sun.js";
 import { clock } from "../lib/clock.js";
+import { earthRotationSpeed, OVERVIEW_ROTATE_SPEED } from "./cameraNavigation.js";
+import { buildOrbitFramePositions } from "./orbitFrames.js";
 import { createSatelliteModel } from "./satelliteModel.js";
 import { orientSatelliteBody } from "./satelliteAttitude.js";
 import {
@@ -35,6 +37,9 @@ const FOV_EARTH_OVERSHOOT = 0.03;
 // Deliberately pictorial: the close-view glyph is not a physical bus-size
 // model. Its maximum extent stays well below the satellite's Earth clearance.
 const SATELLITE_DISPLAY_SCALE = 0.0025;
+const SATELLITE_MODEL_SPAN = 6.2;
+const SATELLITE_DETAIL_FADE_PX = 12;
+const SATELLITE_DETAIL_FULL_PX = 30;
 const SATELLITE_FOCUS_DISTANCE = 15;
 
 // ECI (right-handed, Z up) -> three.js (right-handed, Y up).
@@ -156,8 +161,46 @@ function groundDishTexture() {
   return texture;
 }
 
+function satelliteIconTexture() {
+  // A screen-sized overview glyph. Keeping the transparent silhouette in a
+  // square texture lets the marker retain a recognizable spacecraft shape
+  // without growing into a world-scaled sphere in low-altitude views.
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = 128;
+  const ctx = canvas.getContext("2d");
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
+  ctx.fillStyle = "#dceaff";
+  ctx.strokeStyle = "#ffffff";
+  ctx.lineWidth = 5;
+  ctx.fillRect(9, 43, 38, 42);
+  ctx.strokeRect(9, 43, 38, 42);
+  ctx.fillRect(81, 43, 38, 42);
+  ctx.strokeRect(81, 43, 38, 42);
+  ctx.lineWidth = 3;
+  for (const x of [21, 34, 94, 107]) {
+    ctx.beginPath(); ctx.moveTo(x, 45); ctx.lineTo(x, 83); ctx.stroke();
+  }
+  ctx.beginPath(); ctx.moveTo(11, 64); ctx.lineTo(45, 64); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(83, 64); ctx.lineTo(117, 64); ctx.stroke();
+  ctx.lineWidth = 7;
+  ctx.beginPath(); ctx.moveTo(45, 64); ctx.lineTo(53, 64); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(75, 64); ctx.lineTo(83, 64); ctx.stroke();
+  ctx.fillStyle = "#fff1c8";
+  ctx.lineWidth = 5;
+  ctx.fillRect(51, 35, 26, 58);
+  ctx.strokeRect(51, 35, 26, 58);
+  ctx.beginPath();
+  ctx.moveTo(58, 35); ctx.lineTo(64, 25); ctx.lineTo(70, 35); ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(64, 97, 9, Math.PI, 0); ctx.stroke();
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
+
 function makeStarfield() {
-  const count = 900;
+  const count = 700;
   const positions = new Float32Array(count * 3);
   const colors = new Float32Array(count * 3);
   const v = new THREE.Vector3();
@@ -167,7 +210,7 @@ function makeStarfield() {
     positions.set([v.x, v.y, v.z], i * 3);
     // Mostly faint stars with a handful of bright standouts.
     const mag = Math.random();
-    const brightness = mag > 0.96 ? 1.0 : 0.3 + 0.45 * mag * mag;
+    const brightness = mag > 0.98 ? 0.85 : 0.18 + 0.32 * mag * mag;
     const warmth = 0.92 + Math.random() * 0.08;
     colors.set([brightness * warmth, brightness * warmth, brightness], i * 3);
   }
@@ -175,11 +218,11 @@ function makeStarfield() {
   geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
   geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
   const material = new THREE.PointsMaterial({
-    size: 2,
+    size: 1.5,
     sizeAttenuation: false,
     vertexColors: true,
     transparent: true,
-    opacity: 0.9,
+    opacity: 0.65,
     depthWrite: false,
   });
   return new THREE.Points(geometry, material);
@@ -260,7 +303,7 @@ const ATMOSPHERE_FRAGMENT_SHADER = /* glsl */ `
   }
 `;
 
-export function createViewer(container, { onSelect, onFocusChange, onOrbitEditChange, onOrbitCommit, onSlewPlanChange } = {}) {
+export function createViewer(container, { onSelect, onFocusChange, onOrbitEditChange, onOrbitCommit, onSlewPlanChange, onReferenceFrameChange } = {}) {
   const renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   container.appendChild(renderer.domElement);
@@ -270,7 +313,7 @@ export function createViewer(container, { onSelect, onFocusChange, onOrbitEditCh
   container.appendChild(labelRenderer.domElement);
 
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x000000);
+  scene.background = new THREE.Color(0x050a12);
   scene.add(makeStarfield());
   // Standard materials are used only by the pictorial spacecraft; Earth
   // retains its own Sun-driven shader and existing day/night coefficients.
@@ -278,6 +321,7 @@ export function createViewer(container, { onSelect, onFocusChange, onOrbitEditCh
   const spacecraftSun = new THREE.DirectionalLight(0xfff2da, 3.2);
   scene.add(spacecraftSun);
   const stationIconTexture = groundDishTexture();
+  const satelliteMarkerTexture = satelliteIconTexture();
 
   const camera = new THREE.PerspectiveCamera(45, 1, 0.01, 500);
   camera.position.set(2.6, 1.5, 2.4);
@@ -285,7 +329,7 @@ export function createViewer(container, { onSelect, onFocusChange, onOrbitEditCh
   const controls = new OrbitControls(camera, labelRenderer.domElement);
   controls.enableDamping = true;
   controls.dampingFactor = 0.08;
-  controls.rotateSpeed = 0.55;
+  controls.rotateSpeed = OVERVIEW_ROTATE_SPEED;
   controls.minDistance = 1.2;
   controls.maxDistance = 40;
   controls.zoomSpeed = 0.9;
@@ -365,6 +409,7 @@ export function createViewer(container, { onSelect, onFocusChange, onOrbitEditCh
     clock.setPlaying(false); clock.setTime(plan.request.initialState.time_s);
   }
   let options = {
+    referenceFrame: "ECI",
     labels: true,
     groundTracks: true,
     accessLines: true,
@@ -398,6 +443,12 @@ export function createViewer(container, { onSelect, onFocusChange, onOrbitEditCh
   function setScenario(data) {
     if (slewPlan && (!data || !slewMatchesScene(slewPlan.request, data))) clearSlewPlan();
     if (scenarioContent) {
+      for (const satellite of scenarioContent.sats) {
+        // The attached geometry is disposed with its scene parent below.
+        for (const geometry of Object.values(satellite.pathGeometries)) {
+          if (geometry !== satellite.path.geometry) geometry.dispose();
+        }
+      }
       disposeObject(scenarioContent.group);
       disposeObject(scenarioContent.groundGroup);
       scenarioContent = null;
@@ -416,24 +467,18 @@ export function createViewer(container, { onSelect, onFocusChange, onOrbitEditCh
     const sats = data.satellites.map((sat) => {
       const color = new THREE.Color(sat.color || "#d8b25a");
 
-      // Orbit path from the ECI ephemeris.
-      const positions = new Float32Array(sat.ephemeris.n * 3);
+      const framePositions = buildOrbitFramePositions(sat.ephemeris, data.epochMs);
+      const pathGeometries = Object.fromEntries(Object.entries(framePositions).map(([frame, positions]) => {
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+        geometry.computeBoundingSphere();
+        return [frame, geometry];
+      }));
       const v = new THREE.Vector3();
-      for (let i = 0; i < sat.ephemeris.n; i++) {
-        eciToThree(
-          sat.ephemeris.eci[i * 3],
-          sat.ephemeris.eci[i * 3 + 1],
-          sat.ephemeris.eci[i * 3 + 2],
-          v,
-        );
-        positions.set([v.x, v.y, v.z], i * 3);
-      }
       // Browser-preview orbits render dimmer than authoritative MATLAB ones.
       const baseOpacity = sat.source === "preview" ? 0.55 : 0.85;
-      const pathGeometry = new THREE.BufferGeometry();
-      pathGeometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
       const path = new THREE.Line(
-        pathGeometry,
+        pathGeometries.ECI,
         new THREE.LineBasicMaterial({ color, transparent: true, opacity: baseOpacity }),
       );
       group.add(path);
@@ -460,10 +505,13 @@ export function createViewer(container, { onSelect, onFocusChange, onOrbitEditCh
       );
       groundGroup.add(groundTrack);
 
-      const marker = new THREE.Mesh(
-        new THREE.SphereGeometry(0.014, 20, 14),
-        new THREE.MeshBasicMaterial({ color, transparent: true }),
-      );
+      const marker = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: satelliteMarkerTexture,
+        color,
+        transparent: true,
+        depthWrite: false,
+        sizeAttenuation: false,
+      }));
       marker.userData.objectName = sat.name;
       group.add(marker);
       pickables.push(marker);
@@ -539,6 +587,7 @@ export function createViewer(container, { onSelect, onFocusChange, onOrbitEditCh
       return {
         data: sat,
         path,
+        pathGeometries,
         groundTrack,
         marker,
         label,
@@ -673,6 +722,11 @@ export function createViewer(container, { onSelect, onFocusChange, onOrbitEditCh
   function applyOptions() {
     if (!scenarioContent) return;
     for (const s of scenarioContent.sats) {
+      const earthFixed = options.referenceFrame === "ECEF";
+      const parent = earthFixed ? scenarioContent.groundGroup : scenarioContent.group;
+      s.path.geometry = s.pathGeometries[earthFixed ? "ECEF" : "ECI"];
+      if (s.path.parent !== parent) parent.add(s.path);
+      s.path.updateMatrixWorld(true);
       s.groundTrack.visible = options.groundTracks;
     }
     scenarioContent.accessLines.visible = options.accessLines;
@@ -754,7 +808,7 @@ export function createViewer(container, { onSelect, onFocusChange, onOrbitEditCh
     });
     if (hits.length > 0) {
       onSelect?.(hits[0].object.userData.objectName);
-      if (hits[0].object.userData.orbitPath) startOrbitEditing(hits[0].object.userData.objectName);
+      if (hits[0].object.userData.orbitPath && options.referenceFrame !== "ECEF") startOrbitEditing(hits[0].object.userData.objectName);
     }
   });
   labelRenderer.domElement.addEventListener("dblclick", (event) => {
@@ -803,10 +857,19 @@ export function createViewer(container, { onSelect, onFocusChange, onOrbitEditCh
     const p = s.marker.position;
     const distance = camera.position.distanceTo(p);
     s.displayScale = Math.max(0, Math.min(SATELLITE_DISPLAY_SCALE, (p.length() - 1) * 0.035));
-    s.detailWeight = s.displayScale > 0 ? 1 - THREE.MathUtils.smoothstep(distance, 0.06, 0.35) : 0;
+    const projectedSpanPx = distance > 0
+      ? s.displayScale * SATELLITE_MODEL_SPAN * container.clientHeight /
+        (2 * distance * Math.tan(camera.fov * DEG / 2))
+      : SATELLITE_DETAIL_FULL_PX;
+    s.detailWeight = s.displayScale > 0
+      ? THREE.MathUtils.smoothstep(projectedSpanPx, SATELLITE_DETAIL_FADE_PX, SATELLITE_DETAIL_FULL_PX)
+      : 0;
     s.marker.material.opacity = 1 - s.detailWeight;
     s.marker.visible = s.detailWeight < 0.998;
-    s.marker.scale.setScalar((s.data.name === selectedName ? 1.7 : 1) * (1 - 0.85 * s.detailWeight));
+    const markerPixels = s.data.name === selectedName ? 38 : 28;
+    const markerScale = markerPixels * 2 * Math.tan(camera.fov * DEG / 2) /
+      Math.max(container.clientHeight, 1);
+    s.marker.scale.setScalar(markerScale);
     s.labelAnchor.position.copy(p);
     s.label.position.set(0, s.detailWeight * s.displayScale * 1.6, 0);
     // Large constellations allocate detailed geometry only for spacecraft
@@ -1105,6 +1168,13 @@ export function createViewer(container, { onSelect, onFocusChange, onOrbitEditCh
     const satellite = scenarioContent?.sats.find((entry) => entry.data.name === name);
     const orbit = satellite?.data.spec?.orbit;
     if (orbit?.type !== "keplerian" || orbitEditor.busy) return false;
+    // Keplerian element handles describe a fixed inertial ellipse, so make
+    // that frame explicit before entering the editor from an Earth-fixed view.
+    if (options.referenceFrame !== "ECI") {
+      options.referenceFrame = "ECI";
+      applyOptions();
+      onReferenceFrameChange?.("ECI");
+    }
     clock.setPlaying(false);
     if (focusedSatelliteName) resetCamera();
     controls.enableDamping = false;
@@ -1225,6 +1295,9 @@ export function createViewer(container, { onSelect, onFocusChange, onOrbitEditCh
       posAttr.needsUpdate = true;
     }
 
+    controls.rotateSpeed = focusedSatelliteName
+      ? OVERVIEW_ROTATE_SPEED
+      : earthRotationSpeed(camera.position.length());
     controls.update();
     orbitEditor.updateFrame(container.clientHeight);
     // Ordinary perspective depth remains compatible with the custom Earth
@@ -1306,6 +1379,7 @@ export function createViewer(container, { onSelect, onFocusChange, onOrbitEditCh
       setScenario(null);
       controls.dispose();
       stationIconTexture.dispose();
+      satelliteMarkerTexture.dispose();
       renderer.dispose();
       renderer.domElement.remove();
       labelRenderer.domElement.remove();

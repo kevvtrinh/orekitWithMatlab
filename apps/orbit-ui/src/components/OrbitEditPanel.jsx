@@ -21,7 +21,7 @@ export default function OrbitEditPanel({ edit, error, onCommit, onClose }) {
   return <div className="orbit-edit-panel" role="region" aria-label="Direct orbit editor">
     <div className="orbit-edit-heading"><div><strong>Edit orbit</strong><span>{edit.name}</span></div>
       <button className="btn" disabled={edit.busy} onClick={onClose}>Done</button></div>
-    <p>Drag an orbit handle. Release to apply. Esc cancels the current drag.</p>
+    <p>Drag an orbit handle in ECI. Release to apply. Esc cancels the current drag.</p>
     <details><summary>Numerical elements</summary>
       {["perigee", "apogee"].map((kind) => <ElementInput key={kind} label={kind === "perigee" ? "Perigee altitude" : "Apogee altitude"}
         value={radii[kind] - ORBIT_EARTH_KM} unit="km" disabled={edit.busy}

@@ -1,18 +1,20 @@
-# STK-replacement upgrade plan
+# STK-replacement upgrade history
 
-Working branch: `claude/stk-tool-replacement-lzbn46`. This file tracks the
-multi-session effort to close the gaps between this suite and STK. Update the
-checklists as work lands so a fresh session can resume without re-reading the
-whole codebase.
+This is a historical record of the STK-parity work and July 2026 follow-up
+sessions. Checklists, test results, limitations, and design decisions describe
+the work when recorded; later entries may supersede earlier ones. For current
+setup and architecture, see [README.md](README.md),
+[docs/architecture.md](docs/architecture.md), and
+[docs/ui_design.md](docs/ui_design.md).
 
-## Goal
+## Original goal
 
 Make the MATLAB + Orekit suite an "almost STK" replacement. Existing before
 this effort: Keplerian/TLE propagation, ground-station + sensor access,
 sensor tasking/scheduling, 2D/3D visualization + animation, save/load,
 CSV exports, App Designer UI (`matlab/launchOrekitSatelliteUI.m`).
 
-## Architecture rules (do not break)
+## Original architecture rules
 
 - Backend-first: all capability lives under `src/`; UI only adapts.
 - `src/orekit` is the only layer allowed to call Java/Orekit (`javaObject`/`javaMethod`).
@@ -22,7 +24,7 @@ CSV exports, App Designer UI (`matlab/launchOrekitSatelliteUI.m`).
 - Tests use `functiontests(localfunctions)` with `setupOnce` calling
   `startupOrekitSuite()` (needs Orekit jars under `vendor/orekit/`).
 
-## Phase 1 — core STK-parity features (this session)
+## Phase 1 — core STK-parity features
 
 - [x] `src/core/ForceModelOptions.m` — gravity degree/order, sun/moon, drag,
       SRP toggles, integrator settings. `GravityDegree=0` means point mass.
@@ -66,15 +68,11 @@ CSV exports, App Designer UI (`matlab/launchOrekitSatelliteUI.m`).
 - [x] README: new sections for propagators/maneuvers/eclipse/coverage/
       constraints/TLE catalog/link budget.
 - [x] `docs/stk_feature_map.md` — STK module -> suite function mapping table.
-- [ ] Commit + push to `claude/stk-tool-replacement-lzbn46`. First commit
-      (5961993) is local; `git push` returned 403 from the local git proxy all
-      session. NEXT SESSION: commit any pending changes, then retry
-      `git push -u origin claude/stk-tool-replacement-lzbn46` before anything else.
-- [ ] Not run: no MATLAB/Orekit here. Run `startupOrekitSuite(); runtests(fullfile(pwd,"src","tests"))`
-      locally; fix anything that surfaces (most likely spots: Orekit 13 Java
-      constructor signatures in OrekitPropagatorFactory/OrekitBodies).
 
-## Phase 2 — future sessions (not started)
+The initial Phase 1 session did not run MATLAB/Orekit tests. Later entries
+record the validation performed for their respective changes.
+
+## Phase 2 — follow-up features
 
 - [x] UI: "Analysis" ribbon tab (eclipse timeline, orbital elements, OEM
   export, deck access window table, global coverage map) with
@@ -104,9 +102,7 @@ CSV exports, App Designer UI (`matlab/launchOrekitSatelliteUI.m`).
   ascending in [0,360), MinElevationDeg; linear interp with wraparound).
 - [x] Interpolation in `MissionObject.getState`/`getPosition` (cubic Hermite
   with edge clamping; `getECEF`/`getLLA` still nearest-sample).
-- PUSH POLICY: user said do NOT push to GitHub (session auth is broken anyway);
-  commit locally only. GitHub connector needs re-auth by the user before any push.
-- Numerical propagator performance: WON'T DO for now — Orekit numerical
+- Numerical propagator performance was deferred: Orekit numerical
   propagators integrate incrementally between successive propagate() calls, so
   per-sample calls do not re-integrate from epoch; remaining cost is
   MATLAB<->Java call overhead, which ephemeris-mode would not remove.
@@ -148,9 +144,8 @@ inside the FOR (reachable by slewing) produced zero opportunities. Fix:
   these). Slew time / off-nadir quality already model the pointing cost.
 - Tests: testTaskingFieldOfRegard (FOR finds more than FOV, respects FOR
   limit, coarse-step still finds short passes, area scan, greedy end-to-end).
-NOTE: branch rebuilt from origin/main (Kevin merged reworked ECI/mount
-commit 937ea4e with OrekitFrameTransform); pre-merge branch backup patches
-in scratchpad/mybackup.
+Integration note: these changes were reapplied after the ECI/mount changes
+in commit 937ea4e introduced OrekitFrameTransform.
 
 ## Scheduled-beam visualization re-applied on main (2026-07)
 
@@ -168,8 +163,7 @@ merged main; re-applied on top of main's reworked UI:
 ## Warm MATLAB worker cache for the web bridge (2026-07)
 
 Every orbit-ui bridge run paid full MATLAB + JVM + Orekit startup via a fresh
-`matlab -batch`. Added a warm worker cache (branch worktree
-matlab-warm-worker-cache):
+`matlab -batch`. Added a warm worker cache:
 - `src/ui/orbitUiWorker.m` — persistent worker loop started once with
   `startupOrekitSuite()`; file protocol (request.json/done.json/ready.json/
   stop) in `apps/orbit-ui/server/data/worker/`; idle-timeout self-exit.
@@ -219,7 +213,7 @@ maneuver support, though the backend already had both. Closed the gap:
   backend default instead of the bare "Sensor".
 - Tests: spec.test.mjs covers walker sensor expansion + name validation.
 
-## Known caveats / decisions
+## Caveats and decisions recorded during these sessions
 
 - Harris-Priester drag: valid ~100–1000 km altitude; returns zero density above,
   throws below 100 km. Default ForceModelOptions enables drag+SRP+sun/moon+8x8.
@@ -230,6 +224,3 @@ maneuver support, though the backend already had both. Closed the gap:
   from the SGP4 state at scenario epoch).
 - SpacecraftState mass: tries `withMass` (Orekit 13) with constructor fallback
   (Orekit ≤12), since repo pins Orekit 13.1.6 but jars are user-fetched.
-- No MATLAB/Orekit runtime in the dev container — code is written to the repo's
-  established patterns but not executed here; run `runtests(fullfile(pwd,"src","tests"))`
-  locally to validate.

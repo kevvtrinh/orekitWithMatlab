@@ -1,0 +1,130 @@
+/* Shared timing and system-status surface. Scoped to keep the console modular. */
+.mission-timeline.timeline {
+  padding: 15px 19px 12px;
+  gap: 15px;
+  background: #101722;
+  border-top-color: #293442;
+  color: #e6edf5;
+}
+.mission-timeline .timeline-controls { gap: 22px; min-height: 38px; }
+.mission-timeline .timeline-heading { display: flex; flex-direction: column; gap: 5px; flex: none; }
+.mission-timeline .timeline-title { display: block; color: #b2bfce; font-size: 9px; font-weight: 600; letter-spacing: .1em; }
+.mission-timeline .timeline-state { display: flex; align-items: center; gap: 5px; font-size: 10px; color: #8a9bae; }
+.mission-timeline .timeline-state i { width: 4px; height: 4px; border-radius: 50%; background: #8391a3; }
+.mission-timeline .timeline-state--playing { color: #a5dce9; }
+.mission-timeline .timeline-state--playing i { background: #83d8ed; }
+.mission-timeline .timeline-clock { gap: 2px; flex: 1; }
+.mission-timeline .timeline-utc { display: flex; align-items: baseline; gap: 7px; color: #eaf2f9; font-family: var(--sans); }
+.mission-timeline .timeline-time-digits { font-size: 21px; font-weight: 500; line-height: 1.1; letter-spacing: -.035em; font-variant-numeric: tabular-nums; }
+.mission-timeline .timeline-time-zone { color: #93a5b8; font-size: 9px; font-weight: 600; letter-spacing: .08em; }
+.mission-timeline .timeline-elapsed { display: flex; gap: 7px; color: #7e91a7; font: 9px var(--sans); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.mission-timeline .timeline-elapsed i { font-style: normal; color: #48586b; }
+.mission-timeline .timeline-date { display: inline-flex; gap: 7px; }
+.mission-timeline .timeline-playback { gap: 3px; padding: 3px; background: #0b121c; border: 1px solid #243143; border-radius: 9px; flex: none; }
+.mission-timeline .timeline-playback .btn { width: 28px; min-height: 30px; padding: 5px; border-color: transparent; color: #91a5bc; border-radius: 5px; }
+.mission-timeline .timeline-playback .btn:hover:not(:disabled) { background: #202f40; color: #e8f3fa; }
+.mission-timeline .timeline-playback .timeline-play { width: 33px; min-width: 33px; background: #b2e9f5; color: #142c39; border: 1px solid #b2e9f5; }
+.mission-timeline .timeline-playback .timeline-play:hover:not(:disabled) { background: #d4f4fc; border-color: #d4f4fc; color: #142c39; }
+.mission-timeline .timeline-step--back .console-icon { transform: rotate(180deg); }
+.mission-timeline .timeline-speed { width: 62px; padding: 5px 2px 5px 7px; min-height: 28px; margin-left: 3px; border: 0; border-left: 1px solid #283648; border-radius: 0; color: #b0c5d9; font: 11px var(--sans); font-variant-numeric: tabular-nums; background: #0b121c; }
+.mission-timeline .timeline-density-toggle { display: inline-flex; align-items: center; justify-content: center; gap: 5px; flex: none; min-width: 32px; min-height: 34px; padding: 6px 8px; color: #96aec6; background: transparent; border: 1px solid #2b3b4e; border-radius: 7px; font: 10px var(--sans); }
+.mission-timeline .timeline-density-toggle:hover { color: #d4effb; background: #1d2b3d; border-color: #49667e; }
+.mission-timeline .timeline-density-toggle:focus-visible { outline: 2px solid #a4e6f3; outline-offset: 3px; }
+.mission-timeline .timeline-density-toggle[aria-expanded="false"] .console-icon { transform: rotate(180deg); }
+.mission-timeline [hidden] { display: none; }
+.mission-timeline .timeline-chart { gap: 13px; }
+.mission-timeline .timeline-chart-labels { width: 42px; padding-top: 28px; gap: 12px; font-size: 9px; font-weight: 500; color: #8b9fb5; }
+.mission-timeline .timeline-track { padding-top: 25px; }
+.mission-timeline .timeline-ruler { height: 25px; border-bottom: 1px solid #304055; }
+.mission-timeline .timeline-tick { font: 9px var(--sans); font-variant-numeric: tabular-nums; color: #8b9cb0; }
+.mission-timeline .timeline-ruler-mark { position: absolute; height: 4px; bottom: 0; width: 1px; background: #2a3b50; }
+.mission-timeline .timeline-ruler-mark--major { height: 8px; background: #4a5e74; }
+.mission-timeline .timeline-lane { height: 18px; margin: 3px 0 4px; border: 0; background: repeating-linear-gradient(90deg, #30405544 0, #30405544 1px, transparent 1px, transparent 20%); }
+.mission-timeline .timeline-window, .mission-timeline .timeline-task { top: 3px; height: 11px; border-radius: 2px; background: #649fab44; border: 1px solid #78b5c26b; }
+.mission-timeline .timeline-window--selected { background: #83d8ed70; border-color: #9de6f4; }
+.mission-timeline .timeline-task { background: #baaa8347; border-color: #d4bd876b; }
+.mission-timeline .timeline-task--selected { border-color: #e7cd96; background: #ccb78570; }
+.mission-timeline .timeline-task--slew { background: #bfa66e14; border-style: dashed; }
+.mission-timeline .timeline-empty { color: #73879e; top: 3px; font-size: 9px; }
+.mission-timeline .timeline-playhead { top: 20px; bottom: 0; background: #a4e6f3; }
+.mission-timeline .timeline-playhead::before { width: 6px; height: 7px; top: -3px; left: -2.5px; border-radius: 1px 1px 2px 2px; background: #a4e6f3; transform: none; clip-path: polygon(0 0, 100% 0, 100% 65%, 50% 100%, 0 65%); }
+.mission-timeline .timeline-scrubber { inset: 21px 0 0; height: calc(100% - 21px); }
+.mission-timeline .timeline-scrubber:disabled { cursor: default; }
+.mission-timeline .timeline-track:focus-within { outline: 1px solid #83d8ed; outline-offset: 5px; border-radius: 2px; }
+.mission-timeline .timeline-footer { gap: 12px; align-items: center; color: #8397ad; font-size: 9px; }
+.mission-timeline .timeline-context { display: flex; align-items: center; gap: 6px; min-width: 0; flex: 1 1 auto; }
+.mission-timeline .timeline-context > .console-icon { color: #8ea6bd; }
+.mission-timeline .timeline-context-name { max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #acbdcf; }
+.mission-timeline .timeline-context-access { white-space: nowrap; padding-left: 6px; border-left: 1px solid #344256; }
+.mission-timeline .timeline-context-access--active { color: #a2decc; }
+.mission-timeline .timeline-next-access { display: flex; align-items: center; gap: 5px; padding: 2px 0; color: #9dc8d9; background: transparent; border: 0; font-size: 9px; white-space: nowrap; }
+.mission-timeline .timeline-next-access:hover { color: #d1f4fc; }
+.mission-timeline .timeline-legend { gap: 10px; flex: none; }
+.mission-timeline .timeline-legend-item { gap: 4px; }
+.mission-timeline .legend-swatch--access { background: #79b8c5; }
+.mission-timeline .legend-swatch--task { background: #c5b284; }
+.mission-timeline .legend-swatch--slew { border-color: #c5b284; }
+.mission-timeline .timeline-span { flex: none; font-family: var(--sans); font-variant-numeric: tabular-nums; padding-left: 10px; border-left: 1px solid #344256; }
+.timeline-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+
+/* Keep the same native range input available when the event lanes are folded. */
+.mission-timeline--compact.timeline { padding-top: 10px; padding-bottom: 6px; gap: 3px; }
+.mission-timeline--compact .timeline-chart { align-items: center; gap: 12px; }
+.mission-timeline--compact .timeline-track { display: flex; align-items: center; padding-top: 0; }
+.mission-timeline--compact .timeline-scrubber { position: relative; inset: auto; height: 24px; opacity: 1; background: transparent; cursor: pointer; }
+.mission-timeline--compact .timeline-scrubber::-webkit-slider-runnable-track { height: 3px; border-radius: 3px; background: linear-gradient(to right, #a4e6f3 0 var(--timeline-progress), #314358 var(--timeline-progress) 100%); }
+.mission-timeline--compact .timeline-scrubber::-webkit-slider-thumb { appearance: none; width: 11px; height: 11px; margin-top: -4px; border: 2px solid #bfeefa; border-radius: 50%; background: #779daf; box-shadow: 0 0 0 3px #a4e6f30d; }
+.mission-timeline--compact .timeline-scrubber::-moz-range-track { height: 3px; border-radius: 3px; background: #314358; }
+.mission-timeline--compact .timeline-scrubber::-moz-range-progress { height: 3px; border-radius: 3px; background: #a4e6f3; }
+.mission-timeline--compact .timeline-scrubber::-moz-range-thumb { width: 7px; height: 7px; border: 2px solid #bfeefa; border-radius: 50%; background: #779daf; box-shadow: 0 0 0 3px #a4e6f30d; }
+.mission-timeline--compact .timeline-scrubber:disabled { opacity: .35; }
+.mission-timeline--compact .timeline-track:focus-within { outline-offset: 1px; border-radius: 4px; }
+.mission-timeline .timeline-compact-duration { flex: none; color: #8b9fb5; font: 9px var(--sans); font-variant-numeric: tabular-nums; }
+
+.mission-status.statusbar { min-height: 30px; padding: 1px 20px 5px; gap: 18px; color: #768aa0; font-size: 10px; }
+.mission-status .mission-status-source { display: inline-flex; align-items: center; flex: none; color: #9cacc0; }
+.mission-status .mission-status-source .status-dot { width: 4px; height: 4px; margin-right: 7px; }
+.mission-status .mission-status-counts { font-variant-numeric: tabular-nums; }
+.mission-status .mission-status-pending { color: #c4af85; }
+.mission-status .mission-status-bridge { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; flex: none; }
+.mission-status .mission-status-bridge-label { color: #a6bacd; font-size: 9px; border: 1px solid #293b4d; background: #111c29; border-radius: 4px; padding: 1px 6px; margin-left: 2px; }
+.mission-status .mission-status-bridge--running .mission-status-bridge-label,
+.mission-status .mission-status-bridge--queued .mission-status-bridge-label { color: #d9c69a; border-color: #504832; background: #2a261c; }
+.mission-status .mission-status-bridge--failed .mission-status-bridge-label,
+.mission-status .mission-status-bridge--unreachable .mission-status-bridge-label { color: #d5a49e; border-color: #503b3e; background: #281b22; }
+.mission-status .mission-status-bridge--succeeded .mission-status-bridge-label { color: #a8d9c4; }
+
+@media (max-width: 1450px) {
+  .mission-timeline .timeline-controls { gap: 14px; }
+  .mission-timeline .timeline-heading { display: none; }
+  .mission-timeline .timeline-legend { display: none; }
+}
+@media (max-width: 760px) {
+  .mission-status.statusbar { flex-wrap: wrap; gap: 5px 12px; padding: 5px 14px 8px; }
+  .mission-status .mission-status-counts { display: none; }
+  .mission-status .mission-status-pending { order: 3; width: 100%; }
+  .mission-timeline .timeline-heading { display: flex; }
+  .mission-timeline .timeline-legend { display: flex; }
+  .mission-timeline .timeline-density-toggle { padding: 6px; }
+  .mission-timeline .timeline-density-toggle > span { display: none; }
+}
+@media (max-width: 540px) {
+  .mission-timeline.timeline { padding: 12px 13px 11px; gap: 12px; }
+  .mission-timeline .timeline-heading { display: none; }
+  .mission-timeline .timeline-controls { flex-wrap: nowrap; gap: 8px; }
+  .mission-timeline .timeline-clock { flex: 1; }
+  .mission-timeline .timeline-date { display: none; }
+  .mission-timeline .timeline-time-digits { font-size: 19px; }
+  .mission-timeline .timeline-playback { gap: 1px; }
+  .mission-timeline .timeline-playback .btn { width: 25px; }
+  .mission-timeline .timeline-speed { width: 53px; padding-left: 3px; margin-left: 1px; }
+  .mission-timeline .timeline-step { display: none; }
+  .mission-timeline .timeline-chart { gap: 8px; }
+  .mission-timeline .timeline-chart-labels { width: 35px; }
+  .mission-timeline .timeline-footer { flex-wrap: nowrap; gap: 9px; }
+  .mission-timeline .timeline-legend { display: none; }
+  .mission-timeline .timeline-context-name { max-width: 92px; }
+  .mission-timeline .timeline-span { display: none; }
+  .mission-status.statusbar { font-size: 9px; }
+  .mission-timeline--compact.timeline { padding-top: 8px; padding-bottom: 5px; gap: 3px; }
+}

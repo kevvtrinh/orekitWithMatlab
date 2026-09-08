@@ -1,4 +1,9 @@
 const icons = {
+  expand: <path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5" />,
+  collapse: <path d="M3 8h5V3m8 0v5h5M8 21v-5H3m18 0h-5v5" />,
+  keyboard: <><rect x="2" y="5" width="20" height="14" rx="3" /><path d="M6 9h.01M10 9h.01M14 9h.01M18 9h.01M6 12h.01M10 12h.01M14 12h.01M18 12h.01M7 16h10" /></>,
+  command: <><path d="M8 8h8v8H8z" /><path d="M8 8H5a3 3 0 1 1 3-3Zm8 0V5a3 3 0 1 1 3 3Zm0 8h3a3 3 0 1 1-3 3Zm-8 0v3a3 3 0 1 1-3-3Z" /></>,
+  minus: <path d="M5 12h14" />,
   globe: <><circle cx="12" cy="12" r="9" /><ellipse cx="12" cy="12" rx="4" ry="9" /><path d="M3 12h18M5 6h14M5 18h14" /></>,
   orbit: <><circle cx="12" cy="12" r="3.1" /><ellipse cx="12" cy="12" rx="10" ry="4.4" transform="rotate(-35 12 12)" /><circle cx="19.8" cy="6.5" r="1.5" fill="currentColor" stroke="none" /></>,
   play: <path d="m9 5 11 7-11 7Z" />,

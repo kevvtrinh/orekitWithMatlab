@@ -2,10 +2,10 @@ function session = launchOrbitHtmlUI(varargin)
 %LAUNCHORBITHTMLUI Open the React/Three.js Orbit Console from MATLAB.
 %
 % session = launchOrbitHtmlUI()
-% session = launchOrbitHtmlUI("Port", 8321, "OpenBrowser", false)
+% session = launchOrbitHtmlUI("Port", 8322, "OpenBrowser", false)
 % session = launchOrbitHtmlUI("NodeExecutable", "C:\Program Files\nodejs\node.exe")
 %
-% Options: Port (8321), OpenBrowser (true), NodeExecutable (auto-discovered),
+% Options: Port (8322), OpenBrowser (true), NodeExecutable (auto-discovered),
 % BuildIfNeeded (true). Node.js 18 or later is required. Missing dependencies
 % are installed with npm ci when npm is available; missing or stale frontend
 % output is built with Vite. Set BuildIfNeeded=false to require prepared files.

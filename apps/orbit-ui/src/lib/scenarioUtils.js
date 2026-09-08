@@ -35,32 +35,6 @@ export function prepareAccesses(rawAccesses, epochMs) {
   }));
 }
 
-export function prepareScenario(raw) {
-  const epochMs = parseIsoUtc(raw.meta.epochUtc).getTime();
-
-  // Fall back to a distinct palette when colors are missing or collide
-  // (MATLAB objects default to the same red).
-  const seenColors = new Set();
-  const satellites = raw.satellites.map((sat, index) => {
-    let color = sat.color;
-    if (!color || seenColors.has(color)) {
-      color = SAT_PALETTE[index % SAT_PALETTE.length];
-    }
-    seenColors.add(color);
-    return { ...sat, color, ephemeris: prepareEphemeris(sat.ephemeris) };
-  });
-
-  const accesses = prepareAccesses(raw.accesses, epochMs);
-
-  return {
-    meta: raw.meta,
-    epochMs,
-    satellites,
-    groundPoints: raw.groundPoints,
-    accesses,
-  };
-}
-
 function readVec(array, index, out) {
   out[0] = array[index * 3];
   out[1] = array[index * 3 + 1];

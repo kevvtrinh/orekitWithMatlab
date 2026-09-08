@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { groupTargets } from "../lib/spec.js";
 import ConsoleIcon from "./ConsoleIcon.jsx";
+import "./object-browser-polish.css";
 
 // Scenario tree: spec-driven, so objects appear the moment they are added,
 // before any MATLAB run. Badges mark satellites whose displayed ephemeris is
@@ -30,6 +31,16 @@ function otherEndpoint(pair, satName) {
 
 function matchesSearch(query, ...values) {
   return !query || values.some((value) => String(value ?? "").toLowerCase().includes(query));
+}
+
+function ObjectSectionLabel({ icon, children, count }) {
+  return (
+    <div className="tree-group-label">
+      <ConsoleIcon name={icon} size={14} />
+      <span>{children}</span>
+      <span className="object-section-count">{count}</span>
+    </div>
+  );
 }
 
 function SatelliteRow({
@@ -66,6 +77,7 @@ function SatelliteRow({
           onClick={() => hasChildren && onToggleExpanded(sat.name)}
           disabled={!hasChildren}
           aria-expanded={hasChildren ? expanded : undefined}
+          aria-label={hasChildren ? `${expanded ? "Collapse" : "Expand"} ${sat.name}` : `${sat.name} has no child objects`}
           title={
             hasChildren
               ? expanded
@@ -74,15 +86,16 @@ function SatelliteRow({
               : "No child objects"
           }
         >
-          {hasChildren ? (expanded ? "⌄" : "›") : ""}
+          {hasChildren && <ConsoleIcon name={expanded ? "chevronDown" : "chevronRight"} size={13} />}
         </button>
         <button
           className={`tree-item tree-item--satellite ${selected ? "selected" : ""}`}
           onClick={() => onSelect(sat.name)}
           onDoubleClick={() => onFocusSatellite?.(sat.name)}
+          aria-pressed={selected}
           title={summary || undefined}
         >
-          <span className="dot" style={{ background: sat.color }} />
+          <span className="satellite-symbol" style={{ color: sat.color }}><ConsoleIcon name="satellite" size={15} /></span>
           <span className="tree-item-name">{sat.name}</span>
           {badge && (
             <span className={`badge badge--${sat.source}`} title={badge.title}>
@@ -100,9 +113,13 @@ function SatelliteRow({
               className={`tree-item tree-item--child ${selected ? "selected" : ""}`}
               role="button"
               tabIndex={0}
+              aria-label={`Select ${sensorName}`}
               onClick={() => onSelect(sat.name)}
               onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") onSelect(sat.name);
+                if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) {
+                  e.preventDefault();
+                  onSelect(sat.name);
+                }
               }}
               title={`Imaging sensor on ${sat.name}`}
               onDoubleClick={() => onOpenSensorView(sat.name)}
@@ -111,9 +128,9 @@ function SatelliteRow({
               <span className="sensor-glyph" />
               <span className="tree-item-name">{sensorName}</span>
               <span className="tree-actions">
-                <button className="tree-action-btn" title="Open sensor view" onClick={(event) => {
+                <button className="tree-action-btn" title="Open sensor view" aria-label={`Open ${sensorName} view`} onClick={(event) => {
                   event.stopPropagation(); onOpenSensorView(sat.name);
-                }}>view</button>
+                }}><ConsoleIcon name="crosshair" size={12} /></button>
                 <button
                   className="tree-action-btn"
                   onClick={(e) => {
@@ -121,8 +138,9 @@ function SatelliteRow({
                     onEditSensor(sat.name);
                   }}
                   title="Edit this sensor"
+                  aria-label={`Edit ${sensorName}`}
                 >
-                  edit
+                  <ConsoleIcon name="settings" size={12} />
                 </button>
                 <button
                   className="tree-action-btn tree-action-btn--danger"
@@ -131,8 +149,9 @@ function SatelliteRow({
                     onRemoveSensor(sat.name);
                   }}
                   title="Remove this sensor from the satellite"
+                  aria-label={`Remove ${sensorName}`}
                 >
-                  del
+                  <ConsoleIcon name="trash" size={12} />
                 </button>
               </span>
               <span className="meta">
@@ -290,9 +309,13 @@ export default function ObjectBrowser({
 
   if (!scenario) {
     return (
-      <aside className="panel panel--left">
-        <div className="panel-header">Scenario</div>
-        <div className="empty-note">Loading scenario...</div>
+      <aside className="panel panel--left object-browser" aria-label="Mission objects" aria-busy="true">
+        <div className="panel-heading"><h2>Mission objects</h2></div>
+        <div className="object-loading" role="status">
+          <ConsoleIcon name="orbit" size={32} />
+          <strong>Preparing your mission</strong>
+          <span>Loading scenario objects…</span>
+        </div>
       </aside>
     );
   }
@@ -388,18 +411,20 @@ export default function ObjectBrowser({
   const noMatches = query && visibleSatellites.length + stations.length +
     targetCount + accessPairs.length === 0;
   const sectionCount = (visible, total) => query ? `${visible} / ${total}` : total;
+  const totalObjects = scenario.satellites.length + allStations.length + totalTargets;
+  const sensorCount = scenario.satellites.filter((sat) => sat.sensor).length;
 
   return (
-    <aside className="panel panel--left" aria-label="Mission objects">
+    <aside className="panel panel--left object-browser" aria-label="Mission objects">
       <div className="panel-heading">
-        <h2>Mission objects</h2>
+        <div className="object-heading-label"><ConsoleIcon name="layers" size={16} /><h2>Mission objects</h2></div>
         <button className="btn btn--icon add-object" onClick={onAddSatellite}
-          aria-label="Add satellite" title="Add satellite">+</button>
+          aria-label="Add satellite" title="Add satellite"><ConsoleIcon name="plus" size={16} /></button>
       </div>
       <div className="mission-summary">
-        <div className="eyebrow">Active scenario</div>
+        <div className="mission-summary-topline"><div className="eyebrow">Active scenario</div><ConsoleIcon name="orbit" size={23} /></div>
         <div className="mission-name">{scenario.meta.name}</div>
-        <div className="mission-epoch">{scenario.meta.epochUtc.replace("T", " ").replace(/(\.\d+)?Z$/, "")} UTC</div>
+        <div className="mission-epoch" title="Scenario start time">{scenario.meta.epochUtc.replace("T", " ").replace(/(\.\d+)?Z$/, "")} <span>UTC</span></div>
         <div className="mission-metrics">
           <div><strong>{(scenario.meta.durationSeconds / 3600).toFixed(1)}<small> h</small></strong><span>Duration</span></div>
           <div><strong>{scenario.meta.stepSeconds}<small> s</small></strong><span>Time step</span></div>
@@ -426,14 +451,14 @@ export default function ObjectBrowser({
           <div className="tree-search-empty" role="status">
             <ConsoleIcon name="search" size={24} />
             <strong>No objects found</strong>
-            <p>No object name or type matches “{searchText.trim()}”.</p>
+            <p>No matches for “{searchText.trim()}”. Try an object name, sensor, or target.</p>
             <button type="button" className="btn tree-search-reset" onClick={() => setSearchText("")}>
               Clear search
             </button>
           </div>
         )}
         {(!query || visibleSatellites.length > 0) && <div className="tree-group">
-          <div className="tree-group-label">Satellites ({sectionCount(visibleSatellites.length, scenario.satellites.length)})</div>
+          <ObjectSectionLabel icon="satellite" count={sectionCount(visibleSatellites.length, scenario.satellites.length)}>Satellites</ObjectSectionLabel>
           {ungrouped.map((sat) => (
             <SatelliteRow
               key={sat.name}
@@ -451,7 +476,7 @@ export default function ObjectBrowser({
           {[...groups.entries()].map(([group, sats]) => (
             <div key={group}>
               <div className="tree-subgroup-label" title={group}>
-                {group}
+                <ConsoleIcon name="orbit" size={12} /><span>{group}</span><span className="object-subgroup-count">{sats.length}</span>
               </div>
               {sats.map((sat) => (
                 <SatelliteRow
@@ -470,36 +495,44 @@ export default function ObjectBrowser({
             </div>
           ))}
           {scenario.satellites.length === 0 && (
-            <div className="empty-note">Insert &gt; Satellite to add one.</div>
+            <div className="object-empty-section">
+              <p>Your mission starts here.</p>
+              <button className="object-add-first" onClick={onAddSatellite}><ConsoleIcon name="plus" size={13} />Add a satellite</button>
+            </div>
           )}
         </div>}
 
         {(!query || stations.length > 0) && <div className="tree-group">
-          <div className="tree-group-label">Ground stations ({sectionCount(stations.length, allStations.length)})</div>
+          <ObjectSectionLabel icon="ground" count={sectionCount(stations.length, allStations.length)}>Ground stations</ObjectSectionLabel>
           {stations.map((gp) => (
             <button
               key={gp.name}
               className={`tree-item ${selection === gp.name ? "selected" : ""}`}
               onClick={() => onSelect(gp.name)}
+              aria-pressed={selection === gp.name}
+              title={gp.name}
             >
               <span className="station-symbol"><ConsoleIcon name="ground" size={16} /></span>
-              {gp.name}
+              <span className="tree-item-name">{gp.name}</span>
               <span className="meta">GS</span>
             </button>
           ))}
+          {allStations.length === 0 && <div className="empty-note">No ground stations in this scenario.</div>}
         </div>}
 
         {targetCount > 0 && (
           <div className="tree-group">
-            <div className="tree-group-label">Targets ({sectionCount(targetCount, totalTargets)})</div>
+            <ObjectSectionLabel icon="target" count={sectionCount(targetCount, totalTargets)}>Targets</ObjectSectionLabel>
             {pointTargets.map((gp) => (
               <button
                 key={gp.name}
                 className={`tree-item ${selection === gp.name ? "selected" : ""}`}
                 onClick={() => onSelect(gp.name)}
+                aria-pressed={selection === gp.name}
+                title={gp.name}
               >
                 <span className="shape" style={{ background: gp.color }} />
-                {gp.name}
+                <span className="tree-item-name">{gp.name}</span>
                 <span className="meta">P{gp.priority ?? 1}</span>
               </button>
             ))}
@@ -517,23 +550,24 @@ export default function ObjectBrowser({
                       className="tree-disclosure"
                       onClick={() => toggleArea(group)}
                       aria-expanded={expanded}
+                      aria-label={`${expanded ? "Collapse" : "Expand"} ${group}`}
                       title={
                         expanded
                           ? `Collapse ${group}`
                           : `Expand ${group} (${points.length} grid points)`
                       }
                     >
-                      {expanded ? "v" : ">"}
+                      <ConsoleIcon name={expanded ? "chevronDown" : "chevronRight"} size={13} />
                     </button>
-                    {/* The area itself is not a spec object (only its grid
-                        points are), so the row toggles instead of selecting. */}
+                    {/* Select the group to inspect its shared area definition. */}
                     <div
                       className={`tree-item tree-item--area ${selection === group ? "selected" : ""}`}
                       role="button"
                       tabIndex={0}
+                      aria-pressed={selection === group}
                       onClick={() => onSelect(group)}
                       onKeyDown={(e) => {
-                        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onSelect(group); }
+                        if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); onSelect(group); }
                       }}
                       title={
                         area
@@ -552,8 +586,9 @@ export default function ObjectBrowser({
                               onDeleteArea(group);
                             }}
                             title={`Delete this area and its ${points.length} grid points`}
+                            aria-label={`Delete ${group}`}
                           >
-                            del
+                            <ConsoleIcon name="trash" size={12} />
                           </button>
                         </span>
                       )}
@@ -567,6 +602,7 @@ export default function ObjectBrowser({
                           key={gp.name}
                           className={`tree-item tree-item--child ${selection === gp.name ? "selected" : ""}`}
                           onClick={() => onSelect(gp.name)}
+                          aria-pressed={selection === gp.name}
                         >
                           <span className="branch">|</span>
                           <span className="shape" style={{ background: gp.color }} />
@@ -583,7 +619,7 @@ export default function ObjectBrowser({
         )}
 
         {(!query || accessPairs.length > 0) && <div className="tree-group">
-          <div className="tree-group-label">Access results ({sectionCount(accessPairs.length, scenario.accesses.length)})</div>
+          <ObjectSectionLabel icon="activity" count={sectionCount(accessPairs.length, scenario.accesses.length)}>Access results</ObjectSectionLabel>
           {[...accessSources.entries()].map(([source, pairs]) => (
             <div key={source} className="tree-access-source">
               <div className="tree-access-source-heading" title={source}>{source}</div>
@@ -616,6 +652,10 @@ export default function ObjectBrowser({
             <div className="empty-note">Run MATLAB to compute access windows.</div>
           )}
         </div>}
+      </div>
+      <div className="object-browser-footer">
+        <span><ConsoleIcon name="layers" size={12} />{totalObjects} object{totalObjects === 1 ? "" : "s"}</span>
+        <span>{sensorCount} sensor{sensorCount === 1 ? "" : "s"}</span>
       </div>
     </aside>
   );

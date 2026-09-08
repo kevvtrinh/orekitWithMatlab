@@ -5,7 +5,7 @@ const state = {
   tSec: 0, // offset from scenario epoch, seconds
   durationSec: 0,
   playing: false,
-  speed: 60, // sim seconds per wall second
+  speed: 30, // sim seconds per wall second; a gentler default for globe playback
 };
 
 let snapshot = { ...state };

@@ -32,6 +32,10 @@ export default function Modal({ title, onClose, children, footer, width = 460 })
 
   useEffect(() => {
     const panel = panelRef.current;
+    const overlay = panel.parentElement;
+    const siblings = [...overlay.parentElement.children].filter((element) => element !== overlay);
+    const priorInert = siblings.map((element) => element.inert);
+    siblings.forEach((element) => { element.inert = true; });
     const initial = visibleControls(panel, EDITABLE)[0] ??
       visibleControls(panel, FOCUSABLE)[0] ?? panel;
     initial.focus({ preventScroll: true });
@@ -57,6 +61,7 @@ export default function Modal({ title, onClose, children, footer, width = 460 })
     window.addEventListener("keydown", onKey);
     return () => {
       window.removeEventListener("keydown", onKey);
+      siblings.forEach((element, index) => { element.inert = priorInert[index]; });
       const { element, menuTrigger } = returnFocusRef.current;
       const destination = element?.isConnected ? element : menuTrigger;
       if (destination?.isConnected) destination.focus({ preventScroll: true });
