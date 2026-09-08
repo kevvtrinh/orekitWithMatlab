@@ -15,6 +15,7 @@ import ManeuverDialog from "./components/dialogs/ManeuverDialog.jsx";
 import AreaTargetDialog from "./components/dialogs/AreaTargetDialog.jsx";
 import AccessDialog from "./components/dialogs/AccessDialog.jsx";
 import CountryTargetDialog from "./components/dialogs/CountryTargetDialog.jsx";
+import ReportsDialog from "./components/dialogs/ReportsDialog.jsx";
 import * as api from "./lib/api.js";
 import { buildRenderScenario } from "./lib/renderScenario.js";
 import {
@@ -523,6 +524,7 @@ export default function App() {
   }, [dialog, commandOpen, shortcutsOpen, focusMode, toggleFocusMode, scenario]);
 
   const commands = [
+    { id: "reports", group: "Create & analyze", label: "Reports & graphs", detail: "Orbital elements, solar beta angle, lighting intervals, and CSV reports", icon: "activity", disabled: !spec, action: () => openDialog({ type: "reports" }) },
     { id: "satellite", group: "Create & analyze", label: "Add satellite", detail: "Keplerian elements or a two-line element set", icon: "satellite", disabled: !spec, action: () => openDialog({ type: "satellite" }) },
     { id: "constellation", group: "Create & analyze", label: "Build a constellation", detail: "Design a Walker Delta or Star constellation", icon: "orbit", disabled: !spec, action: () => openDialog({ type: "constellation" }) },
     { id: "ground", group: "Create & analyze", label: "Add ground station", icon: "ground", disabled: !spec, action: () => openDialog({ type: "ground", kind: "groundStation" }) },
@@ -631,6 +633,15 @@ export default function App() {
         onChange={onImportFile}
       />
 
+      {dialog?.type === "reports" && scenario && <ReportsDialog
+        scenario={scenario} selection={dialog.satellite ?? selection} job={job}
+        onRunMatlab={avoidanceDemo ? undefined : () => runMatlab(spec)}
+        onClose={closeDialog}
+        onJumpToTime={(time, satelliteName) => {
+          clock.setPlaying(false); clock.setTime(time);
+          if (satelliteName) setSelection(satelliteName);
+          setMobilePanel("view"); closeDialog();
+        }} />}
       {dialog?.type === "satellite" && spec && (
         <SatelliteDialog
           spec={spec}

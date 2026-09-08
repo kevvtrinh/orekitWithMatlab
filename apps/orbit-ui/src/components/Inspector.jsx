@@ -201,6 +201,8 @@ export default function Inspector({ scenario, selection, job, onRunMatlab, onOpe
           {sat && <button className="btn inspector-focus-btn" disabled={!sat.ephemeris?.n}
             onClick={() => onFocusSatellite(sat.name)} title="Track this satellite in 3D"><ConsoleIcon name="crosshair" size={13} />Focus</button>}
           {sat?.sensor && <button className="btn" onClick={() => onOpenSensorView(sat.name)}><ConsoleIcon name="sensor" size={13} />Sensor view</button>}
+          {sat && <button className="btn" onClick={() => onOpenDialog({ type: "reports", satellite: sat.name })}
+            title="Open satellite reports and graphs"><ConsoleIcon name="activity" size={13} />Reports</button>}
           <button className="btn" onClick={() => onOpenDialog(sat ? { type: "satellite", initial: selectedSpec } : { type: "ground", initial: selectedSpec })}
             title="Edit this object's definition"><ConsoleIcon name="settings" size={12} />Edit</button>
           <button className="btn btn--danger inspector-delete-btn" onClick={() => onDeleteObject(selection)}

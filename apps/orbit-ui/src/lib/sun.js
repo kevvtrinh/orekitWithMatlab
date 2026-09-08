@@ -4,12 +4,24 @@
 
 import { parseIsoUtc } from "./time.js";
 
+const asArray = (value) => value == null ? [] : Array.isArray(value) ? value : [value];
+
 function windowSeconds(w, epochMs) {
   return {
     ...w,
     startSec: (parseIsoUtc(w.startUtc).getTime() - epochMs) / 1000,
     stopSec: (parseIsoUtc(w.stopUtc).getTime() - epochMs) / 1000,
   };
+}
+
+function prepareEclipse(entry, epochMs) {
+  const times = asArray(entry.tOffsetSec);
+  const states = asArray(entry.lightingState);
+  const validHistory = times.length === states.length && times.every((time, index) =>
+    Number.isFinite(time) && (index === 0 || time > times[index - 1]) &&
+    ["Sunlit", "Penumbra", "Umbra"].includes(states[index]));
+  return { ...entry, tOffsetSec: validHistory ? times : [], lightingState: validHistory ? states : [],
+    windows: asArray(entry.windows).map((window) => windowSeconds(window, epochMs)) };
 }
 
 // Raw payload sun block (MATLAB exportSunViz) -> render-friendly shape with
@@ -27,13 +39,10 @@ export function prepareSun(rawSun, epochMs) {
   }
   return {
     ephemeris: { n, t, eci },
-    eclipses: (rawSun.eclipses ?? []).map((e) => ({
-      ...e,
-      windows: (e.windows ?? []).map((w) => windowSeconds(w, epochMs)),
-    })),
-    groundLighting: (rawSun.groundLighting ?? []).map((g) => ({
+    eclipses: asArray(rawSun.eclipses).map((entry) => prepareEclipse(entry, epochMs)),
+    groundLighting: asArray(rawSun.groundLighting).map((g) => ({
       ...g,
-      daylightWindows: (g.daylightWindows ?? []).map((w) =>
+      daylightWindows: asArray(g.daylightWindows).map((w) =>
         windowSeconds(w, epochMs),
       ),
     })),
@@ -73,6 +82,18 @@ export function sunDirectionAt(sun, tSec, out = [0, 0, 0]) {
 export function lightingStateAt(sun, satelliteName, tSec) {
   const entry = sun?.eclipses?.find((e) => e.satellite === satelliteName);
   if (!entry) return null;
+  // Hold the preceding computed sample between ephemeris instants. Interval
+  // endpoints are sampled too, so their gaps cannot establish sunlight.
+  const times = entry.tOffsetSec;
+  if (times?.length && tSec >= times[0] && tSec <= times[times.length - 1]) {
+    let lo = 0, hi = times.length - 1;
+    while (lo < hi) {
+      const mid = Math.ceil((lo + hi) / 2);
+      if (times[mid] <= tSec) lo = mid;
+      else hi = mid - 1;
+    }
+    return entry.lightingState[lo];
+  }
   let state = "Sunlit";
   for (const w of entry.windows) {
     if (tSec >= w.startSec && tSec <= w.stopSec) {

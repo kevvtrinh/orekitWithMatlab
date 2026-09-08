@@ -42,6 +42,33 @@ panels. **Focus mode** gives the globe the full workspace.
   visible while giving more room to the globe. **Expand** restores the access
   and task lanes.
 
+### Reports and graphs
+
+Open **Analysis → Reports & Graphs**, choose **Reports** in a satellite's
+inspector, or find it with **Ctrl+K**. Select a satellite and a report:
+
+- **Orbital elements:** osculating GCRF elements computed from the propagated
+  position and velocity, including maneuvers. Choose a metric to graph and
+  inspect the angle convention for circular or equatorial orbits.
+- **Solar beta angle:** the signed angle between the Sun direction and the
+  orbit plane, computed by MATLAB/Orekit.
+- **Lighting intervals:** sampled umbra and penumbra windows, with the full
+  scenario's percentage of sunlit samples. Boundaries have the resolution of
+  the propagation time step; the percentage is a sample fraction.
+
+Filter by seconds from the scenario epoch, page through the data table, or
+jump from a row to that time on the globe. **Export CSV** saves every filtered
+row with UTC timestamps and units. Graphs retain missing-value gaps and split
+wrapped orbital angles; dense histories use an overview while the table and
+CSV retain all samples. Undefined values, such as apogee for an unbound orbit,
+remain blank.
+
+Reports use computed results. Changing the satellite or analysis period
+requires **Run scenario** before viewing or exporting them again. Older
+payloads without report histories can be refreshed through the same action.
+The bundled two-satellite sample includes computed reports, so this workflow
+is available to explore before starting MATLAB.
+
 ### ECI and ECEF views
 
 **ECI** draws the trajectory in inertial coordinates. **ECEF** transforms each

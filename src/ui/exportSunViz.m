@@ -13,7 +13,10 @@ function viz = exportSunViz(scenario)
 %       subsolarLonDeg      longitude of the subsolar point
 %   viz.sun.eclipses        per propagated satellite: umbra/penumbra windows
 %                           (conical shadow model, computeEclipse) and the
-%                           sunlit fraction of the scenario
+%                           sunlit sample fraction of the scenario, plus
+%                           tOffsetSec/lightingState on its ephemeris grid.
+%                           Windows use sampled boundaries, not refined
+%                           eclipse event times.
 %   viz.sun.groundLighting  per ground point: daylight windows (geometric sun
 %                           elevation above the horizon, computeSunElevation)
 %   viz.earthOrientation    GCRF<->ITRF orientation on the same grid:
@@ -100,6 +103,8 @@ for k = 1:numel(scenario.Objects)
             eclipses{end + 1} = struct( ...
                 "satellite", string(obj.Name), ...
                 "sunlitFractionPercent", round(result.SunlitFractionPercent, 1), ...
+                "tOffsetSec", {num2cell(seconds(result.TimeVector(:) - epoch))}, ...
+                "lightingState", {cellstr(result.LightingState(:))}, ...
                 "windows", {windows}); %#ok<AGROW>
         case {"GroundStation", "Place", "Facility", "Target"}
             sunElevation = computeSunElevation(scenario, obj.Name);

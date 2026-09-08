@@ -113,6 +113,12 @@ export default function TopBar({
 
   const analysisItems = [
     {
+      label: "Reports & Graphs...",
+      hint: "Explore orbital elements, solar beta angle, and lighting intervals",
+      onClick: () => onOpenDialog({ type: "reports" }),
+    },
+    "---",
+    {
       label: "Calculate Access...",
       hint: "Choose the exact object pair to send to MATLAB/Orekit",
       onClick: () => onOpenDialog({ type: "access" }),

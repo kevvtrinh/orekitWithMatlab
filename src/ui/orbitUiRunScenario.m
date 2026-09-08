@@ -8,9 +8,10 @@ function payload = orbitUiRunScenario(specFile, outputFile)
 % spec JSON, rebuilds it with the mission classes (buildScenarioFromSpec),
 % propagates with the Orekit backend, computes access for every satellite /
 % ground-object pair (capped), runs the sensor-tasking scheduler when the
-% spec requests tasks, adds Sun/eclipse/daylight data, and writes the payload
-% JSON the frontend renders. The spec is echoed into the payload so the
-% frontend can tell which objects the results are fresh for.
+% spec requests tasks, adds Sun/eclipse/daylight data and satellite report
+% histories, and writes the payload JSON the frontend renders. The spec is
+% echoed into the payload so the frontend can tell which objects the results
+% are fresh for.
 
 arguments
     specFile (1, 1) string
@@ -90,6 +91,10 @@ end
 % Sun geometry and lighting are cheap relative to propagation and always
 % useful in the 3D view.
 extra = mergeStructs(extra, exportSunViz(scenario));
+
+% Reports use the propagated state histories and the same Orekit Sun data
+% model as the viewport. Failed individual reports remain unavailable.
+extra = mergeStructs(extra, exportAnalysisViz(scenario));
 
 payload = exportScenarioJson(scenario, outputFile, "Extra", extra);
 fprintf("orbitUiRunScenario: wrote %s (%d satellites, %d ground objects, %d access pairs, %d scheduled tasks)\n", ...

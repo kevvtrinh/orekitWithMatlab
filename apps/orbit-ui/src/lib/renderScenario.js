@@ -17,6 +17,7 @@ import { buildPreviewEphemeris } from "./preview.js";
 import { prepareSchedule, prepareSensorAccesses } from "./schedule.js";
 import { collectAreaOutlines, deepEqual, parseEpochMs, normalizeAreaDefinitions } from "./spec.js";
 import { prepareSun } from "./sun.js";
+import { prepareAnalysisReports } from "./analysisReports.js";
 import {
   prepareAccesses,
   prepareEphemeris,
@@ -227,6 +228,7 @@ export function buildRenderScenario(spec, matlabRaw) {
     sensorAccesses,
     pointing,
     sun,
+    analysisReports: prepareAnalysisReports(matlabRaw?.analysis, satellites),
     dirty, // true when a MATLAB run is needed for authoritative results
   };
 }
