@@ -323,9 +323,10 @@ must be edited through their TLE input.
 Set `ORBIT_UI_DATA_DIR` to use a separate scenario/output directory, for example
 when testing the console in an isolated session. The default is `server/data`.
 
-**One-click demo:** choose **Scenario → Run Earth Avoidance Demo**. It loads a simulated LEO pass over an
-80 km geographic keep-out in Vietnam, exports the moving Az/El boundaries,
-runs the copied main-branch planner in MATLAB, imports and checks its result,
+**One-click demo:** choose **Scenario → Run Earth Avoidance Demo**. It loads a simulated MEO pass with
+Vietnam's country boundary as the keep-out. The west-to-east direct slew crosses
+the mainland; the demo exports the moving Az/El boundaries,
+runs the pinned `bmtp-cleanup-codex` planner in MATLAB, imports and checks its result,
 focuses the globe, and automatically plays the 30-second slew. Every click
 starts a fresh solve. Progress and the export directory appear on the globe;
 failures are shown without replaying an old result. **Return to scenario**
@@ -345,8 +346,8 @@ the mission timeline also scrubs the path. Camera, Az/El and Polar views follow
 the commanded boresight. **Save round trip** creates a portable request/result
 JSON for **Import result**; changed geometry or ephemerides invalidate the plan.
 
-Each export contains `request.json`, canonical `request.mat`, `plan.json`, full
-`plan.mat`, and `orbit-slew.json`. MATLAB with Optimization Toolbox must be installed and available through
+Each successful export contains `request.json`, canonical `request.mat`, `plan.json`,
+and `orbit-slew.json`. MATLAB with Optimization Toolbox must be installed and available through
 `MATLAB_EXE` or PATH. A failed solve leaves its exported inputs available for
 inspection. Only one MATLAB bridge/planner job runs at a time.
 
@@ -356,6 +357,9 @@ boresight. Each axis rate is conservatively limited to the sensor slew rate
 divided by √2; axis acceleration is 2°/s² and jerk is 4°/s³. Obstacles use the display's 6371 km
 spherical Earth and current ephemeris (preview or MATLAB). Outer country rings
 are keep-outs including their holes. A boundary crossing the horizon is rejected.
+The display retains the full country boundary. Planner export simplifies country
+rings to a 0.3-degree geographic tolerance, encloses collapsed islands in boxes,
+and samples remaining geographic edges at up to 2-degree intervals.
 Moving polygons are exported at ≤1 s. The upstream planner independently
 validates continuous polynomial motion against its documented interpolated or
 conservatively enclosed obstacle history; Orbit Console additionally checks

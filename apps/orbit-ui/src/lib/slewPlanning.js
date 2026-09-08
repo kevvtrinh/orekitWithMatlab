@@ -28,6 +28,38 @@ function project(camera, point) {
   const value = projectSensorPoint(point, camera, 90, { clipViewport: false, clipFov: false });
   return value ? [value.azDeg, value.elDeg] : null;
 }
+function segmentDistance(point, a, b) {
+  const dx = b[0]-a[0], dy = b[1]-a[1], lengthSquared = dx*dx+dy*dy;
+  const fraction = lengthSquared ? Math.max(0, Math.min(1, ((point[0]-a[0])*dx+(point[1]-a[1])*dy)/lengthSquared)) : 0;
+  return Math.hypot(point[0]-a[0]-fraction*dx, point[1]-a[1]-fraction*dy);
+}
+function simplifyOpen(points, tolerance) {
+  if (points.length <= 2) return points;
+  let index = -1, distance = 0;
+  for (let i = 1; i < points.length-1; i++) {
+    const candidate = segmentDistance(points[i], points[0], points.at(-1));
+    if (candidate > distance) { distance = candidate; index = i; }
+  }
+  if (distance <= tolerance) return [points[0], points.at(-1)];
+  const before = simplifyOpen(points.slice(0, index+1), tolerance);
+  const after = simplifyOpen(points.slice(index), tolerance);
+  return [...before.slice(0, -1), ...after];
+}
+function simplifyClosedRing(ring, tolerance = 0.3) {
+  if (ring.length < 6) return ring;
+  let split = 1, farthest = 0;
+  for (let i = 1; i < ring.length-1; i++) {
+    const distance = Math.hypot(ring[i][0]-ring[0][0], ring[i][1]-ring[0][1]);
+    if (distance > farthest) { farthest = distance; split = i; }
+  }
+  const reordered = [...ring.slice(split, -1), ...ring.slice(0, split+1)];
+  const closed = simplifyOpen(reordered, tolerance);
+  if (closed.length >= 4) return closed;
+  const longitude = ring.map((point) => point[0]), latitude = ring.map((point) => point[1]);
+  const west = Math.min(...longitude), east = Math.max(...longitude);
+  const south = Math.min(...latitude), north = Math.max(...latitude);
+  return [[west, south], [east, south], [east, north], [west, north], [west, south]];
+}
 export function obstacleRings(area) {
   let rings = area.boundaryPolygons?.map((polygon) => polygon.outer);
   if (!rings) {
@@ -35,11 +67,15 @@ export function obstacleRings(area) {
     const x = area.centerLonDeg, y = area.centerLatDeg;
     rings = [[[x-dx,y-dy],[x+dx,y-dy],[x+dx,y+dy],[x-dx,y+dy],[x-dx,y-dy]]];
   }
-  return rings.map((ring) => {
+  // Natural Earth boundaries are retained in the scene. The planner gets a
+  // bounded-complexity copy so a country outline can move through every time
+  // slice without exhausting the bridge job limit.
+  return rings.map((sourceRing) => {
+    const ring = area.boundaryPolygons ? simplifyClosedRing(sourceRing) : sourceRing;
     const output = [];
     for (let i = 0; i < ring.length - 1; i++) {
       const a = ring[i], b = ring[i + 1];
-      const count = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / 0.2));
+      const count = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / 2));
       for (let j = 0; j < count; j++) output.push([a[0] + (b[0] - a[0]) * j / count, a[1] + (b[1] - a[1]) * j / count]);
     }
     output.push(output[0]); return output;

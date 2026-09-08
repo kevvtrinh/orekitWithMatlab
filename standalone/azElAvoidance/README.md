@@ -7,8 +7,9 @@ Orbit Console can export geographic area boundaries here through its sensor
 window's **Obstacle avoidance → Export & plan** control. Generated round trips
 are under `exports/orbit-ui/<job-id>/`. `request.mat` contains canonical
 `azElData`, protected upstream obstacles, endpoint states, limits and options;
-`plan.mat` contains the full planner result, diagnosis and independent validation.
-The adapter uses the pinned main-branch copy at `vendor/AzElObsAvoid`; the legacy
+the compact `plan.json` contains the independently validated planner result used
+by Orbit Console.
+The adapter uses the pinned `bmtp-cleanup-codex` copy at `vendor/AzElObsAvoid`; the legacy
 standalone examples below retain their existing planner. To rerun an exported request:
 
 ```matlab

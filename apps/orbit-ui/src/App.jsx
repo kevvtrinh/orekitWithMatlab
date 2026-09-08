@@ -25,7 +25,7 @@ import {
   validateSpec,
 } from "./lib/spec.js";
 import { clock } from "./lib/clock.js";
-import { avoidanceSpec } from "./lib/avoidanceDemo.js";
+import { avoidanceSpec, VIETNAM_COUNTRY_CODE } from "./lib/avoidanceDemo.js";
 import { makeSlewRequest, validateSlewResult } from "./lib/slewPlanning.js";
 import { runAvoidanceRequest } from "./lib/avoidanceClient.js";
 import CommandPalette from "./components/CommandPalette.jsx";
@@ -92,16 +92,21 @@ export default function App() {
     if (!spec || job.state === "running" || demoAbort.current) return;
     if (!demoBackup.current) demoBackup.current = { spec, specMode, matlabRaw, source, selection, viewOptions, time: clock.getSnapshot() };
     const controller = new AbortController(); demoAbort.current = controller;
-    const demo = avoidanceSpec(), demoScene = buildRenderScenario(demo, null);
-    setDialog(null); setSensorViewName(null); setSpecError(null); setSlewPlaybackRequest(null);
-    setSpecMode("local"); setSpec(demo); setMatlabRaw(null); setSource("avoidance-demo");
-    setSelection("Slew Demo"); setMobilePanel("view");
-    setViewOptions((prev) => ({ ...prev, sensorFov: true, sensorFor: false, labels: true, groundTracks: false, referenceFrame: "ECEF" }));
-    setFocusRequest((prev) => ({ kind: "area", name: "Vietnam keep-out", revision: (prev?.revision ?? 0)+1 }));
-    clock.setPlaying(false); clock.configure(demo.meta.durationSeconds); clock.setTime(0);
-    setAvoidanceDemo({ phase: "exporting", message: "Projecting the Earth keep-out region into Az/El…" });
+    setAvoidanceDemo({ phase: "exporting", message: "Loading the Vietnam country boundary…" });
     try {
-      const request = makeSlewRequest(demoScene, { platform: "Slew Demo", from: "South Target", to: "North Station",
+      const response = await fetch("/geography/countries.json", { signal: controller.signal });
+      if (!response.ok) throw new Error("The Vietnam country boundary could not be loaded.");
+      const catalog = await response.json();
+      const vietnam = catalog?.countries?.find((country) => country.code === VIETNAM_COUNTRY_CODE);
+      const demo = avoidanceSpec(vietnam), demoScene = buildRenderScenario(demo, null);
+      setDialog(null); setSensorViewName(null); setSpecError(null); setSlewPlaybackRequest(null);
+      setSpecMode("local"); setSpec(demo); setMatlabRaw(null); setSource("avoidance-demo");
+      setSelection("Slew Demo"); setMobilePanel("view");
+      setViewOptions((prev) => ({ ...prev, sensorFov: true, sensorFor: false, labels: true, groundTracks: false, referenceFrame: "ECEF" }));
+      setFocusRequest((prev) => ({ kind: "area", name: "Vietnam keep-out", revision: (prev?.revision ?? 0)+1 }));
+      clock.setPlaying(false); clock.configure(demo.meta.durationSeconds); clock.setTime(0);
+      setAvoidanceDemo({ phase: "exporting", message: "Projecting Vietnam into Az/El…" });
+      const request = makeSlewRequest(demoScene, { platform: "Slew Demo", from: "West Target", to: "East Station",
         obstacle: "Vietnam keep-out", startSec: 0, durationSec: 30, clearanceDeg: 1 });
       const result = await runAvoidanceRequest(request, { signal: controller.signal, onProgress: (phase, status) => {
         setAvoidanceDemo({ phase, directory: status?.directory, message: phase === "exporting" ? "Exporting geographic Az/El boundaries…" :
